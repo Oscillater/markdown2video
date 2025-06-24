@@ -7,11 +7,11 @@ class LeftRightDemo(Scene):
 
         # ======== 题目显示 ========
         # 大标题
-        main_title = Text("普通玩家001", font_size=40)  # 替换为实际大标题
+        main_title = Text("一级标题", font_size=40)  # 替换为实际大标题
         main_title.move_to([0, 1, 0])  # 显示在屏幕上方
 
         # 小标题
-        sub_title = Text("小标题示例", font_size=30)  # 替换为实际小标题
+        sub_title = Text("二级标题", font_size=30)  # 替换为实际小标题
         sub_title.move_to([0, -1, 0])  # 显示在屏幕中间
 
         # 同时显示大标题和小标题
@@ -81,7 +81,7 @@ class LeftRightDemo(Scene):
         self.add(dot1, dot2)
 
         # ======== 小标题 + 正文（右侧）========
-        subtitle = Text("标题", font_size=20)
+        subtitle = Text("三级标题", font_size=20)
         subtitle.move_to([1.25, 0, 0])  
 
         self.play(Write(subtitle))
@@ -95,11 +95,8 @@ class LeftRightDemo(Scene):
 
         # 正文内容依次显示
         contents = [
-            "在古老的世界尽头，虚空沉眠。",
-            "传说中有一本书，载录诸神的低语。",
-            "唯有真实者，能窥其中奥秘。",
-            "每翻一页，世界便多一分裂。",
-            "你，准备好面对它了吗？"
+            "正文正文",
+            "这句也是正文"
         ]
 
         for line in contents:
