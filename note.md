@@ -13,3 +13,7 @@
 - 一个不断变动但是又不失规律的动画
 
 首先要做出这些demo
+目前：这部分demo做差不多了
+指令 manim -pql/h main.py Demo
+下面需要调研的是manim voice的一个库
+https://voiceover.manim.community/en/stable/services.html

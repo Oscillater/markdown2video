@@ -1,17 +1,19 @@
 from manim import *
 import numpy as np
 import random
-
-class LeftRightDemo(Scene):
+from md_parser import parse_markdown_file, custom_sentence_split
+class Demo(Scene):
     def construct(self):
-
+        data=parse_markdown_file("example.md")
+        if not data:
+            return
         # ======== 题目显示 ========
         # 大标题
-        main_title = Text("一级标题", font_size=40)  # 替换为实际大标题
+        main_title = Text(data["h1"], font_size=40)  # 替换为实际大标题
         main_title.move_to([0, 1, 0])  # 显示在屏幕上方
 
         # 小标题
-        sub_title = Text("二级标题", font_size=30)  # 替换为实际小标题
+        sub_title = Text(data["h2"], font_size=30)  # 替换为实际小标题
         sub_title.move_to([0, -1, 0])  # 显示在屏幕中间
 
         # 同时显示大标题和小标题
@@ -80,40 +82,59 @@ class LeftRightDemo(Scene):
         dot2.add_updater(update_dot2)
         self.add(dot1, dot2)
 
-        # ======== 小标题 + 正文（右侧）========
-        subtitle = Text("三级标题", font_size=20)
-        subtitle.move_to([1.25, 0, 0])  
+        # ======== 小标题 + 正文（左侧排列 + 动态移动 + 缩小）========
+        contents_data = data["contents"]  # 从解析结果中获取内容
 
-        self.play(Write(subtitle))
-        self.wait(0.5)
+        # 初始位置和偏移量
+        subtitle_start_y = 1  # 左侧标题初始 y 坐标
+        subtitle_offset_y = -0.5  # 每个标题的垂直间距
+        max_visible_subtitles = 4  # 左侧最多显示的标题数量
 
-        # 小标题移动到底部左侧
-        subtitle_target = subtitle.copy().scale(0.5)
-        subtitle_target.move_to([-1.75, 1, 0])
-        self.play(Transform(subtitle, subtitle_target))
-        self.wait(0.5)
+        # 存储当前显示的标题对象
+        current_subtitles = []
 
-        # 正文内容依次显示
-        contents = [
-            "正文正文",
-            "这句也是正文"
-        ]
+        for content in contents_data:
+            # 创建小标题并在屏幕正中显示
+            subtitle_text = content["h3"]
+            subtitle = Text(subtitle_text, font_size=20)
+            subtitle.move_to([0, 0, 0])  # 屏幕正中
+            self.play(Write(subtitle))
+            self.wait(0.5)
 
-        for line in contents:
-            sentence = Text(line, font_size=15).move_to([0, 0, 0])  # 右中位置
-            self.play(Write(sentence), run_time=2)
+            # 移动小标题到左侧排列并缩小到 0.7 倍
+            target_position = [-1.75, subtitle_start_y + len(current_subtitles) * subtitle_offset_y, 0]
+            self.play(subtitle.animate.move_to(target_position).scale(0.7), run_time=1)
+            current_subtitles.append(subtitle)
+
+            # 如果标题数量超过屏幕范围，移出画面的标题消失
+            if len(current_subtitles) > max_visible_subtitles:
+                removed_subtitle = current_subtitles.pop(0)
+                self.play(FadeOut(removed_subtitle))
+
+                # 将剩余标题整体上移
+                for s in current_subtitles:
+                    s_target = s.copy().move_to(s.get_center() + np.array([0, subtitle_offset_y, 0]))
+                    self.play(Transform(s, s_target), run_time=0.5)
+
+            self.wait(0.5)
+
+            # 显示对应的正文内容
+            for paragraph in content["text"]:
+                for line in paragraph:
+                    sentence = Text(line, font_size=15).move_to([0, 0, 0])  # 屏幕中间
+                    self.play(Write(sentence), run_time=2)
+                    self.wait(1)
+                    self.play(FadeOut(sentence), run_time=1)
+
             self.wait(1)
-            self.play(FadeOut(sentence), run_time=1)
 
-        self.wait(1)
-
-       
-
+        # 淡出所有剩余的小标题
+        for subtitle in current_subtitles:
+            self.play(FadeOut(subtitle))
         # 淡出所有旧内容
         self.play(
             FadeOut(dot1),
             FadeOut(dot2),
-            FadeOut(subtitle),
         )
          # （可选）移除 updater（场景结束前）
         dot1.remove_updater(update_dot1)
@@ -121,12 +142,7 @@ class LeftRightDemo(Scene):
         t_tracker.remove_updater(advance_tracker)
 
         # ======== 附录显示 ========
-        appendix = [
-            "附录内容第一句。",
-            "附录内容第二句。",
-            "附录内容第三句。"
-        ]
-
+        appendix = data["appendix"]
         for line in appendix:
             appendix_text = Text(line, font_size=15).move_to([0, 0, 0])  # 底部显示
             self.play(Write(appendix_text), run_time=2)
