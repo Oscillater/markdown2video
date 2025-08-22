@@ -17,3 +17,11 @@
 指令 manim -pql/h main.py Demo
 下面需要调研的是manim voice的一个库
 https://voiceover.manim.community/en/stable/services.html
+看上去使用google的gtts库是可以的
+来一点链接：https://gtts.readthedocs.io/en/latest/index.html#
+整体用到了uv包，在配置环境的时候需要注意的。
+下载需要：D:\uv\tools\manim\Scripts\python.exe -m pip install edge-tts 
+
+需要加的
+$env:PATH += ";D:\ffmpeg\bin"
+$env:PATH += ";D:\sox\sox-14-4-2"   
