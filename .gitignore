@@ -1,0 +1,17 @@
+# 忽略生成的媒体目录
+anim/media/
+
+# 忽略音频文件
+anim/music.mp3
+
+# 忽略 Python 缓存
+anim/__pycache__/
+
+# 忽略 TTS 语音缓存
+anim/voice_cache/
+
+# 忽略example.md , timeline.json
+
+anim/example.md
+
+anim/timeline.json
