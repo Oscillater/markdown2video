@@ -8,7 +8,7 @@ class EdgeTTSVoice(VoiceService):
     """
     Edge TTS 语音服务，兼容最新 manim-voiceover
     """
-    def __init__(self, voice: str = "zh-CN-YunxiaNeural", rate: str = "+0%", volume: str = "+50%"):
+    def __init__(self, voice: str = "zh-CN-YunxiaNeural", rate: str = "+0%", volume: str = "+70%"):
         super().__init__()
         self.voice = voice
         self.rate = rate

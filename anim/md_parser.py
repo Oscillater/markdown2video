@@ -1,17 +1,9 @@
 from pathlib import Path
 import re
 
-# ========== 辅助解析函数 ==========
+# ========== 辅助解析函数（音乐） ==========
 def _parse_music_declaration(line):
-    """
-    支持格式（大小写不敏感）：
-      [music: name="轻柔钢琴", src="assets/piano.mp3"]
-      [music: name=bgm, src=/path/to/bgm.mp3]
-      Music: name=bgm, src=...   或  音乐: name=..., src=...
-    返回 (name, src) 或 None
-    """
     line = line.strip()
-    # 方括号形式
     m = re.match(r'^\[music:\s*(.+)\]\s*$', line, re.IGNORECASE)
     body = None
     if m:
@@ -22,15 +14,13 @@ def _parse_music_declaration(line):
             body = m2.group(1)
     if not body:
         return None
-    # 提取 name 和 src 键值（简单 k=v, 支持引号）
-    name = None
-    src = None
+    name, src = None, None
     for part in re.split(r'\s*,\s*', body):
-        kv = re.match(r'^\s*name\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(.+))\s*$', part, re.IGNORECASE)
+        kv = re.match(r'^\s*name\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(.+))$', part, re.IGNORECASE)
         if kv:
             name = (kv.group(1) or kv.group(2) or kv.group(3)).strip()
             continue
-        kv2 = re.match(r'^\s*src\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(.+))\s*$', part, re.IGNORECASE)
+        kv2 = re.match(r'^\s*src\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(.+))$', part, re.IGNORECASE)
         if kv2:
             src = (kv2.group(1) or kv2.group(2) or kv2.group(3)).strip()
     if name and src:
@@ -38,54 +28,86 @@ def _parse_music_declaration(line):
     return None
 
 def _parse_music_marker(line):
-    """
-    支持格式：
-      [music_start bgm]
-      [music_end "轻柔钢琴"]
-      <music_start bgm>  或者 <> 形式也支持
-    返回 (kind, name) 或 None，kind 为 'start' 或 'end'
-    """
     s = line.strip()
-    # 方括号或尖括号
-    m = re.match(r'^[\[\<]\s*music_(start|end)\s+(?:"([^"]+)"|\'([^\']+)\'|([^\]\>]+))\s*[\]\>]\s*$', s, re.IGNORECASE)
+    m = re.match(r'^[\[\<]\s*music_(start|end)\s+(?:"([^"]+)"|\'([^\']+)\'|([^\]\>]+))[\]\>]\s*$', s, re.IGNORECASE)
     if not m:
         return None
-    kind = m.group(1).lower()
-    name = (m.group(2) or m.group(3) or m.group(4)).strip()
-    return kind, name
+    return m.group(1).lower(), (m.group(2) or m.group(3) or m.group(4)).strip()
+
+
+# ========== 辅助解析函数（图片） ==========
+def _parse_image_declaration(line):
+    """
+    支持格式：
+      [image: name="logo", src="assets/logo.png"]
+      image: name=logo, src=/path/to/logo.png
+    返回 (name, src) 或 None
+    """
+    line = line.strip()
+    m = re.match(r'^\[image:\s*(.+)\]\s*$', line, re.IGNORECASE)
+    body = None
+    if m:
+        body = m.group(1)
+    else:
+        m2 = re.match(r'^(?:image|图片)\s*[:：]\s*(.+)$', line, re.IGNORECASE)
+        if m2:
+            body = m2.group(1)
+    if not body:
+        return None
+    name, src = None, None
+    for part in re.split(r'\s*,\s*', body):
+        kv = re.match(r'^\s*name\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(.+))$', part, re.IGNORECASE)
+        if kv:
+            name = (kv.group(1) or kv.group(2) or kv.group(3)).strip()
+            continue
+        kv2 = re.match(r'^\s*src\s*=\s*(?:"([^"]+)"|\'([^\']+)\'|(.+))$', part, re.IGNORECASE)
+        if kv2:
+            src = (kv2.group(1) or kv2.group(2) or kv2.group(3)).strip()
+    if name and src:
+        return name, src
+    return None
+
+def _parse_image_marker(line):
+    """
+    支持格式：
+      [image_start logo]
+      [image_end "logo"]
+    返回 (kind, name) 或 None
+    """
+    s = line.strip()
+    m = re.match(r'^[\[\<]\s*image_(start|end)\s+(?:"([^"]+)"|\'([^\']+)\'|([^\]\>]+))[\]\>]\s*$', s, re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1).lower(), (m.group(2) or m.group(3) or m.group(4)).strip()
+
 
 # ========== 分句函数 ==========
 def custom_sentence_split(text, max_len=12):
     stripped = text.strip()
-    # 如果整行是音乐声明或音乐起止标记，不拆句
     if _parse_music_declaration(stripped) or _parse_music_marker(stripped):
+        return [stripped]
+    if _parse_image_declaration(stripped) or _parse_image_marker(stripped):
         return [stripped]
 
     sentence_enders = re.compile(r'(。|！|？|；|…{1,2})(?!(」|”))')
     parts = sentence_enders.split(text)
 
-    grouped = []
-    i = 0
+    grouped, i = [], 0
     while i < len(parts):
         if parts[i] and re.fullmatch(r'[。！？，；…——]', parts[i].strip()):
             grouped.append(parts[i].strip())
             i += 1
-            continue
-        if i + 1 < len(parts):
-            first = parts[i] or ""
-            second = parts[i+1] or ""
-            grouped.append(first.strip() + second.strip())
+        elif i + 1 < len(parts):
+            grouped.append((parts[i] or "").strip() + (parts[i+1] or "").strip())
             i += 2
         else:
             if parts[i]:
                 grouped.append(parts[i].strip())
             i += 1
 
-    final_sentences = []
+    final_sentences, buffer = [], ""
     for sent in grouped:
-        buffer = ""
-        soft_parts = re.split(r'(，|、|——)', sent)
-        for part in soft_parts:
+        for part in re.split(r'(，|、|——)', sent):
             buffer += part
             if len(buffer) >= max_len:
                 if not re.fullmatch(r'[。！？，；…——]', buffer.strip()):
@@ -94,12 +116,10 @@ def custom_sentence_split(text, max_len=12):
         if buffer:
             if not re.fullmatch(r'[。！？，；…——]', buffer.strip()):
                 final_sentences.append(buffer.strip())
-    cleaned_sentences = []
-    for sentence in final_sentences:
-        cleaned_sentence = re.sub(r'^[^\w“《「（]*|[^\w%”》」）]*$', '', sentence)
-        cleaned_sentences.append(cleaned_sentence)
+            buffer = ""
 
-    return cleaned_sentences
+    return [re.sub(r'^[^\w“《「（]*|[^\w%”》」）]*$', '', s) for s in final_sentences]
+
 
 # ========== Markdown解析函数 ==========
 def parse_markdown_sections(text):
@@ -109,42 +129,41 @@ def parse_markdown_sections(text):
         "h2": None,
         "contents": [],
         "appendix": [],
-        "music": {}   # name -> src
+        "music": {},   # name -> src
+        "images": {}   # name -> src
     }
 
-    # 先从顶部连续行中收集 music 声明（直到遇到第一个非空且非声明行）
+    # 顶部声明区（music / image）
     idx = 0
     while idx < len(lines):
-        raw = lines[idx]
-        if not raw.strip():
+        raw = lines[idx].strip()
+        if not raw:
             idx += 1
             continue
-        parsed = _parse_music_declaration(raw)
-        if parsed:
-            name, src = parsed
+        parsed_m = _parse_music_declaration(raw)
+        parsed_i = _parse_image_declaration(raw)
+        if parsed_m:
+            name, src = parsed_m
             sections["music"][name] = src
-            # 清空该行，避免后续被当成正文
+            lines[idx] = ""
+            idx += 1
+            continue
+        if parsed_i:
+            name, src = parsed_i
+            sections["images"][name] = src
             lines[idx] = ""
             idx += 1
             continue
         break
 
-    current_h3 = None
-    current_text_block = []
-    is_appendix = False
+    current_h3, current_text_block, is_appendix = None, [], False
 
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
-        # 音乐起止标记单独作为段保留
-        marker = _parse_music_marker(stripped)
-        if marker:
-            # 将标记作为一段（不作为标题或正文的一部分）
-            if is_appendix:
-                sections["appendix"].append(stripped)
-            else:
-                current_text_block.append(stripped)
+        if _parse_music_marker(stripped) or _parse_image_marker(stripped):
+            (sections["appendix"] if is_appendix else current_text_block).append(stripped)
             continue
 
         if stripped.startswith("# "):
@@ -153,37 +172,30 @@ def parse_markdown_sections(text):
             sections["h2"] = stripped[3:].strip()
         elif stripped.startswith("### "):
             if current_h3:
-                # 将当前 h3 和正文存储为字典，正文为分句后的嵌套列表
                 sections["contents"].append({
                     "h3": current_h3,
-                    "text": [custom_sentence_split(paragraph) for paragraph in current_text_block]
+                    "text": [custom_sentence_split(p) for p in current_text_block]
                 })
-            current_h3 = stripped[4:].strip()
-            current_text_block = []
+            current_h3, current_text_block = stripped[4:].strip(), []
         elif stripped == "---":
             is_appendix = True
             if current_h3:
                 sections["contents"].append({
                     "h3": current_h3,
-                    "text": [custom_sentence_split(paragraph) for paragraph in current_text_block]
+                    "text": [custom_sentence_split(p) for p in current_text_block]
                 })
-                current_h3 = None
-                current_text_block = []
+                current_h3, current_text_block = None, []
         else:
-            if is_appendix:
-                if stripped:  # 忽略空行
-                    sections["appendix"].append(stripped)
-            else:
-                if stripped:  # 忽略空行
-                    current_text_block.append(stripped)
+            (sections["appendix"] if is_appendix else current_text_block).append(stripped)
 
     if current_h3 and current_text_block:
         sections["contents"].append({
             "h3": current_h3,
-            "text": [custom_sentence_split(paragraph) for paragraph in current_text_block]
+            "text": [custom_sentence_split(p) for p in current_text_block]
         })
 
     return sections
+
 
 # ========== 读取文件并解析 ==========
 def parse_markdown_file(md_path):
@@ -193,9 +205,9 @@ def parse_markdown_file(md_path):
         return None
     text = path.read_text(encoding="utf-8")
     sections = parse_markdown_sections(text)
-
     print(sections)
-
     return sections
 
-print(parse_markdown_file("example.md"))
+
+if __name__ == "__main__":
+    print(parse_markdown_file("example.md"))

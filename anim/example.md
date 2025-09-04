@@ -1,11 +1,14 @@
 [music:name="111",src="./music.mp3"]
 [music:name="222",src="./music.mp3"]
+[image:name="11",src="./picture.jpg"]
 # 大标题
 ## 二级标题
 ### 小重山
 [music_start 111]
 昨夜寒蛩不住鸣。惊回千里梦，已三更。起来独自绕阶行。人悄悄，帘外月胧明。
+[image_start 11]
 白首为功名。旧山松竹老，阻归程。欲将心事付瑶琴。知音少，弦断有谁听？ 
+[image_end 11]
 [music_end 111]
 ### 段落测试
 
