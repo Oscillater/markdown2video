@@ -1,25 +1,14 @@
-# 忽略生成的媒体目录
-anim/media/
 
-# 忽略音频文件
-anim/music.mp3
 
-# 忽略 Python 缓存
-anim/__pycache__/
+# 忽略产物目录
+artifacts/
+voice_cache/
 
-# 忽略 TTS 语音缓存
-anim/voice_cache/
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
 
-# 忽略example.md , timeline.json
+# Claude Code
+.claude/
 
-anim/example.md
-
-anim/timeline.json
-
-anim/render_with_media.mp4
-anim/picture.jpg
-anim/1.md
-
-.claudeignore
-
-CLAUDE.md

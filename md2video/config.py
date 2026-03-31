@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+# Manim 渲染配置
+MANIM_FRAME_RATE = 30
+MANIM_WIDTH = 480
+MANIM_HEIGHT = 854
+
+# 默认 TTS
+DEFAULT_VOICE = "zh-CN-YunxiNeural"
+DEFAULT_SPEED = 1.0
+
+# 布局常量
+RIGHT_X = 0.2
+DEFAULT_TEXT_POSITION = [0.2, 0, 0]
+IMAGE_TEXT_POSITION = [0.8, -0.75, 0]
+LEFT_X = -1.75
+DOTS_TRANSITION_TIME = 1.0
+MAX_CHARS_PER_LINE = 10
+DEFAULT_DOTS_OFFSET = [RIGHT_X, 0, 0]
+IMAGE_DOTS_OFFSET = [-0.5, 0, 0]
+
+SUBTITLE_START_Y = 1.0
+SCREEN_BOTTOM = -1.0
+SUBTITLE_SPACING = 0.1
+SUBTITLE_MAX_WIDTH = 3.0
+
+# 默认字体
+DEFAULT_FONT = "FZShuSong-Z01S"
+
+# 产物目录
+ARTIFACTS_DIR = Path("artifacts")
+CACHE_DIR = ARTIFACTS_DIR / "cache"
