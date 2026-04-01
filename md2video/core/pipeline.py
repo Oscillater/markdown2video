@@ -87,9 +87,9 @@ class Pipeline:
         renderer_src = Path(__file__).parent.parent / "tools" / "render" / "manim_renderer.py"
         anim_renderer = anim_dir / "manifest_scene.py"
 
-        # 确保 anim/ 有 manim.cfg
-        manim_cfg_src = Path(__file__).parent.parent.parent / "anim" / "manim.cfg"
-        if not (anim_dir / "manim.cfg").exists() and manim_cfg_src.exists():
+        # 确保 manim.cfg 存在（竖屏 480x854 配置）
+        manim_cfg_src = Path(__file__).parent.parent / "tools" / "render" / "manim.cfg"
+        if not (anim_dir / "manim.cfg").exists():
             shutil.copy2(manim_cfg_src, anim_dir / "manim.cfg")
 
         # 复制 scene 文件
@@ -102,7 +102,8 @@ class Pipeline:
 
         try:
             cmd = [
-                sys.executable, "-m", "manim", "-ql",
+                sys.executable, "-m", "manim", "render",
+                "-ql",
                 "manifest_scene.py", "ManifestDrivenScene",
             ]
             env = {"PYTHONPATH": env_pythonpath, "MANIM_CACHE_DISABLE": "1"}
@@ -132,7 +133,9 @@ class Pipeline:
             # 5. Assemble
             print("[5/5] Assembling final video...")
             from md2video.assembler.ffmpeg_assembler import FFmpegAssembler
-            assembler = FFmpegAssembler(plan, result, video_path, output_path)
+            assembler = FFmpegAssembler(plan, result, video_path, output_path,
+                                        md_dir=md_path.parent,
+                                        timeline_path=anim_dir / "timeline.json")
             assembler.assemble()
             print(f"  Output: {output_path}")
 
@@ -140,6 +143,9 @@ class Pipeline:
             # 清理临时文件
             if anim_renderer.exists():
                 anim_renderer.unlink()
+            anim_cfg = anim_dir / "manim.cfg"
+            if anim_cfg.exists():
+                anim_cfg.unlink()
 
         return output_path
 

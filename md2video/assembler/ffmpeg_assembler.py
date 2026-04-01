@@ -94,11 +94,22 @@ def prepare_audio_segment(src: Path, duration: float, out_path: Path,
 
 # ========== 从 Manifest 提取媒体时间 ==========
 
-def extract_music_entries(plan: PlanManifest, result: ResultManifest) -> List[Dict]:
-    """从 Manifest 中提取音乐时间段。"""
-    # 建立 id -> segment 映射
+def _load_marker_timeline(timeline_path: Path) -> Dict[str, float]:
+    """从 timeline.json 加载 marker 的实际视频时间。"""
+    if not timeline_path or not timeline_path.exists():
+        return {}
+    import json as _json
+    data = _json.loads(timeline_path.read_text(encoding="utf-8"))
+    markers = data.get("markers", [])
+    return {m["id"]: m["time"] for m in markers}
+
+
+def extract_music_entries(plan: PlanManifest, result: ResultManifest,
+                           timeline_path: Path = None) -> List[Dict]:
+    """从 Manifest 中提取音乐时间段。使用 timeline.json 中的实际视频时间。"""
     result_map = {seg.id: seg for seg in result.segments}
     music_map = plan.media_declarations.get("music", {})
+    marker_times = _load_marker_timeline(timeline_path)
     entries = []
 
     for seg in plan.segments:
@@ -108,20 +119,16 @@ def extract_music_entries(plan: PlanManifest, result: ResultManifest) -> List[Di
         name = seg.marker_data["name"]
         src = music_map.get(name)
 
+        # 优先使用 timeline.json 中的实际视频时间
+        actual_time = marker_times.get(seg.id)
+
         if kind == "start":
-            # 找下一个有音频的 segment 的 start time
-            start_time = None
-            for rseg in result.segments:
-                if rseg.id == seg.id:
-                    # marker 本身没有 audio，找之后的
-                    continue
-                # 简化: 用 marker 后面紧邻的 content segment 的 start
-                break
-            # 更好的方式: 在 result 中找这个 marker 对应的 start
-            if seg.id in result_map:
-                start_time = result_map[seg.id].start
+            start_time = actual_time
             if start_time is None:
-                start_time = 0.0
+                if seg.id in result_map:
+                    start_time = result_map[seg.id].start
+                else:
+                    start_time = 0.0
 
             entries.append({
                 "name": name,
@@ -130,9 +137,10 @@ def extract_music_entries(plan: PlanManifest, result: ResultManifest) -> List[Di
                 "end": None,
             })
         elif kind == "end":
-            end_time = None
-            if seg.id in result_map:
-                end_time = result_map[seg.id].end
+            end_time = actual_time
+            if end_time is None:
+                if seg.id in result_map:
+                    end_time = result_map[seg.id].end
             # 回填 start
             for entry in reversed(entries):
                 if entry["name"] == name and entry["end"] is None:
@@ -142,10 +150,12 @@ def extract_music_entries(plan: PlanManifest, result: ResultManifest) -> List[Di
     return entries
 
 
-def extract_image_entries(plan: PlanManifest, result: ResultManifest) -> List[Dict]:
-    """从 Manifest 中提取图片时间段。"""
+def extract_image_entries(plan: PlanManifest, result: ResultManifest,
+                           timeline_path: Path = None) -> List[Dict]:
+    """从 Manifest 中提取图片时间段。使用 timeline.json 中的实际视频时间。"""
     result_map = {seg.id: seg for seg in result.segments}
     image_map = plan.media_declarations.get("images", {})
+    marker_times = _load_marker_timeline(timeline_path)
     entries = []
 
     for seg in plan.segments:
@@ -155,8 +165,12 @@ def extract_image_entries(plan: PlanManifest, result: ResultManifest) -> List[Di
         name = seg.marker_data["name"]
         src = image_map.get(name)
 
+        actual_time = marker_times.get(seg.id)
+
         if kind == "start":
-            start_time = result_map[seg.id].start if seg.id in result_map else 0.0
+            start_time = actual_time
+            if start_time is None:
+                start_time = result_map[seg.id].start if seg.id in result_map else 0.0
             entries.append({
                 "name": name,
                 "src": src,
@@ -164,7 +178,9 @@ def extract_image_entries(plan: PlanManifest, result: ResultManifest) -> List[Di
                 "end": None,
             })
         elif kind == "end":
-            end_time = result_map[seg.id].end if seg.id in result_map else None
+            end_time = actual_time
+            if end_time is None:
+                end_time = result_map[seg.id].end if seg.id in result_map else None
             for entry in reversed(entries):
                 if entry["name"] == name and entry["end"] is None:
                     entry["end"] = float(end_time) if end_time is not None else entry["start"]
@@ -273,7 +289,8 @@ class FFmpegAssembler:
     def __init__(self, plan: PlanManifest, result: ResultManifest,
                  video_path: Path, output_path: Path,
                  bg_scale: float = 0.2, vol: float = 0.8,
-                 fade: float = 2.0, trim_silence: bool = False, gain: float = None):
+                 fade: float = 2.0, trim_silence: bool = False, gain: float = None,
+                 md_dir: Path = None, timeline_path: Path = None):
         self.plan = plan
         self.result = result
         self.video_path = video_path
@@ -283,6 +300,8 @@ class FFmpegAssembler:
         self.fade = fade
         self.trim_silence = trim_silence
         self.gain = gain
+        self.md_dir = Path(md_dir) if md_dir else Path.cwd()
+        self.timeline_path = Path(timeline_path) if timeline_path else None
 
     def assemble(self) -> Path:
         video_width, video_height = ffprobe_resolution(self.video_path)
@@ -290,9 +309,13 @@ class FFmpegAssembler:
         base_has_audio = has_audio_stream(self.video_path)
         print(f"Video: {video_width}x{video_height}, duration={video_duration:.2f}s")
 
+        # 查找 timeline.json（manim 渲染时写入的实际视频时间）
+        timeline_path = self.timeline_path
+        print(f"Timeline: {timeline_path} (exists={timeline_path.exists() if timeline_path else False})")
+
         # 提取音乐/图片条目
-        music_entries = extract_music_entries(self.plan, self.result)
-        image_entries = extract_image_entries(self.plan, self.result)
+        music_entries = extract_music_entries(self.plan, self.result, timeline_path)
+        image_entries = extract_image_entries(self.plan, self.result, timeline_path)
 
         print("Music entries:", music_entries)
         print("Image entries:", image_entries)
@@ -315,7 +338,7 @@ class FFmpegAssembler:
                 name, src = m.get("name"), m.get("src")
                 if not src:
                     continue
-                src_path = (Path.cwd() / src).resolve() if not Path(src).is_absolute() else Path(src)
+                src_path = (self.md_dir / src).resolve() if not Path(src).is_absolute() else Path(src)
                 if not src_path.exists():
                     continue
                 start = float(m["start"])
@@ -333,8 +356,10 @@ class FFmpegAssembler:
                 prepared_music.append({"path": tmp_out, "start": start, "volume": vol})
 
             for img in image_entries:
-                src = Path(img["src"])
-                if src.exists():
+                src = img["src"]
+                if not Path(src).is_absolute():
+                    img["src"] = str((self.md_dir / src).resolve())
+                if Path(img["src"]).exists():
                     prepared_images.append(img)
 
             build_and_run_ffmpeg(

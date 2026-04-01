@@ -229,10 +229,11 @@ def parse_to_plan_manifest(md_path: str) -> "PlanManifest":
                 marker_data={"kind": im[0], "name": im[1]},
             ))
             continue
-        segments.append(SegmentPlan(
-            id=next_id(), text=line,
-            segment_type="appendix", audio_request=AudioRequest(),
-        ))
+        for sentence in custom_sentence_split(line):
+            segments.append(SegmentPlan(
+                id=next_id(), text=sentence,
+                segment_type="appendix", audio_request=AudioRequest(),
+            ))
 
     media_declarations = {}
     if sections["music"]:

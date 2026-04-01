@@ -49,6 +49,7 @@ class ManifestDrivenScene(VoiceoverScene):
                                                     voiced_segment_ids=voiced_ids))
 
         timeline = []
+        marker_timeline = []  # 记录 marker 的实际视频时间
         spacing = SUBTITLE_SPACING
 
         # ========== 1. 标题 ==========
@@ -175,6 +176,13 @@ class ManifestDrivenScene(VoiceoverScene):
 
             # --- 图片标记 ---
             if stype == "marker_image" and seg.marker_data:
+                marker_timeline.append({
+                    "id": seg.id,
+                    "segment_type": "marker_image",
+                    "kind": seg.marker_data["kind"],
+                    "name": seg.marker_data["name"],
+                    "time": self.time,
+                })
                 kind = seg.marker_data["kind"]
                 if kind == "start" and not self.is_image_active:
                     self.is_image_active = True
@@ -192,6 +200,14 @@ class ManifestDrivenScene(VoiceoverScene):
 
             # --- 音乐标记 ---
             if stype == "marker_music":
+                if seg.marker_data:
+                    marker_timeline.append({
+                        "id": seg.id,
+                        "segment_type": "marker_music",
+                        "kind": seg.marker_data["kind"],
+                        "name": seg.marker_data["name"],
+                        "time": self.time,
+                    })
                 continue
 
             # --- 正文 / 附录 ---
@@ -202,17 +218,17 @@ class ManifestDrivenScene(VoiceoverScene):
                 )
 
                 start_t = self.time
+                text_position = IMAGE_TEXT_POSITION if self.is_image_active else DEFAULT_TEXT_POSITION
+                sentence = textWithFont(wrapped_line, font_size=15).move_to(text_position)
                 with self.voiceover(text=line) as tracker:
-                    text_position = IMAGE_TEXT_POSITION if self.is_image_active else DEFAULT_TEXT_POSITION
-                    sentence = textWithFont(wrapped_line, font_size=15).move_to(text_position)
                     self.add(sentence)
                     timeline.append({"text": line, "start": start_t, "end": None})
-                    self.wait(2)
-                    self.remove(sentence)
-                    for item in timeline:
-                        if item.get("text") == line and item.get("end") is None:
-                            item["end"] = self.time
-                            break
+                self.wait(2)
+                self.remove(sentence)
+                for item in timeline:
+                    if item.get("text") == line and item.get("end") is None:
+                        item["end"] = self.time
+                        break
 
         # ========== 4. 收尾 ==========
         if current_subtitles:
@@ -231,7 +247,8 @@ class ManifestDrivenScene(VoiceoverScene):
         # ========== 6. 保存 timeline ==========
         timeline_path = Path("timeline.json")
         with open(timeline_path, "w", encoding="utf-8") as f:
-            json.dump(timeline, f, ensure_ascii=False, indent=2)
+            json.dump({"text": timeline, "markers": marker_timeline},
+                       f, ensure_ascii=False, indent=2)
         print(f"Timeline saved: {timeline_path}")
 
     def _load_manifests(self) -> tuple[PlanManifest, ResultManifest]:
