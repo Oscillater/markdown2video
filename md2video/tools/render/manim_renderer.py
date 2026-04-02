@@ -56,7 +56,7 @@ class ManifestDrivenScene(VoiceoverScene):
         # 构建 segment -> scene 映射
         segment_to_scene = {}
         for scene in plan.scenes:
-            for seg_id in scene.segment_ids:
+            for seg_id in scene.all_segment_ids:
                 segment_to_scene[seg_id] = scene
 
         # Fallback: 如果没有 scenes（Phase 1 旧数据），用扁平循环
@@ -226,7 +226,7 @@ class ManifestDrivenScene(VoiceoverScene):
         title_scenes = []
         other_scenes = []
         for scene in plan.scenes:
-            scene_segs = [s for s in plan.segments if s.id in scene.segment_ids]
+            scene_segs = [s for s in plan.segments if s.id in scene.all_segment_ids]
             if any(s.segment_type in ("title_main", "title_sub") for s in scene_segs):
                 title_scenes.append(scene)
             else:
@@ -250,7 +250,7 @@ class ManifestDrivenScene(VoiceoverScene):
 
         # 按顺序渲染其余 scenes
         for scene in other_scenes:
-            scene_segs = [s for s in plan.segments if s.id in scene.segment_ids]
+            scene_segs = [s for s in plan.segments if s.id in scene.all_segment_ids]
             for seg in scene_segs:
                 self._render_segment(seg, dots_offset_tracker)
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from md2video.manifest.schema import (
     PlanManifest, ResultManifest, SegmentPlan,
-    SegmentResult, AudioResult, SceneResult, VisualResult,
+    SegmentResult, AudioResult, SceneResult, ShotResult, VisualResult,
 )
 from md2video.parser.md_parser import parse_to_plan_manifest
 from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
@@ -173,18 +173,31 @@ class Pipeline:
         return max(mp4s, key=lambda p: p.stat().st_mtime)
 
     def _build_scene_results(self, scene_plans, segment_results):
-        """从 segment 的 start/end 累加出 scene 的 start/end。"""
+        """从 segment 的 start/end 累加出 shot → scene 的 start/end。"""
         result_map = {sr.id: sr for sr in segment_results}
         scene_results = []
         for sp in scene_plans:
-            if not sp.segment_ids:
+            if not sp.shots:
                 continue
-            starts = [result_map[sid].start for sid in sp.segment_ids if sid in result_map]
-            ends = [result_map[sid].end for sid in sp.segment_ids if sid in result_map]
-            if starts and ends:
+            shot_results = []
+            for shot_plan in sp.shots:
+                if not shot_plan.segment_ids:
+                    continue
+                starts = [result_map[sid].start for sid in shot_plan.segment_ids if sid in result_map]
+                ends = [result_map[sid].end for sid in shot_plan.segment_ids if sid in result_map]
+                if starts and ends:
+                    shot_results.append(ShotResult(
+                        id=shot_plan.id,
+                        segment_ids=shot_plan.segment_ids,
+                        start=min(starts),
+                        end=max(ends),
+                        visual=VisualResult(),
+                    ))
+            if shot_results:
                 scene_results.append(SceneResult(
-                    id=sp.id, segment_ids=sp.segment_ids,
-                    start=min(starts), end=max(ends),
-                    visual=VisualResult(),
+                    id=sp.id,
+                    shots=shot_results,
+                    start=min(sr.start for sr in shot_results),
+                    end=max(sr.end for sr in shot_results),
                 ))
         return scene_results

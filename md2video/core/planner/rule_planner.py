@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from md2video.manifest.schema import ScenePlan, SegmentPlan
+from md2video.manifest.schema import ScenePlan, SegmentPlan, ShotPlan
 from md2video.config import MAX_SCENE_CHARS
 
 
@@ -20,18 +20,20 @@ class RulePlanner:
         context = ""  # 当前 section_context
         char_count = 0  # 当前 scene content 累计字符数
         counter = 0  # scene 计数器
+        shot_counter = 0  # shot 计数器
 
         def flush(visual_type="text_only", visual_params=None):
-            nonlocal counter, buf, char_count, context
+            nonlocal counter, shot_counter, buf, char_count, context
             if not buf:
                 return
             counter += 1
+            shot_counter += 1
             scenes.append(ScenePlan(
                 id=f"scene_{counter:03d}",
                 visual_type=visual_type,
                 visual_params=visual_params or {},
-                segment_ids=[s.id for s in buf],
                 section_context=context,
+                shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[s.id for s in buf])],
             ))
             buf = []
             char_count = 0
@@ -41,10 +43,11 @@ class RulePlanner:
             if seg.segment_type in self._MARKER_TYPES:
                 flush()
                 counter += 1
+                shot_counter += 1
                 scenes.append(ScenePlan(
                     id=f"scene_{counter:03d}",
-                    segment_ids=[seg.id],
                     section_context=seg.section_context,
+                    shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[seg.id])],
                 ))
                 continue
 
@@ -52,12 +55,13 @@ class RulePlanner:
             if seg.explicit:
                 flush()
                 counter += 1
+                shot_counter += 1
                 scenes.append(ScenePlan(
                     id=f"scene_{counter:03d}",
                     visual_type=seg.visual_type,
                     visual_params=seg.visual_params,
-                    segment_ids=[seg.id],
                     section_context=seg.section_context,
+                    shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[seg.id])],
                 ))
                 continue
 
@@ -94,8 +98,9 @@ def denormalize_scenes_to_segments(
     """将 scene 的 visual_type/visual_params 复制到其包含的 non-explicit segments 上。"""
     scene_map: dict[str, ScenePlan] = {}
     for scene in scenes:
-        for seg_id in scene.segment_ids:
-            scene_map[seg_id] = scene
+        for shot in scene.shots:
+            for seg_id in shot.segment_ids:
+                scene_map[seg_id] = scene
 
     for seg in segments:
         if seg.explicit:

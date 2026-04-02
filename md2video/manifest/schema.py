@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional, Dict, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ==================== Plan Manifest ====================
@@ -25,12 +25,32 @@ class SegmentPlan(BaseModel):
     marker_data: Optional[Dict] = None  # marker 类型: {"kind": "start/end", "name": "xxx"}
 
 
+class ShotPlan(BaseModel):
+    id: str
+    segment_ids: List[str] = Field(default_factory=list)
+
+
 class ScenePlan(BaseModel):
     id: str
     visual_type: str = "text_only"
     visual_params: Dict = Field(default_factory=dict)
-    segment_ids: List[str] = Field(default_factory=list)
+    shots: List[ShotPlan] = Field(default_factory=list)
     section_context: str = ""
+    # 向后兼容: 旧 JSON 含 segment_ids 时自动迁移为单 Shot
+    segment_ids: Optional[List[str]] = Field(default=None, exclude=True)
+
+    @property
+    def all_segment_ids(self) -> List[str]:
+        return [sid for shot in self.shots for sid in shot.segment_ids]
+
+    @model_validator(mode="after")
+    def _migrate_segment_ids(self):
+        if self.segment_ids is not None and not self.shots:
+            self.shots = [ShotPlan(
+                id=f"{self.id}_shot_001",
+                segment_ids=self.segment_ids,
+            )]
+        return self
 
 
 class PlanManifest(BaseModel):
@@ -65,12 +85,42 @@ class SegmentResult(BaseModel):
     end: float = 0.0
 
 
-class SceneResult(BaseModel):
+class ShotResult(BaseModel):
     id: str
     segment_ids: List[str] = Field(default_factory=list)
     start: float = 0.0
     end: float = 0.0
     visual: VisualResult = Field(default_factory=VisualResult)
+
+
+class SceneResult(BaseModel):
+    id: str
+    shots: List[ShotResult] = Field(default_factory=list)
+    start: float = 0.0
+    end: float = 0.0
+    # 向后兼容: 旧 JSON 含 segment_ids/visual 时自动迁移为单 Shot
+    segment_ids: Optional[List[str]] = Field(default=None, exclude=True)
+    visual: Optional[VisualResult] = Field(default=None, exclude=True)
+
+    @property
+    def all_segment_ids(self) -> List[str]:
+        return [sid for shot in self.shots for sid in shot.segment_ids]
+
+    @model_validator(mode="after")
+    def _migrate_and_sync(self):
+        if self.segment_ids is not None and not self.shots:
+            self.shots = [ShotResult(
+                id=f"{self.id}_shot_001",
+                segment_ids=self.segment_ids,
+                start=self.start,
+                end=self.end,
+                visual=self.visual or VisualResult(),
+            )]
+        # 从 shots 聚合 start/end
+        if self.shots:
+            self.start = min(s.start for s in self.shots)
+            self.end = max(s.end for s in self.shots)
+        return self
 
 
 class ResultManifest(BaseModel):
