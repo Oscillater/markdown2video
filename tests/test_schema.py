@@ -8,6 +8,8 @@ from md2video.manifest.schema import (
     AudioResult,
     PlanManifest,
     ResultManifest,
+    ScenePlan,
+    SceneResult,
     SegmentPlan,
     SegmentResult,
     VisualResult,
@@ -172,3 +174,152 @@ class TestResultManifest:
         assert len(restored.segments) == 1
         assert restored.segments[0].id == "s1"
         assert restored.segments[0].audio.path == "s1.wav"
+
+
+# ========== ScenePlan ==========
+
+
+class TestScenePlan:
+    def test_defaults(self):
+        sp = ScenePlan(id="scene_001")
+        assert sp.visual_type == "text_only"
+        assert sp.visual_params == {}
+        assert sp.segment_ids == []
+        assert sp.section_context == ""
+
+    def test_with_segments(self):
+        sp = ScenePlan(
+            id="scene_001",
+            segment_ids=["seg_001", "seg_002"],
+            section_context="小重山",
+        )
+        assert sp.segment_ids == ["seg_001", "seg_002"]
+        assert sp.section_context == "小重山"
+
+    def test_custom_visual_type(self):
+        sp = ScenePlan(
+            id="scene_001",
+            visual_type="stock_image",
+            visual_params={"query": "neural network", "fallback": "text_only"},
+        )
+        assert sp.visual_type == "stock_image"
+        assert sp.visual_params["query"] == "neural network"
+
+    def test_json_round_trip(self):
+        original = ScenePlan(
+            id="scene_001",
+            visual_type="stock_image",
+            visual_params={"query": "test"},
+            segment_ids=["seg_001", "seg_002"],
+            section_context="测试",
+        )
+        json_str = original.model_dump_json()
+        restored = ScenePlan.model_validate_json(json_str)
+        assert restored.id == "scene_001"
+        assert restored.visual_type == "stock_image"
+        assert restored.segment_ids == ["seg_001", "seg_002"]
+
+
+# ========== SceneResult ==========
+
+
+class TestSceneResult:
+    def test_defaults(self):
+        sr = SceneResult(id="scene_001")
+        assert sr.segment_ids == []
+        assert sr.start == 0.0
+        assert sr.end == 0.0
+        assert sr.visual.path == ""
+
+    def test_with_visual(self):
+        sr = SceneResult(
+            id="scene_001",
+            segment_ids=["seg_001"],
+            start=0.0,
+            end=5.5,
+            visual=VisualResult(path="bg.jpg", width=1080, height=1920, source="pexels"),
+        )
+        assert sr.visual.path == "bg.jpg"
+        assert sr.visual.source == "pexels"
+
+    def test_json_round_trip(self):
+        original = SceneResult(
+            id="scene_001",
+            segment_ids=["seg_001", "seg_002"],
+            start=1.0,
+            end=8.5,
+        )
+        json_str = original.model_dump_json()
+        restored = SceneResult.model_validate_json(json_str)
+        assert restored.id == "scene_001"
+        assert restored.start == 1.0
+        assert restored.end == 8.5
+        assert restored.segment_ids == ["seg_001", "seg_002"]
+
+
+# ========== PlanManifest with Scenes ==========
+
+
+class TestPlanManifestWithScenes:
+    def test_empty_scenes_default(self):
+        m = PlanManifest()
+        assert m.scenes == []
+
+    def test_scenes_in_serialization(self):
+        scene = ScenePlan(id="scene_001", segment_ids=["seg_001"])
+        m = PlanManifest(scenes=[scene])
+        json_str = m.model_dump_json()
+        restored = PlanManifest.model_validate_json(json_str)
+        assert len(restored.scenes) == 1
+        assert restored.scenes[0].id == "scene_001"
+
+    def test_backward_compat_no_scenes_field(self):
+        old_json = '{"version": "1", "segments": [], "media_declarations": {}}'
+        m = PlanManifest.model_validate_json(old_json)
+        assert m.scenes == []
+        assert m.segments == []
+
+
+# ========== ResultManifest with Scenes ==========
+
+
+class TestResultManifestWithScenes:
+    def test_empty_scenes_default(self):
+        m = ResultManifest()
+        assert m.scenes == []
+
+    def test_scenes_in_serialization(self):
+        scene = SceneResult(id="scene_001", segment_ids=["seg_001"], start=0.0, end=5.0)
+        m = ResultManifest(scenes=[scene])
+        json_str = m.model_dump_json()
+        restored = ResultManifest.model_validate_json(json_str)
+        assert len(restored.scenes) == 1
+        assert restored.scenes[0].start == 0.0
+
+    def test_backward_compat_no_scenes_field(self):
+        old_json = '{"segments": []}'
+        m = ResultManifest.model_validate_json(old_json)
+        assert m.scenes == []
+
+    def test_write_then_read_preserves_scenes(self, tmp_path):
+        """模拟 pipeline 写盘后读回，scenes 字段不能丢。"""
+        scene = SceneResult(
+            id="scene_001", segment_ids=["seg_001", "seg_002"],
+            start=0.0, end=9.0,
+        )
+        m = ResultManifest(
+            segments=[
+                SegmentResult(id="seg_001", start=0.0, end=4.5),
+                SegmentResult(id="seg_002", start=4.5, end=9.0),
+            ],
+            scenes=[scene],
+        )
+        # 写盘
+        p = tmp_path / "result.json"
+        p.write_text(m.model_dump_json(indent=2), encoding="utf-8")
+        # 读回
+        restored = ResultManifest.model_validate_json(p.read_text(encoding="utf-8"))
+        assert len(restored.scenes) == 1
+        assert restored.scenes[0].id == "scene_001"
+        assert restored.scenes[0].segment_ids == ["seg_001", "seg_002"]
+        assert restored.scenes[0].end == 9.0

@@ -38,13 +38,11 @@ $env:PATH += ";D:\ffmpeg\bin"
 
 ## 使用方法
 
-### 新版 Pipeline（推荐）
-
 在项目根目录运行：
 
 ```bash
 cd D:\Project\markdown2video
-python -m md2video anim/example.md -o artifacts/output.mp4
+python -m md2video example/example.md -o artifacts/output.mp4
 ```
 
 可选参数：
@@ -56,21 +54,24 @@ python -m md2video anim/example.md -o artifacts/output.mp4
 -o, --output FILE   输出文件路径 (默认: output.mp4)
 ```
 
-### 旧版（Legacy）
+## 架构
 
-```bash
-cd anim
-manim -pql main.py Demo
+```
+Markdown → Parser → Plan Manifest → Planner → TTS → Result Manifest → Manim Renderer → FFmpeg Assembler → MP4
 ```
 
-## 两种方式对比
+核心概念：
 
-| | 新版 (`python -m md2video`) | 旧版 (`manim -pql main.py Demo`) |
-|--|--|--|
-| 架构 | 模块化，Manifest 驱动 | 单体，耦合度高 |
-| TTS | 预生成，独立于 Manim | Manim 内实时生成 |
-| 可扩展 | 工具可替换，Planner 可插拔 | 硬编码 |
-| 代码位置 | `md2video/` | `anim/` |
+- **Segment**：最小时间单元（一句话），TTS 以 Segment 为单位合成语音
+- **Scene**：语义单元，由 Planner 将多个 Segment 分组而成，共享同一个视觉方案
+
+数据流：
+
+1. **Parser** 将 Markdown 解析为 Segment 列表
+2. **Planner** 将 Segment 语义分组为 Scene，并为每个 Scene 决定视觉方案
+3. **TTS** 为每个 Segment 预生成语音
+4. **Manim Renderer** 按 Scene 粒度渲染动画
+5. **FFmpeg Assembler** 拼接视频、混入语音、叠加音乐和图片
 
 ## Markdown 语法
 
@@ -130,8 +131,8 @@ manim -pql main.py Demo
 ## 项目结构
 
 ```
-md2video/              # 新版模块化代码
-    manifest/          # Plan/Result Manifest 数据模型
+md2video/              # 核心代码
+    manifest/          # Plan/Result Manifest 数据模型 (含 Scene)
     parser/            # Markdown 解析
     tools/tts/         # TTS 工具 (edge-tts)
     tools/render/      # Manim 渲染 + CachedVoiceService
@@ -139,7 +140,8 @@ md2video/              # 新版模块化代码
     core/              # Pipeline 编排 + Planner
     cli.py             # 命令行入口
     config.py          # 配置常量
-anim/                  # 旧版代码（保留作为参考）
+example/               # 示例 Markdown
+tests/                 # 单元测试
 artifacts/             # 生成的中间产物（gitignored）
 changelog/             # 变更日志
 ```

@@ -317,6 +317,12 @@ class FFmpegAssembler:
         music_entries = extract_music_entries(self.plan, self.result, timeline_path)
         image_entries = extract_image_entries(self.plan, self.result, timeline_path)
 
+        # Phase 2A: scene-based 视觉处理（当前 all text_only，no-op）
+        for scene_plan in self.plan.scenes:
+            if scene_plan.visual_type == "text_only":
+                continue
+            # Phase 2B: 处理 stock_image 等视觉效果
+
         print("Music entries:", music_entries)
         print("Image entries:", image_entries)
 

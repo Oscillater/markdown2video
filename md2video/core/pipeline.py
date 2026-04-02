@@ -13,10 +13,10 @@ from pathlib import Path
 
 from md2video.manifest.schema import (
     PlanManifest, ResultManifest, SegmentPlan,
-    SegmentResult, AudioResult,
+    SegmentResult, AudioResult, SceneResult, VisualResult,
 )
 from md2video.parser.md_parser import parse_to_plan_manifest
-from md2video.core.planner.rule_planner import RulePlanner
+from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
 from md2video.tools.tts.edge_tts import EdgeTTSTool
 from md2video.config import ARTIFACTS_DIR, DEFAULT_VOICE, DEFAULT_SPEED
 
@@ -37,10 +37,12 @@ class Pipeline:
         # 1. Parse → Plan Manifest
         print("[1/5] Parsing markdown...")
         plan = parse_to_plan_manifest(str(md_path))
-        plan.segments = self.planner.plan(plan.segments)
+        scenes = self.planner.plan(plan.segments)
+        denormalize_scenes_to_segments(plan.segments, scenes)
+        plan.scenes = scenes
         plan_path = self.artifacts_dir / "plan.json"
         plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
-        print(f"  Plan: {len(plan.segments)} segments")
+        print(f"  Plan: {len(plan.segments)} segments, {len(scenes)} scenes")
 
         # 2. TTS pre-compute → fill Result Manifest
         print("[2/5] Pre-computing TTS...")
@@ -75,10 +77,14 @@ class Pipeline:
                     end=current_time,
                 ))
 
+        print(f"  TTS: {sum(1 for s in result.segments if s.audio)} audio segments")
+
+        # 构建 SceneResult
+        result.scenes = self._build_scene_results(plan.scenes, result.segments)
+
         # 保存 Result Manifest
         result_path = self.artifacts_dir / "result.json"
         result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-        print(f"  TTS: {sum(1 for s in result.segments if s.audio)} audio segments")
 
         # 3. Render (Manim)
         print("[3/5] Rendering video...")
@@ -165,3 +171,20 @@ class Pipeline:
             return max(scene_mp4s, key=lambda p: p.stat().st_mtime)
 
         return max(mp4s, key=lambda p: p.stat().st_mtime)
+
+    def _build_scene_results(self, scene_plans, segment_results):
+        """从 segment 的 start/end 累加出 scene 的 start/end。"""
+        result_map = {sr.id: sr for sr in segment_results}
+        scene_results = []
+        for sp in scene_plans:
+            if not sp.segment_ids:
+                continue
+            starts = [result_map[sid].start for sid in sp.segment_ids if sid in result_map]
+            ends = [result_map[sid].end for sid in sp.segment_ids if sid in result_map]
+            if starts and ends:
+                scene_results.append(SceneResult(
+                    id=sp.id, segment_ids=sp.segment_ids,
+                    start=min(starts), end=max(ends),
+                    visual=VisualResult(),
+                ))
+        return scene_results

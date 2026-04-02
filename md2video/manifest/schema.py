@@ -25,9 +25,18 @@ class SegmentPlan(BaseModel):
     marker_data: Optional[Dict] = None  # marker 类型: {"kind": "start/end", "name": "xxx"}
 
 
+class ScenePlan(BaseModel):
+    id: str
+    visual_type: str = "text_only"
+    visual_params: Dict = Field(default_factory=dict)
+    segment_ids: List[str] = Field(default_factory=list)
+    section_context: str = ""
+
+
 class PlanManifest(BaseModel):
     version: str = "1"
     segments: List[SegmentPlan] = Field(default_factory=list)
+    scenes: List[ScenePlan] = Field(default_factory=list)
     media_declarations: Dict[str, Dict[str, str]] = Field(default_factory=dict)
     # {"music": {"bgm": "./music.mp3"}, "images": {"logo": "./assets/logo.png"}}
 
@@ -56,5 +65,14 @@ class SegmentResult(BaseModel):
     end: float = 0.0
 
 
+class SceneResult(BaseModel):
+    id: str
+    segment_ids: List[str] = Field(default_factory=list)
+    start: float = 0.0
+    end: float = 0.0
+    visual: VisualResult = Field(default_factory=VisualResult)
+
+
 class ResultManifest(BaseModel):
     segments: List[SegmentResult] = Field(default_factory=list)
+    scenes: List[SceneResult] = Field(default_factory=list)

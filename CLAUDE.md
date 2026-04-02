@@ -8,18 +8,17 @@ This is a markdown-to-video conversion tool that transforms styled Markdown text
 
 ## Common Development Commands
 
-### Running the New Pipeline (Phase 1)
+### Running the Pipeline
 ```bash
 # Activate venv and run
 cd D:\Project\markdown2video
 .venv\Scripts\activate
-python -m md2video anim/example.md -o artifacts/output.mp4
+python -m md2video example/example.md -o artifacts/output.mp4
 ```
 
-### Running the Legacy Pipeline (anim/)
+### Running Tests
 ```bash
-cd anim
-manim -pql main.py Demo
+python -m pytest tests/ -v
 ```
 
 ### Testing Individual Components
@@ -28,7 +27,7 @@ manim -pql main.py Demo
 python -c "from md2video.manifest.schema import PlanManifest; print('OK')"
 
 # Test parser
-python -c "from md2video.parser.md_parser import parse_to_plan_manifest; print(parse_to_plan_manifest('anim/example.md'))"
+python -c "from md2video.parser.md_parser import parse_to_plan_manifest; print(parse_to_plan_manifest('example/example.md'))"
 
 # Test TTS tool
 python -c "from md2video.tools.tts.edge_tts import EdgeTTSTool; t = EdgeTTSTool(); print(t.synthesize('test'))"
@@ -46,71 +45,75 @@ $env:PATH += ";D:\sox\sox-14-4-2"
 
 ## Architecture Overview
 
-### Two Codebases
-
-1. **`md2video/`** (New, Phase 1): Manifest-driven pipeline with clean module separation
-2. **`anim/`** (Legacy): Original monolithic implementation, kept as reference
-
-### New Architecture (md2video/)
-
 ```
 Markdown → Parser → Plan Manifest → Planner → TTS Tool → Result Manifest → Manim Renderer → FFmpeg Assembler → MP4
 ```
 
+**Key Concepts**:
+- **Segment**: Minimum time unit (one sentence). TTS operates per-segment.
+- **Scene**: Semantic unit. Planner groups multiple Segments into a Scene that shares one visual plan.
+- **Manifest is the single data flow**: No direct tool-to-tool communication.
+
 **Key Design**:
 - **Two-pass TTS**: TTS audio is pre-computed before Manim rendering via standalone `EdgeTTSTool`
 - **CachedVoiceService**: Bridges pre-computed audio into Manim's `VoiceoverScene` without re-generating
-- **Manifest is the single data flow**: No direct tool-to-tool communication
+- **Scene-based rendering**: Renderer iterates over Scenes, not individual Segments
 
-### Core Components (md2video/)
+### Core Components
 
 1. **Manifest Schema (`manifest/schema.py`)**: Pydantic models defining Plan Manifest and Result Manifest.
-   - `PlanManifest`: segments list with text, type, audio_request, visual_type
-   - `ResultManifest`: segments list with audio path, duration, start/end times
+   - `SegmentPlan`: single segment's text, type, audio_request, visual_type
+   - `ScenePlan`: groups segment_ids, visual_type, visual_params, section_context
+   - `SegmentResult`: audio path, duration, start/end times
+   - `SceneResult`: aggregated start/end from segments, visual result
+   - `PlanManifest`: segments + scenes + media_declarations
+   - `ResultManifest`: segments + scenes (scenes built from segment start/end)
 
 2. **Parser (`parser/`)**: Markdown parsing → Plan Manifest
    - `md_parser.py`: `parse_to_plan_manifest(md_path)` returns `PlanManifest`
    - `segmenter.py`: Chinese text sentence splitting
 
-3. **TTS Tool (`tools/tts/edge_tts.py`)**: Standalone edge-tts, no manim dependency
+3. **Planner (`core/planner/rule_planner.py`)**: Rule-based scene grouping
+   - Groups segments into scenes by type rules (title, marker, section_header, content length)
+   - `denormalize_scenes_to_segments()`: copies scene visual info back to non-explicit segments
+
+4. **TTS Tool (`tools/tts/edge_tts.py`)**: Standalone edge-tts, no manim dependency
    - `EdgeTTSTool.synthesize(text, voice, speed)` → `{path, duration, provider, cache_key}`
    - Caches to `artifacts/tts/`
 
-4. **CachedVoiceService (`tools/render/cached_voice.py`)**: Bridge for Manim
+5. **CachedVoiceService (`tools/render/cached_voice.py`)**: Bridge for Manim
    - Returns pre-computed audio paths during `VoiceoverScene.voiceover()` calls
 
-5. **Manim Renderer (`tools/render/manim_renderer.py`)**: `ManifestDrivenScene`
-   - Consumes PlanManifest + ResultManifest (reads from `artifacts/`)
-   - Rendering logic ported from legacy `Demo.construct()`
+6. **Manim Renderer (`tools/render/manim_renderer.py`)**: `ManifestDrivenScene`
+   - `_construct_by_scenes()`: iterates over scenes, renders segments within each
+   - `_construct_flat()`: Phase 1 compat fallback when `plan.scenes` is empty
+   - Helper methods: `_render_segment()`, `_render_section_header()`, `_render_title()`, `_setup_dot_animation()`, `_finish()`
 
-6. **FFmpeg Assembler (`assembler/ffmpeg_assembler.py`)**: Consumes Result Manifest
+7. **FFmpeg Assembler (`assembler/ffmpeg_assembler.py`)**: Consumes Result Manifest
    - Extracts music/image timing from manifest (no markdown re-parsing)
-   - Uses ffmpeg for audio mixing and image overlays
+   - Scene-based visual loop placeholder (Phase 2B: image overlays)
 
-7. **Pipeline (`core/pipeline.py`)**: Orchestrates Parser → Planner → TTS → Render → Assemble
-
-8. **Planner (`core/planner/rule_planner.py`)**: Phase 1 stub, all segments set to `text_only`
+8. **Pipeline (`core/pipeline.py`)**: Orchestrates Parser → Planner → TTS → Render → Assemble
+   - `_build_scene_results()`: aggregates segment start/end into SceneResult
 
 9. **CLI (`cli.py`)**: Entry point `python -m md2video <input.md>`
 
-### Legacy Components (anim/)
-
-Kept as reference. See original code for details.
-
 ### File Structure
 
-- `md2video/`: New modular pipeline (Phase 1)
-  - `manifest/schema.py`: Pydantic models (Plan + Result Manifest)
+- `md2video/`: Core pipeline
+  - `manifest/schema.py`: Pydantic models (Segment + Scene, Plan + Result Manifest)
   - `parser/`: Markdown → Plan Manifest
   - `tools/tts/edge_tts.py`: Standalone TTS tool
   - `tools/render/`: CachedVoiceService + Manim renderer
   - `assembler/ffmpeg_assembler.py`: FFmpeg post-processing
-  - `core/pipeline.py`: Framework orchestrator
-  - `core/planner/`: Rule planner (Phase 1: all text_only)
+  - `core/pipeline.py`: Pipeline orchestrator
+  - `core/planner/rule_planner.py`: Rule-based scene grouping
   - `cli.py`: Entry point `python -m md2video`
   - `config.py`: Layout constants and defaults
-- `anim/`: Legacy implementation
+- `example/`: Example Markdown
+- `tests/`: Unit tests
 - `artifacts/`: Generated intermediate files (gitignored)
+- `changelog/`: Change logs
 
 **Markdown Syntax**:
 - `# Title`: Main title (appears at beginning)
@@ -124,7 +127,6 @@ Kept as reference. See original code for details.
 
 ### Dependencies
 
-The project requires several external tools and libraries:
 - **Manim**: Animation engine
 - **ffmpeg**: Video processing and media insertion
 - **edge-tts**: Microsoft Edge text-to-speech
@@ -139,7 +141,7 @@ The project requires several external tools and libraries:
 
 3. **Media Synchronization**: The media insertion script uses the timeline to synchronize music and image overlays with the animated content.
 
-4. **Voice Caching**: Generated voice files are cached in `voice_cache/` directory to avoid repeated API calls.
+4. **Voice Caching**: Generated voice files are cached in `artifacts/tts/` directory to avoid repeated API calls.
 
 5. **Chinese Support**: The system is optimized for Chinese text with proper font handling (`FZShuSong-Z01S`) and TTS voice (`zh-CN-YunxiNeural`).
 

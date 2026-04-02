@@ -32,3 +32,6 @@ DEFAULT_FONT = "FZShuSong-Z01S"
 # 产物目录
 ARTIFACTS_DIR = Path("artifacts")
 CACHE_DIR = ARTIFACTS_DIR / "cache"
+
+# Scene 分组
+MAX_SCENE_CHARS = 200  # 单 scene 内 content 累计字符上限
