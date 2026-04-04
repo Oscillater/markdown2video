@@ -18,17 +18,31 @@ from md2video.manifest.schema import (
 from md2video.parser.md_parser import parse_to_plan_manifest
 from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
 from md2video.tools.tts.edge_tts import EdgeTTSTool
-from md2video.config import ARTIFACTS_DIR, DEFAULT_VOICE, DEFAULT_SPEED
+from md2video.config import ARTIFACTS_DIR, DEFAULT_VOICE, DEFAULT_SPEED, load_planner_config
 
 
 class Pipeline:
-    def __init__(self, artifacts_dir: str | Path = None, voice: str = None, speed: float = None):
+    def __init__(self, artifacts_dir: str | Path = None, voice: str = None, speed: float = None, planner: str = None):
         self.artifacts_dir = Path(artifacts_dir or ARTIFACTS_DIR)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.voice = voice or DEFAULT_VOICE
         self.speed = speed or DEFAULT_SPEED
         self.tts_tool = EdgeTTSTool(cache_dir=self.artifacts_dir / "tts", voice=self.voice)
-        self.planner = RulePlanner()
+        self.planner = self._create_planner(planner)
+
+    @staticmethod
+    def _create_planner(planner: str | None) -> RulePlanner | "LlmPlanner":
+        cfg = load_planner_config()
+        choice = planner or cfg.default
+        if choice == "llm" and (cfg.api_key or cfg.base_url):
+            try:
+                from md2video.core.planner.llm_planner import LlmPlanner
+                print(f"  Planner: LLM ({cfg.model})")
+                return LlmPlanner(model=cfg.model, api_key=cfg.api_key, base_url=cfg.base_url)
+            except ImportError:
+                print("  Planner: pydantic-ai not installed, falling back to Rule")
+        print("  Planner: Rule")
+        return RulePlanner()
 
     def run(self, md_path: str, output_path: str) -> Path:
         md_path = Path(md_path)

@@ -16,12 +16,14 @@ manim-voiceover
 edge-tts
 pydantic >= 2.0
 typing_extensions >= 4.15.0
+pydantic-ai >= 1.76.0
+python-dotenv >= 1.0.0
 ```
 
 ## 安装
 
 ```bash
-pip install manim manim-voiceover edge-tts pydantic
+pip install manim manim-voiceover edge-tts pydantic pydantic-ai python-dotenv
 ```
 
 如果 manim 导入报错 `cannot import name 'TypeIs'`，需要升级 typing_extensions：
@@ -51,8 +53,38 @@ python -m md2video example/example.md -o artifacts/output.mp4
 --voice VOICE       TTS 语音 (默认: zh-CN-YunxiNeural)
 --speed SPEED       TTS 语速 (默认: 1.0)
 --artifacts DIR     产物目录 (默认: artifacts/)
+--planner TYPE      Planner 类型: rule（默认）或 llm
 -o, --output FILE   输出文件路径 (默认: output.mp4)
 ```
+
+### LLM Planner
+
+默认使用 Rule Planner（纯规则分组，无需 API Key）。如需 LLM 语义分组：
+
+1. 复制 `.env.example` 为 `.env`，填入配置：
+
+```env
+MD2VIDEO_PLANNER=llm
+OPENAI_API_KEY=sk-your-key-here
+MD2VIDEO_LLM_MODEL=openai:gpt-4o
+# MD2VIDEO_LLM_BASE_URL=https://api.openai.com/v1
+```
+
+2. 运行：
+
+```bash
+python -m md2video example/example.md -o artifacts/output.mp4 --planner llm
+```
+
+**支持的模型格式**（通过 `MD2VIDEO_LLM_MODEL` 配置）：
+
+| 格式 | 示例 | 说明 |
+|------|------|------|
+| OpenAI | `openai:gpt-4o` | 官方 OpenAI API |
+| OpenAI 兼容 | `openai:gpt-4o` + 设 `MD2VIDEO_LLM_BASE_URL` | 中转站、本地部署等 |
+| Anthropic | `anthropic:claude-sonnet-4-5` | 需设 `ANTHROPIC_API_KEY` |
+
+LLM 调用失败时会自动 fallback 到 Rule Planner，不影响正常使用。
 
 ## 架构
 
@@ -63,15 +95,27 @@ Markdown → Parser → Plan Manifest → Planner → TTS → Result Manifest �
 核心概念：
 
 - **Segment**：最小时间单元（一句话），TTS 以 Segment 为单位合成语音
-- **Scene**：语义单元，由 Planner 将多个 Segment 分组而成，共享同一个视觉方案
+- **Shot**：最小连续视觉单元，由连续的 Segment 组成，每个 Shot 调用一个工具
+- **Scene**：视觉模板（风格组），由 Planner 定义 3~5 个模板，相同模板的 Shot 归入同一个 Scene
 
 数据流：
 
 1. **Parser** 将 Markdown 解析为 Segment 列表
-2. **Planner** 将 Segment 语义分组为 Scene，并为每个 Scene 决定视觉方案
+2. **Planner** 将 Segment 分组为 Shot（镜头），并为每个 Shot 分配 Scene 模板（视觉方案）
 3. **TTS** 为每个 Segment 预生成语音
 4. **Manim Renderer** 按 Scene 粒度渲染动画
 5. **FFmpeg Assembler** 拼接视频、混入语音、叠加音乐和图片
+
+### Planner
+
+提供两种可互换的 Planner 实现，输入输出格式完全相同：
+
+- **Rule Planner**（默认）：基于规则的分组，无需 API Key，稳定可预测
+- **LLM Planner**：两阶段语义规划
+  - 全局定调：输入完整 Markdown，LLM 定义 3~5 个 Scene 视觉模板
+  - 局部分镜：按章节分块，每块独立调 LLM 映射 Shot 到 Scene 模板
+  - 框架重组：合并映射、校验完整性、拆分显式指令
+  - 失败时自动 fallback 到 Rule Planner
 
 ## Markdown 语法
 
@@ -132,16 +176,17 @@ Markdown → Parser → Plan Manifest → Planner → TTS → Result Manifest �
 
 ```
 md2video/              # 核心代码
-    manifest/          # Plan/Result Manifest 数据模型 (含 Scene)
+    manifest/          # Plan/Result Manifest 数据模型 (含 Segment + Shot + Scene)
     parser/            # Markdown 解析
     tools/tts/         # TTS 工具 (edge-tts)
     tools/render/      # Manim 渲染 + CachedVoiceService
     assembler/         # FFmpeg 合成
-    core/              # Pipeline 编排 + Planner
+    core/              # Pipeline 编排
+        planner/       # Planner (Rule + LLM 两阶段)
     cli.py             # 命令行入口
     config.py          # 配置常量
 example/               # 示例 Markdown
-tests/                 # 单元测试
+tests/                 # 单元测试 (187 tests)
 artifacts/             # 生成的中间产物（gitignored）
 changelog/             # 变更日志
 ```

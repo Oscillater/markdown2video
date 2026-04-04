@@ -51,31 +51,45 @@ Markdown → Parser → Plan Manifest → Planner → TTS Tool → Result Manife
 
 **Key Concepts**:
 - **Segment**: Minimum time unit (one sentence). TTS operates per-segment.
-- **Scene**: Semantic unit. Planner groups multiple Segments into a Scene that shares one visual plan.
+- **Shot**: Minimum continuous visual unit. Groups consecutive Segments; each Shot invokes one tool.
+- **Scene**: Semantic style group. Planner groups Shots into Scenes that share a visual plan.
 - **Manifest is the single data flow**: No direct tool-to-tool communication.
 
 **Key Design**:
 - **Two-pass TTS**: TTS audio is pre-computed before Manim rendering via standalone `EdgeTTSTool`
 - **CachedVoiceService**: Bridges pre-computed audio into Manim's `VoiceoverScene` without re-generating
 - **Scene-based rendering**: Renderer iterates over Scenes, not individual Segments
+- **Two-pass LLM Planner**: Global Blueprint (define scene templates) → Chunk Mapping (per-chapter shot mapping) → Reconcile (merge + validate). Scene = visual template, shots sharing the same scene_id merge into one ScenePlan.
 
 ### Core Components
 
 1. **Manifest Schema (`manifest/schema.py`)**: Pydantic models defining Plan Manifest and Result Manifest.
    - `SegmentPlan`: single segment's text, type, audio_request, visual_type
-   - `ScenePlan`: groups segment_ids, visual_type, visual_params, section_context
+   - `ShotPlan`: groups consecutive segment_ids (minimum visual unit)
+   - `ScenePlan`: groups shots, visual_type, visual_params, section_context
    - `SegmentResult`: audio path, duration, start/end times
-   - `SceneResult`: aggregated start/end from segments, visual result
+   - `ShotResult`: aggregated start/end from segments, visual result
+   - `SceneResult`: aggregated start/end from shots, backward-compatible with segment_ids
    - `PlanManifest`: segments + scenes + media_declarations
-   - `ResultManifest`: segments + scenes (scenes built from segment start/end)
+   - `ResultManifest`: segments + scenes (scenes built from shot results)
 
 2. **Parser (`parser/`)**: Markdown parsing → Plan Manifest
    - `md_parser.py`: `parse_to_plan_manifest(md_path)` returns `PlanManifest`
    - `segmenter.py`: Chinese text sentence splitting
 
-3. **Planner (`core/planner/rule_planner.py`)**: Rule-based scene grouping
-   - Groups segments into scenes by type rules (title, marker, section_header, content length)
-   - `denormalize_scenes_to_segments()`: copies scene visual info back to non-explicit segments
+3. **Planner (`core/planner/`)**: Two implementations with identical `plan(segments) → List[ScenePlan]` interface
+   - **Rule Planner (`rule_planner.py`)**: Rule-based scene grouping by segment type and character count
+     - Each scene maps 1:1 to a shot (Shot ID globally sequential)
+     - `denormalize_scenes_to_segments()`: copies scene visual info back to non-explicit segments
+   - **LLM Planner (`llm_planner.py`)**: Two-pass global orchestration
+     - **Pass 1 `_global_blueprint()`**: Full Markdown → LLM defines 3~5 Scene templates (Scene Registry)
+     - **Pass 2 `_chunk_mapping()`**: Per-chapter chunks → LLM maps shots to scene templates
+     - **Pass 3 `_reconcile()`**: Merges chunk results → groups by scene_id → validates → splits explicit
+     - `_split_chunks()`: Splits by section_context + MAX_CHUNK_SEGS (30)
+     - `_validate_text_integrity()`: Ensures all segments are covered
+     - Uses `pydantic-ai` Agent with `tool_plain` for structured output (compatible with API proxies)
+     - Auto-falls back to RulePlanner on any failure
+   - Config: `.env` with `MD2VIDEO_PLANNER=llm`, `OPENAI_API_KEY`, `MD2VIDEO_LLM_MODEL`, `MD2VIDEO_LLM_BASE_URL`
 
 4. **TTS Tool (`tools/tts/edge_tts.py`)**: Standalone edge-tts, no manim dependency
    - `EdgeTTSTool.synthesize(text, voice, speed)` → `{path, duration, provider, cache_key}`
@@ -86,6 +100,7 @@ Markdown → Parser → Plan Manifest → Planner → TTS Tool → Result Manife
 
 6. **Manim Renderer (`tools/render/manim_renderer.py`)**: `ManifestDrivenScene`
    - `_construct_by_scenes()`: iterates over scenes, renders segments within each
+   - Uses `scene.all_segment_ids` (property that expands shots' segment_ids)
    - `_construct_flat()`: Phase 1 compat fallback when `plan.scenes` is empty
    - Helper methods: `_render_segment()`, `_render_section_header()`, `_render_title()`, `_setup_dot_animation()`, `_finish()`
 
@@ -94,20 +109,21 @@ Markdown → Parser → Plan Manifest → Planner → TTS Tool → Result Manife
    - Scene-based visual loop placeholder (Phase 2B: image overlays)
 
 8. **Pipeline (`core/pipeline.py`)**: Orchestrates Parser → Planner → TTS → Render → Assemble
-   - `_build_scene_results()`: aggregates segment start/end into SceneResult
+   - `_build_scene_results()`: builds ShotResult from segment times, then aggregates into SceneResult
 
 9. **CLI (`cli.py`)**: Entry point `python -m md2video <input.md>`
 
 ### File Structure
 
 - `md2video/`: Core pipeline
-  - `manifest/schema.py`: Pydantic models (Segment + Scene, Plan + Result Manifest)
+  - `manifest/schema.py`: Pydantic models (Segment + Shot + Scene, Plan + Result Manifest)
   - `parser/`: Markdown → Plan Manifest
   - `tools/tts/edge_tts.py`: Standalone TTS tool
   - `tools/render/`: CachedVoiceService + Manim renderer
   - `assembler/ffmpeg_assembler.py`: FFmpeg post-processing
   - `core/pipeline.py`: Pipeline orchestrator
-  - `core/planner/rule_planner.py`: Rule-based scene grouping
+  - `core/planner/rule_planner.py`: Rule-based scene grouping (Scene → Shot 1:1 mapping)
+  - `core/planner/llm_planner.py`: Two-pass LLM planner (Blueprint → Chunk Mapping → Reconcile)
   - `cli.py`: Entry point `python -m md2video`
   - `config.py`: Layout constants and defaults
 - `example/`: Example Markdown

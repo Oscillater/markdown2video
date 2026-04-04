@@ -586,23 +586,23 @@ providers:
 | 当前文件 | 对应新模块 | 状态 |
 |----------|-----------|------|
 | `md_parser.py` | Parser + Segmenter | ✅ 已完成 |
-| `schema.py` | Manifest Schema（Plan + Result） | ⚠️ 需新增 ShotPlan / ShotResult |
-| `rule_planner.py` | Rule Planner（兜底 Planner） | ⚠️ 需适配：输出包含 Shot |
-| `pipeline.py` | Pipeline 编排器 | ⚠️ 需适配：可插拔 Planner + Shot 粒度 |
+| `schema.py` | Manifest Schema（Plan + Result） | ✅ 已完成（含 ShotPlan / ShotResult） |
+| `rule_planner.py` | Rule Planner（兜底 Planner） | ✅ 已完成（每个 Scene 1:1 Shot） |
+| `pipeline.py` | Pipeline 编排器 | ✅ 已完成（构建 ShotResult） |
 | `manim_renderer.py` | Manim Render Tool | ✅ 已完成（后续适配 Tool 接口） |
 | `ffmpeg_assembler.py` | Assembler | ⚠️ 需适配：按 Shot 粒度叠加视觉产物 |
 | `edge_tts.py` | TTS Tool | ✅ 已完成（后续适配 Tool 接口） |
 | `cached_voice.py` | CachedVoiceService | ✅ 已完成 |
-| （新增） | ShotPlan / ShotResult 数据模型 | Phase 2 |
-| （新增） | LLM Planner | Phase 2 |
+| ~~（新增）~~ | ShotPlan / ShotResult 数据模型 | ✅ 已完成 |
+| （新增） | LLM Planner（两阶段全局导演） | ✅ Phase 2B |
 | （新增） | Tool 统一接口 + 注册机制 | Phase 3 |
 | （新增） | Fallback 框架 | Phase 3 |
 | （新增） | Image Tool（Pexels API 等） | Phase 4 |
 
 **当前代码现状：**
-- 两层数据模型（Segment → Scene），没有 Shot 层
-- RulePlanner 输出 `List[ScenePlan]`，Scene 直接包含 `segment_ids`（无 Shot）
-- Manim 渲染器将整个视频渲染为一个 Manim Scene，ScenePlan 仅用于迭代顺序
+- 三层数据模型（Segment → Shot → Scene），Shot 层已引入
+- RulePlanner 每个 Scene 1:1 映射一个 Shot（行为不变，结构升级），为后续 LLM Planner 做准备
+- Manim 渲染器使用 `scene.all_segment_ids` 遍历 segment，ScenePlan 用于迭代顺序
 - FFmpeg Assembler 接收单个渲染后的 .mp4，叠加音乐/图片，scene 循环当前为 no-op
 
 ---
@@ -613,28 +613,55 @@ providers:
 
 已完成的工作：Manifest schema、Scene 数据模型、Rule Planner、Scene 粒度渲染、FFmpeg 合成、单元测试（127 tests）。
 
-**当前代码状态：两层模型（Segment → Scene），Pipeline 线性编排（Parse → Plan → TTS → Render → Assemble），所有 Scene 默认 `visual_type="text_only"`。**
-
-### Phase 2：Shot 层 + LLM Planner
+### Phase 2：Shot 层 + LLM Planner ✅
 
 引入 Shot（镜头）作为时间连续的最小视觉单元，同时实现 LLM Planner 做语义决策。
 
-**2A：Shot 数据模型 + Schema 升级**
-- [ ] 在 `schema.py` 中新增 `ShotPlan`（id, segment_ids）和 `ShotResult`（id, segment_ids, start, end, visual）
-- [ ] `ScenePlan` 改为包含 `shots: List[ShotPlan]`，移除直接的 `segment_ids`
-- [ ] `SceneResult` 改为包含 `shots: List[ShotResult]`
-- [ ] RulePlanner 适配：每个当前 Scene 拆为一个 Shot（1:1 映射，行为不变）
-- [ ] Pipeline 适配：构建 ShotResult，更新 `_build_scene_results`
-- [ ] 单元测试更新
+**2A：Shot 数据模型 + Schema 升级 ✅**
+- [x] 在 `schema.py` 中新增 `ShotPlan`（id, segment_ids）和 `ShotResult`（id, segment_ids, start, end, visual）
+- [x] `ScenePlan` 改为包含 `shots: List[ShotPlan]`，保留 `segment_ids` 向后兼容字段（exclude=True）
+- [x] `SceneResult` 改为包含 `shots: List[ShotResult]`，同样向后兼容
+- [x] RulePlanner 适配：每个 Scene 1:1 映射一个 Shot（Shot ID 全局递增），行为不变
+- [x] Pipeline 适配：`_build_scene_results()` 先构建 ShotResult，再聚合为 SceneResult
+- [x] Manim Renderer 适配：`scene.segment_ids` → `scene.all_segment_ids`
+- [x] 单元测试更新（test_schema +11 tests, test_rule_planner +1 test）
+- [x] 旧 JSON 向后兼容（`model_validator` 自动迁移 `segment_ids` 为单 Shot）
 
-**2B：LLM Planner**
-- [ ] 实现 LLM Planner 类（与 RulePlanner 相同接口：`plan(segments) → List[ScenePlan]`）
-- [ ] LLM Prompt 设计：输入 segment 文本 + 上下文，输出 Scene（风格组）+ Shot（镜头划分）+ `visual_type` + `visual_params`
-- [ ] LLM 输出强 schema 校验（校验失败时 fallback 到 Rule Planner）
-- [ ] `config.yaml` 配置：切换 `rule` / `llm` Planner
-- [ ] LLM API Key 配置（从环境变量或 `.env` 读取）
+**当前代码状态：三层模型（Segment → Shot → Scene），Pipeline 线性编排（Parse → Plan → TTS → Render → Assemble），所有 Scene 默认 `visual_type="text_only"`，RulePlanner 每个 Scene 1:1 映射 Shot。**
 
-**产出：三层模型（Segment → Shot → Scene）建立。LLM 能理解语义，自动完成 Shot 划分 + Scene 聚合 + 视觉决策。无 key 用户仍使用 Rule Planner 兜底（1:1 Shot 映射）。**
+**2B：LLM Planner 两阶段全局导演方案 ✅**
+
+两阶段方案已实现，取代初版单阶段调用。
+
+**架构**：
+- **Scene 就是视觉模板**（Style Class），相同模板的 Shot 合并到同一个 Scene
+- **Shot 是镜头实例**（Instance），每个 Shot 引用一个 Scene 模板并映射连续 Segment
+- LLM 负责"定义风格"和"语义分镜"，框架负责重组校验
+
+**三阶段流程**：
+1. **全局定调 `_global_blueprint()`**：输入完整 Markdown 原文 → LLM 定义 3~5 个 Scene 模板（Scene Registry）
+2. **局部分镜 `_chunk_mapping()`**：按章节分块，每块独立调 LLM → Shot 划分 + Scene 模板映射
+3. **框架重组 `_reconcile()`**：合并多 chunk 映射 → 按 scene_id 合并为 ScenePlan → 校验（去重/连续/完整/文本完整性）→ explicit 拆分
+
+**已实现**：
+- [x] `SceneTemplate` 数据结构：id, name, description, visual_type, visual_params
+- [x] `BlueprintOutput` / `ChunkMappingOutput` / `ShotMapping` 数据结构
+- [x] `_global_blueprint()`：第一阶段 LLM 调用，通过 `submit_blueprint` tool 提交
+- [x] `_chunk_mapping()`：第二阶段 LLM 调用，通过 `submit_chunk_mapping` tool 提交
+- [x] `_split_chunks()`：按 section_context + MAX_CHUNK_SEGS 分块，title 归入首块
+- [x] `_reconcile()`：按 scene_id 合并相同模板的 Shot 为同一 Scene
+- [x] `_validate_text_integrity()`：文本完整性检查
+- [x] explicit segment 保护：拆为 singleton scene，保留原 visual_type
+- [x] 旧版 `_convert()` 保留为兼容方法（11 个旧测试通过）
+- [x] 单元测试：25 tests（split_chunks + reconcile + text_integrity + convert + fallback）
+- [x] `__init__.py` 懒导出新类型
+- [x] `config.py` 新增 `MAX_CHUNK_SEGS = 30`
+
+**当前代码状态：三层模型（Segment → Shot → Scene），LLM Planner 两阶段方案已跑通，Scene 按模板合并。CLI `--planner rule|llm` 切换，LLM 失败自动 fallback 到 Rule Planner。**
+
+**已知问题**：
+- LLM 分镜阶段的 prompt 仍需调优（可能出现语义分组不合理的情况，如非连续段落归入同一 scene）
+- Scene Registry 的模板信息未写入 plan.json（scene 只存 visual_type/visual_params 副本）
 
 ### Phase 3：工具接口 + 基础设施
 

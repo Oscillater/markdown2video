@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from pathlib import Path
+
+# 加载 .env（如存在）
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
 
 # Manim 渲染配置
 MANIM_FRAME_RATE = 30
@@ -35,3 +44,29 @@ CACHE_DIR = ARTIFACTS_DIR / "cache"
 
 # Scene 分组
 MAX_SCENE_CHARS = 200  # 单 scene 内 content 累计字符上限
+
+# LLM Planner 分块
+MAX_CHUNK_SEGS = 30    # 单 chunk 最大 segment 数
+
+
+# ==================== Planner 配置 ====================
+
+@dataclass
+class PlannerConfig:
+    default: str = "rule"          # "rule" or "llm"
+    model: str = "openai:gpt-4o"  # pydantic-ai model string
+    api_key: str = ""             # 优先读 OPENAI_API_KEY / ANTHROPIC_API_KEY
+    base_url: str = ""            # 可选，兼容 API 地址
+
+
+def load_planner_config() -> PlannerConfig:
+    """从环境变量加载 planner 配置。"""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    return PlannerConfig(
+        default=os.environ.get("MD2VIDEO_PLANNER", "rule"),
+        model=os.environ.get("MD2VIDEO_LLM_MODEL", "openai:gpt-4o"),
+        api_key=api_key,
+        base_url=os.environ.get("MD2VIDEO_LLM_BASE_URL", ""),
+    )
