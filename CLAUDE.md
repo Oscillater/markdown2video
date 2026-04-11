@@ -93,7 +93,8 @@ Markdown → Parser → Plan Manifest → Planner → TTS Tool → Result Manife
 
 4. **TTS Tool (`tools/tts/edge_tts.py`)**: Standalone edge-tts, no manim dependency
    - `EdgeTTSTool.synthesize(text, voice, speed)` → `{path, duration, provider, cache_key}`
-   - Caches to `artifacts/tts/`
+   - Implements `Tool` Protocol: `tool_type="tts"`, `provider_name="edge-tts"`, `execute(input) → output`
+   - Caches to `artifacts/tts/` via unified `ToolCache` (sha256 keys)
 
 5. **CachedVoiceService (`tools/render/cached_voice.py`)**: Bridge for Manim
    - Returns pre-computed audio paths during `VoiceoverScene.voiceover()` calls
@@ -109,23 +110,35 @@ Markdown → Parser → Plan Manifest → Planner → TTS Tool → Result Manife
    - Scene-based visual loop placeholder (Phase 2B: image overlays)
 
 8. **Pipeline (`core/pipeline.py`)**: Orchestrates Parser → Planner → TTS → Render → Assemble
+   - Creates `ToolRegistry`, registers `EdgeTTSTool` and `ManimRenderTool`
+   - TTS dispatches via `registry.get_tool("tts", "edge-tts").execute({...})`
+   - Render dispatches via `_dispatch_tool()` with priority chain and `_text_only` fallback
    - `_build_scene_results()`: builds ShotResult from segment times, then aggregates into SceneResult
+   - `_fill_target_durations()`: fills `ShotPlan.target_duration` from TTS segment durations
 
-9. **CLI (`cli.py`)**: Entry point `python -m md2video <input.md>`
+9. **Tool Infrastructure (`tools/`)**: Unified tool interface, adapter, registry, and cache
+   - `protocol.py`: `Tool` Protocol (`tool_type`, `provider_name`, `execute(input) → output`)
+   - `adapter.py` / `adapter_impl.py`: `Adapter` Protocol + InProcess / CLI / HTTP implementations
+   - `registry.py`: `ToolRegistry` — maps `visual_type + provider_name → Tool` instance
+   - `cache.py`: `ToolCache` — unified caching by `tool_type + sha256(params)`
+   - `config.py`: `ToolConfig` with `DEFAULT_TOOL_PRIORITY` dict per visual_type
+
+10. **CLI (`cli.py`)**: Entry point `python -m md2video <input.md>`
 
 ### File Structure
 
 - `md2video/`: Core pipeline
   - `manifest/schema.py`: Pydantic models (Segment + Shot + Scene, Plan + Result Manifest)
   - `parser/`: Markdown → Plan Manifest
-  - `tools/tts/edge_tts.py`: Standalone TTS tool
-  - `tools/render/`: CachedVoiceService + Manim renderer
+  - `tools/`: Tool infrastructure (Protocol, Adapter, Registry, Cache)
+  - `tools/tts/edge_tts.py`: TTS tool (implements Tool Protocol)
+  - `tools/render/`: Manim renderer + CachedVoiceService + ManimRenderTool stub
   - `assembler/ffmpeg_assembler.py`: FFmpeg post-processing
-  - `core/pipeline.py`: Pipeline orchestrator
+  - `core/pipeline.py`: Pipeline orchestrator (Registry-based dispatch)
   - `core/planner/rule_planner.py`: Rule-based scene grouping (Scene → Shot 1:1 mapping)
   - `core/planner/llm_planner.py`: Two-pass LLM planner (Blueprint → Chunk Mapping → Reconcile)
   - `cli.py`: Entry point `python -m md2video`
-  - `config.py`: Layout constants and defaults
+  - `config.py`: Layout constants, PlannerConfig, ToolConfig
 - `example/`: Example Markdown
 - `tests/`: Unit tests
 - `artifacts/`: Generated intermediate files (gitignored)

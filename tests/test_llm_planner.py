@@ -267,7 +267,7 @@ class TestReconcile:
             ),
             SceneTemplate(
                 id="SCENE_IMAGE", name="配图", description="配图讲解",
-                visual_type="stock_image", visual_params={"query": "AI", "fallback": "text_only"},
+                visual_type="stock_image", visual_params={"query": "AI", "preferred_provider": "pexels"},
             ),
         ]
 
@@ -290,7 +290,7 @@ class TestReconcile:
         assert scenes[0].visual_type == "text_only"
         assert scenes[0].shots[0].segment_ids == ["s1", "s2"]
         assert scenes[1].visual_type == "stock_image"
-        assert scenes[1].visual_params == {"query": "AI", "fallback": "text_only"}
+        assert scenes[1].visual_params == {"query": "AI", "preferred_provider": "pexels"}
 
     def test_reconcile_sequential_ids(self):
         """多 chunk 合并后 scene/shot ID 全局递增，相同 scene_id 合并。"""

@@ -20,7 +20,7 @@ class SceneTemplate(BaseModel):
     id: str                          # e.g. "SCENE_CONCEPT"
     name: str                        # e.g. "科技概念讲解"
     description: str                 # LLM 对该风格的描述
-    visual_type: str                 # text_only / stock_image / stock_video
+    visual_type: str                 # text_only / stock_image / stock_video / manim
     visual_params: Dict = Field(default_factory=dict)
 
 
@@ -69,9 +69,9 @@ For each template, decide:
 - id: short uppercase identifier (e.g. SCENE_CONCEPT, SCENE_NARRATIVE)
 - name: short Chinese name (e.g. "概念讲解", "叙事抒情")
 - description: what kind of content this style is for
-- visual_type: one of [text_only, stock_image, stock_video]
+- visual_type: one of [text_only, stock_image, stock_video, manim]
 - visual_params: if stock_image/stock_video, include "query" with English keywords; \
-always include "fallback" as a visual type to use when the image/video fails
+optionally include "preferred_provider" as a suggested provider name (e.g. "pexels")
 
 Rules:
 1. text_only is for abstract/analytical content with no clear visual
@@ -145,7 +145,7 @@ Rules:
 1. Every segment must appear in exactly one shot, no gaps, no duplicates.
 2. Shots contain consecutive segments in the order given.
 3. Multiple shots can share the same scene (same visual_type + visual_params).
-4. Available visual types: text_only, stock_image, stock_video.
+4. Available visual types: text_only, stock_image, stock_video, manim.
 5. For stock_image/stock_video, set visual_params.query to English keywords for image search.
 6. Default visual_type is "text_only" when no specific visual is needed.
 7. [EXPLICIT] tagged segments will be split out by the system automatically. Just include them normally.

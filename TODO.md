@@ -146,8 +146,7 @@ Manifest 分为两个阶段，每个阶段都有 Segment 层、Shot 层和 Scene
       "text": "神经网络就像一个复杂的大脑",
       "visual_type": "stock_image",
       "visual_params": {
-        "query": "neural network abstract",
-        "fallback": "text_only"
+        "query": "neural network abstract"
       },
       "audio_request": {
         "voice": "zh-CN-YunxiNeural",
@@ -176,8 +175,7 @@ Planner 产出的分组结构填入 Plan Manifest：
       "id": "scene_001",
       "visual_type": "stock_image",
       "visual_params": {
-        "query": "neural network abstract",
-        "fallback": "text_only"
+        "query": "neural network abstract"
       },
       "section_context": "什么是神经网络",
       "shots": [
@@ -315,7 +313,7 @@ Planner 的职责：接收 Segment 列表，完成三件事：
     {"id": "seg_003", "text": "深度学习是神经网络的一种", "section": "深度学习"}
   ],
   "media_declarations": {"music": {}, "images": {}},
-  "available_visual_types": ["text_only", "stock_image", "stock_video", "manim_template"]
+  "available_visual_types": ["text_only", "stock_image", "stock_video", "manim"]
 }
 ```
 
@@ -327,12 +325,11 @@ Planner 的职责：接收 Segment 列表，完成三件事：
       "id": "scene_001",
       "visual_type": "stock_image",
       "visual_params": {
-        "query": "neural network abstract",
-        "fallback": "text_only"
+        "query": "neural network abstract"
       },
       "shots": [
-        {"id": "shot_001", "segment_ids": ["seg_001", "seg_002"], "confidence": 0.85},
-        {"id": "shot_002", "segment_ids": ["seg_003"], "confidence": 0.80}
+        {"id": "shot_001", "segment_ids": ["seg_001", "seg_002"]},
+        {"id": "shot_002", "segment_ids": ["seg_003"]}
       ],
       "section_context": "什么是神经网络"
     },
@@ -341,7 +338,7 @@ Planner 的职责：接收 Segment 列表，完成三件事：
       "visual_type": "text_only",
       "visual_params": {},
       "shots": [
-        {"id": "shot_003", "segment_ids": ["seg_004"], "confidence": 0.95}
+        {"id": "shot_003", "segment_ids": ["seg_004"]}
       ],
       "section_context": "深度学习"
     }
@@ -355,9 +352,24 @@ Planner 的职责：接收 Segment 列表，完成三件事：
 
 ### 3.5 Tools（工具层）
 
-工具是框架的外部执行器。每个工具契约：**固定输入 → 执行 → 固定输出 + 产物文件**。
+工具是框架的外部执行器。每个工具契约：**固定输入（JSON）→ 执行 → 固定输出（JSON）+ 产物文件**。
 
 工具不持有全局状态，不做拼接，不做编排。
+
+**工具与框架语言无关**：工具可以用任何语言实现（Python、TypeScript、Go 等），框架只关心输入输出的 JSON 契约。执行方式由适配器决定：
+
+| 执行方式 | 示例 | 适用场景 |
+|----------|------|----------|
+| 进程内调用 | `EdgeTTSTool.synthesize()` | Python 实现的工具，直接 import 调用 |
+| CLI 子进程 | `ffmpeg -i ...` | 命令行工具，通过 stdin/stdout 传 JSON |
+| HTTP API | `POST /render` → Remotion 服务 | 独立服务（如 Node.js 的 Remotion），通过 HTTP 调用 |
+| 外部 API | Pexels / Pixabay REST API | 第三方云服务 |
+
+**工具接口 Protocol 只定义 JSON 契约，不绑定执行方式**。每种执行方式对应一个适配器（Adapter），Pipeline 通过适配器统一调度。适配器负责：
+- 进程内 → 直接调用方法，返回 dict
+- CLI → 子进程执行，解析 stdout JSON
+- HTTP → 发送请求，解析响应 JSON
+- 外部 API → HTTP 客户端调用，解析响应
 
 工具按产物类型分为三大类：
 
@@ -382,7 +394,6 @@ Planner 的职责：接收 Segment 列表，完成三件事：
 {
   "path": "./artifacts/xxx.mp3",
   "duration": 2.34,
-  "sample_rate": 24000,
   "provider": "edge-tts",
   "cache_key": "abc123"
 }
@@ -392,6 +403,11 @@ Planner 的职责：接收 Segment 列表，完成三件事：
 - Azure TTS / Google TTS / ChatTTS 等其他 TTS Provider
 - 音效生成工具（如 AI 环境音效生成）
 - 背景音乐生成工具（AI 作曲）
+
+**当前实现状态**：
+- `EdgeTTSTool.synthesize(text, voice, speed, fmt)` → `{path, duration, provider, cache_key}`
+- Pipeline 直接实例化 `EdgeTTSTool`，无接口抽象
+- 需适配 Tool 接口（不改功能，只套统一抽象）
 
 #### Image Tools（图片工具）
 
@@ -473,6 +489,13 @@ Planner 的职责：接收 Segment 列表，完成三件事：
 - 世界模型驱动视频（如操控机械臂等物理世界模型生成特定动作的视频片段）
 - Manim 模板渲染（将当前 construct() 方法中的效果拆为可复用模板：标题卡、流程图、关键词高亮等）
 
+**当前实现状态**：
+- `ManifestDrivenScene` 是一个 Manim `VoiceoverScene` 子类，通过 `construct()` 入口执行渲染
+- Pipeline **不直接调用**，而是通过子进程执行 `manim render manifest_scene.py ManifestDrivenScene`
+- 输入输出通过**文件系统传递**（plan.json、result.json → 渲染 → .mp4 + timeline.json），非方法调用
+- `CachedVoiceService` 是兼容层，将预生成的 TTS 音频桥接进 Manim 的 `voiceover()` 上下文
+- **适配难点**：子进程执行模式与 Tool 统一接口（进程内方法调用）差异较大，需要封装为接口适配器
+
 ---
 
 ### 3.6 Assembler（合成器）
@@ -524,17 +547,51 @@ Assembler 不关心片段从哪里来，只消费标准化产物。
 
 ---
 
-## 4. Fallback 策略
+## 4. 工具优先级
 
-框架内建三级 Fallback，每个工具调用都可配置：
+框架不硬编码 Fallback 逻辑，工具选择由两层协作完成：**LLM 指定 Provider，用户优先级序列兜底**。
 
-| 级别 | 策略 | 示例 |
-|------|------|------|
-| L1 | 同 Provider 重试 | edge-tts 超时，重试一次 |
-| L2 | 换 Provider | pexels 无结果，换 pixabay |
-| L3 | 降级输出 | 图片搜索失败，改用纯文字动画片段 |
+**设计原则**：
+- "Fallback"本质是工具优先级问题，应由用户控制，而非框架硬编码
+- **LLM Planner 负责选择工具**：为每个 Scene 决定 `visual_type` 并可在 `visual_params.preferred_provider` 中指定首选 Provider（如 `pexels`）
+- **用户优先级序列兜底**：LLM 指定的 Provider 失败后，按用户配置的 `tool_priority` 序列依次尝试剩余选项
+- 不同 `visual_type` 的容错策略差异很大，强行统一为 L1/L2/L3 三级反而别扭
 
-Manifest 中每个 Scene 的 `visual_params.fallback` 字段由 Planner 填写，框架在每个 Shot 调用工具时执行。
+**用户配置示例**：
+
+```yaml
+# config.yaml
+tool_priority:
+  stock_image:
+    - pexels          # 优先 Pexels
+    - pixabay         # Pexels 失败用 Pixabay
+    - _text_only      # 都没有就降级为纯文字
+
+  stock_video:
+    - pexels_video
+    - pixabay_video
+    - _text_only
+
+  tts:
+    - edge-tts        # 优先 edge-tts
+    - azure-tts       # edge-tts 失败用 Azure
+
+  text_only:
+    - manim           # 只有一种实现，无需降级
+```
+
+**执行逻辑**：
+1. Pipeline 收到 Shot 的 `visual_type`（由 Planner 决定）和 `visual_params.preferred_provider`（可选，LLM 指定）
+2. 如果有 `preferred_provider`，优先尝试该 Provider
+3. `preferred_provider` 失败（或未指定），查 `tool_priority[visual_type]` 获取用户配置的优先级序列
+4. 按顺序尝试序列中的每个 Provider，跳过已尝试过的，第一个成功即返回结果
+5. 特殊标识 `_text_only` 表示降级为纯文字渲染（Manim），不需要额外 Provider
+6. 全部失败 → 记录 warning，该 Shot 降级为 `text_only`
+
+**示例**：LLM 为某 Scene 指定 `visual_type="stock_image"`, `preferred_provider="pexels"`
+→ 优先用 Pexels → Pexels 失败 → 按用户序列尝试 Pixabay → 都失败 → 降级为 `text_only`
+
+**注意**：`visual_params.fallback` 字段已废弃。`visual_params.preferred_provider` 是 LLM 的建议，用户优先级序列是最终兜底。
 
 ---
 
@@ -557,17 +614,25 @@ Manifest 中每个 Scene 的 `visual_params.fallback` 字段由 Planner 填写�
 用户在项目根目录的 `.env` 或 `config.yaml` 中填写：
 
 ```yaml
-providers:
-  tts:
-    default: edge-tts          # 无需 key
-    fallback: azure-tts
-    azure-tts:
-      api_key: ${AZURE_TTS_KEY}
+tool_priority:
+  stock_image:
+    - pexels
+    - pixabay
+    - _text_only
 
+  tts:
+    - edge-tts          # 无需 key
+    - azure-tts
+
+providers:
   image:
-    default: pexels
     pexels:
       api_key: ${PEXELS_API_KEY}
+    pixabay:
+      api_key: ${PIXABAY_API_KEY}
+  tts:
+    azure-tts:
+      api_key: ${AZURE_TTS_KEY}
 
   planner:
     default: rule              # 默认使用规则，不需要 key
@@ -589,18 +654,22 @@ providers:
 | `schema.py` | Manifest Schema（Plan + Result） | ✅ 已完成（含 ShotPlan / ShotResult） |
 | `rule_planner.py` | Rule Planner（兜底 Planner） | ✅ 已完成（每个 Scene 1:1 Shot） |
 | `pipeline.py` | Pipeline 编排器 | ✅ 已完成（构建 ShotResult） |
-| `manim_renderer.py` | Manim Render Tool | ✅ 已完成（后续适配 Tool 接口） |
+| `manim_renderer.py` | Manim Render Tool | ✅ 已完成（已适配 Tool 接口） |
 | `ffmpeg_assembler.py` | Assembler | ⚠️ 需适配：按 Shot 粒度叠加视觉产物 |
-| `edge_tts.py` | TTS Tool | ✅ 已完成（后续适配 Tool 接口） |
+| `edge_tts.py` | TTS Tool | ✅ 已完成（已适配 Tool 接口） |
 | `cached_voice.py` | CachedVoiceService | ✅ 已完成 |
 | ~~（新增）~~ | ShotPlan / ShotResult 数据模型 | ✅ 已完成 |
 | （新增） | LLM Planner（两阶段全局导演） | ✅ Phase 2B |
-| （新增） | Tool 统一接口 + 注册机制 | Phase 3 |
-| （新增） | Fallback 框架 | Phase 3 |
+| （新增） | Tool 统一接口 + 注册机制 | ✅ Phase 3 |
+| （新增） | 工具优先级 + 优先级链调度 | ✅ Phase 3 |
+| （新增） | 统一缓存层 | ✅ Phase 3 |
+| （新增） | 时长对齐契约（target_duration） | ✅ Phase 3 |
 | （新增） | Image Tool（Pexels API 等） | Phase 4 |
 
 **当前代码现状：**
 - 三层数据模型（Segment → Shot → Scene），Shot 层已引入
+- Tool Protocol + Registry + Priority Dispatch 已建立，Pipeline 按 visual_type 动态调度
+- EdgeTTSTool 已适配 Tool Protocol，Manim 渲染走 CLI 特殊路径（Phase 5 迁移）
 - RulePlanner 每个 Scene 1:1 映射一个 Shot（行为不变，结构升级），为后续 LLM Planner 做准备
 - Manim 渲染器使用 `scene.all_segment_ids` 遍历 segment，ScenePlan 用于迭代顺序
 - FFmpeg Assembler 接收单个渲染后的 .mp4，叠加音乐/图片，scene 循环当前为 no-op
@@ -660,22 +729,43 @@ providers:
 **当前代码状态：三层模型（Segment → Shot → Scene），LLM Planner 两阶段方案已跑通，Scene 按模板合并。CLI `--planner rule|llm` 切换，LLM 失败自动 fallback 到 Rule Planner。**
 
 **已知问题**：
+- ~~LLM Blueprint prompt 仍要求输出 `visual_params.fallback`（`llm_planner.py:74`），与 §4 工具优先级设计冲突，需改为 `preferred_provider`~~ ✅ Phase 3 已修复
+- ~~LLM prompt 中 `visual_type` 列表为 `[text_only, stock_image, stock_video]`，缺少 `manim`~~ ✅ Phase 3 已修复
 - LLM 分镜阶段的 prompt 仍需调优（可能出现语义分组不合理的情况，如非连续段落归入同一 scene）
 - Scene Registry 的模板信息未写入 plan.json（scene 只存 visual_type/visual_params 副本）
 
-### Phase 3：工具接口 + 基础设施
+### Phase 3：工具接口 + 基础设施 ✅
 
 定义 Tool 统一抽象层，Pipeline 按 Shot 的 `visual_type` 动态调度工具。
 
-- [ ] 定义 Tool 统一接口基类（Audio / Image / Video 三类）
-- [ ] 工具注册机制：`visual_type` 与 Tool 实现的映射可配置（如 `stock_image` → PexelsTool）
-- [ ] Pipeline 可插拔编排：根据每个 Shot 的 `visual_type` 查注册表，调用对应 Tool，传入 Shot + 所属 Scene 上下文
-- [ ] 统一缓存层（按 `tool_type + input_hash` 缓存产物，复用 TTS 已有的缓存模式）
-- [ ] L1/L2/L3 Fallback 框架（同 Provider 重试 → 换 Provider → 降级为 `text_only`）
-- [ ] 时长对齐机制：以 TTS 时长为主轴，Render/Image/AI Video 适配（见 3.7 节）
-- [ ] 将现有 `EdgeTTSTool` 适配到新的 Tool 接口（不改功能，只适配抽象）
+**3A：Tool Protocol + Adapter + Cache ✅**
+- [x] 定义 Tool Protocol（`tool_type`, `provider_name`, `execute(input) → output`）
+- [x] 定义 Adapter Protocol + ExecutionMode 常量（InProcess / CLI / HTTP）
+- [x] 实现 InProcessAdapter / CliAdapter / HttpAdapter
+- [x] 实现 ToolCache 统一缓存层（sha256 key，按 tool_type 分目录）
+- [x] 单元测试：10 (protocol) + 10 (cache) = 20 tests
 
-**产出：架构层面支持未来接入任意工具，新增工具只需实现接口 + 注册，不改 Pipeline 核心代码。**
+**3B：现有工具适配 ✅**
+- [x] EdgeTTSTool 适配 Tool Protocol（添加 `tool_type`/`provider_name`/`execute()`，迁移到 ToolCache）
+- [x] ManimRenderTool stub（Protocol 属性 + NotImplementedError，渲染逻辑仍由 Pipeline CLI 路径处理）
+- [x] 单元测试：3 (EdgeTTSTool protocol) + 4 (ManimRenderTool) = 7 tests
+
+**3C：Registry + Pipeline Dispatch + Priority ✅**
+- [x] ToolConfig（`DEFAULT_TOOL_PRIORITY` dict + `get_priority()` 方法）
+- [x] ToolRegistry（`register()` / `get_tool()` / `has()` / `get_providers()`）
+- [x] Pipeline 重构：创建 Registry，注册内建工具，TTS 走 `execute()` 调度
+- [x] `_dispatch_tool()`：按 visual_type 查优先级序列，按序尝试 Provider
+- [x] `preferred_provider` 支持（LLM 建议优先，用户优先级序列兜底）
+- [x] `_text_only` 降级机制
+- [x] `_render_manim_batch()` 提取为独立方法
+- [x] 单元测试：3 (ToolConfig) + 4 (dispatch) + 6 (registry) = 13 tests
+
+**3D：时长对齐契约 + LLM 修复 ✅**
+- [x] `ShotPlan.target_duration` 字段（TTS 后由 Pipeline 填充，写入 plan.json）
+- [x] LLM prompt 修复：`fallback` → `preferred_provider`，`visual_type` 加入 `manim`
+- [x] 单元测试：+2 (schema) = 2 tests
+
+**当前代码状态：229 tests 全通过。Pipeline 通过 Registry 按 visual_type 调度工具，新增工具只需实现 Tool Protocol + 注册。所有 scene 当前为 text_only，行为与 Phase 2 完全等价。**
 
 ### Phase 4：具体工具实现
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # 加载 .env（如存在）
@@ -70,3 +70,32 @@ def load_planner_config() -> PlannerConfig:
         api_key=api_key,
         base_url=os.environ.get("MD2VIDEO_LLM_BASE_URL", ""),
     )
+
+
+# ==================== Tool 配置 ====================
+
+DEFAULT_TOOL_PRIORITY: dict[str, list[str]] = {
+    "text_only": ["manim"],
+    "tts": ["edge-tts"],
+    "stock_image": ["pexels", "pixabay", "_text_only"],
+    "stock_video": ["pexels_video", "pixabay_video", "_text_only"],
+}
+
+
+@dataclass
+class ToolConfig:
+    """工具注册与优先级配置。"""
+    priority: dict[str, list[str]] = field(
+        default_factory=lambda: dict(DEFAULT_TOOL_PRIORITY)
+    )
+
+    def get_priority(self, visual_type: str) -> list[str]:
+        return self.priority.get(visual_type, ["_text_only"])
+
+    def register(self, visual_type: str, providers: list[str]) -> None:
+        self.priority[visual_type] = providers
+
+
+def load_tool_config() -> ToolConfig:
+    """加载工具配置（未来可从 config.yaml 读取）。"""
+    return ToolConfig()

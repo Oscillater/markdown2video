@@ -185,17 +185,29 @@ class TestShotPlan:
     def test_defaults(self):
         sp = ShotPlan(id="shot_001")
         assert sp.segment_ids == []
+        assert sp.target_duration == 0.0
 
     def test_with_segments(self):
         sp = ShotPlan(id="shot_001", segment_ids=["seg_001", "seg_002"])
         assert sp.segment_ids == ["seg_001", "seg_002"]
 
+    def test_target_duration(self):
+        sp = ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=5.5)
+        assert sp.target_duration == 5.5
+
     def test_json_round_trip(self):
-        original = ShotPlan(id="shot_001", segment_ids=["seg_001"])
+        original = ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=3.0)
         json_str = original.model_dump_json()
         restored = ShotPlan.model_validate_json(json_str)
         assert restored.id == "shot_001"
         assert restored.segment_ids == ["seg_001"]
+        assert restored.target_duration == 3.0
+
+    def test_backward_compat_no_target_duration(self):
+        """旧 JSON 无 target_duration 字段应正常解析。"""
+        json_str = '{"id":"shot_001","segment_ids":["seg_001"]}'
+        sp = ShotPlan.model_validate_json(json_str)
+        assert sp.target_duration == 0.0
 
 
 # ========== ShotResult ==========

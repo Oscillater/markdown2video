@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from edge_tts import Communicate
+
+from md2video.tools.cache import ToolCache
 
 
 class EdgeTTSTool:
@@ -17,6 +17,28 @@ class EdgeTTSTool:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.voice = voice
+        self._cache = ToolCache(cache_dir)
+
+    # --- Tool Protocol conformance ---
+
+    @property
+    def tool_type(self) -> str:
+        return "tts"
+
+    @property
+    def provider_name(self) -> str:
+        return "edge-tts"
+
+    def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Tool Protocol: JSON input -> JSON output。"""
+        return self.synthesize(
+            text=input_data["text"],
+            voice=input_data.get("voice"),
+            speed=input_data.get("speed", 1.0),
+            fmt=input_data.get("format", "wav"),
+        )
+
+    # --- Core logic ---
 
     def synthesize(self, text: str, voice: Optional[str] = None,
                    speed: float = 1.0, fmt: str = "wav") -> dict:
@@ -25,7 +47,8 @@ class EdgeTTSTool:
         返回: {"path": str, "duration": float, "provider": str, "cache_key": str}
         """
         voice = voice or self.voice
-        cache_key = hashlib.md5(f"{text}|{voice}|{speed}".encode()).hexdigest()
+        params = {"text": text, "voice": voice, "speed": speed}
+        cache_key = self._cache.make_key("tts", params)
         output_file = self.cache_dir / f"{cache_key}.{fmt}"
 
         if not output_file.exists():
@@ -51,7 +74,6 @@ class EdgeTTSTool:
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            # fallback: 估算 1 秒
             return 1.0
         try:
             return float(result.stdout.strip())

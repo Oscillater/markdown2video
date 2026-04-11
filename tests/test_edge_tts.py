@@ -1,6 +1,7 @@
 """Tests for md2video.tools.tts.edge_tts (fully mocked)."""
 from __future__ import annotations
 
+import json
 import hashlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,7 +12,9 @@ from md2video.tools.tts.edge_tts import EdgeTTSTool
 
 
 def _expected_cache_key(text, voice, speed):
-    return hashlib.md5(f"{text}|{voice}|{speed}".encode()).hexdigest()
+    """匹配 ToolCache.make_key 的 sha256 格式。"""
+    canonical = json.dumps({"speed": speed, "text": text, "voice": voice}, sort_keys=True)
+    return hashlib.sha256(f"tts:{canonical}".encode()).hexdigest()
 
 
 class TestEdgeTTSToolInit:
@@ -112,3 +115,23 @@ class TestGetDuration:
         mock_run.return_value = MagicMock(returncode=0, stdout="not_a_number\n")
         tool = EdgeTTSTool(cache_dir="/tmp/dummy")
         assert tool._get_duration(Path("audio.wav")) == 1.0
+
+
+class TestToolProtocol:
+    def test_tool_type(self, tmp_path):
+        tool = EdgeTTSTool(cache_dir=tmp_path)
+        assert tool.tool_type == "tts"
+
+    def test_provider_name(self, tmp_path):
+        tool = EdgeTTSTool(cache_dir=tmp_path)
+        assert tool.provider_name == "edge-tts"
+
+    @patch("md2video.tools.tts.edge_tts.subprocess.run")
+    @patch("md2video.tools.tts.edge_tts.asyncio.run")
+    def test_execute_delegates_to_synthesize(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
+        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="2.0\n")
+        tool = EdgeTTSTool(cache_dir=tmp_path)
+        result = tool.execute({"text": "hello", "speed": 1.0, "format": "wav"})
+        assert result["provider"] == "edge-tts"
+        assert result["duration"] == 2.0
+        mock_asyncio_run.assert_called_once()

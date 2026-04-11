@@ -28,6 +28,7 @@ class SegmentPlan(BaseModel):
 class ShotPlan(BaseModel):
     id: str
     segment_ids: List[str] = Field(default_factory=list)
+    target_duration: float = 0.0  # TTS 时长，视觉工具必须适配此时长
 
 
 class ScenePlan(BaseModel):
