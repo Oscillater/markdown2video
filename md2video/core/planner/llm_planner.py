@@ -40,25 +40,6 @@ class ChunkMappingOutput(BaseModel):
     shots: List[ShotMapping] = Field(min_length=1)
 
 
-# ==================== 旧版兼容（保留用于 fallback） ====================
-
-class LlmShot(BaseModel):
-    """旧版单阶段 LLM 输出的镜头。"""
-    segment_ids: List[str]
-
-
-class LlmScene(BaseModel):
-    """旧版单阶段 LLM 输出的风格组。"""
-    visual_type: str = "text_only"
-    visual_params: Dict = Field(default_factory=dict)
-    shots: List[LlmShot] = Field(min_length=1)
-
-
-class LlmPlannerOutput(BaseModel):
-    """旧版单阶段 LLM 的完整输出结构。"""
-    scenes: List[LlmScene] = Field(min_length=1)
-
-
 # ==================== 两阶段 Prompt ====================
 
 BLUEPRINT_SYSTEM_PROMPT = """\
@@ -132,39 +113,6 @@ def _build_chunk_mapping_user_prompt(
         + "\n".join(registry_lines)
         + "\n\nGroup these segments into shots and assign each shot a scene_id "
         "from the registry."
-    )
-
-
-# ==================== 旧版单阶段 Prompt（保留用于 fallback） ====================
-
-SYSTEM_PROMPT = """\
-You are a video planner. Group text segments into shots (continuous visual units) \
-and scenes (style groups sharing the same visual presentation).
-
-Rules:
-1. Every segment must appear in exactly one shot, no gaps, no duplicates.
-2. Shots contain consecutive segments in the order given.
-3. Multiple shots can share the same scene (same visual_type + visual_params).
-4. Available visual types: text_only, stock_image, stock_video, manim.
-5. For stock_image/stock_video, set visual_params.query to English keywords for image search.
-6. Default visual_type is "text_only" when no specific visual is needed.
-7. [EXPLICIT] tagged segments will be split out by the system automatically. Just include them normally.
-8. For Chinese text, infer the semantic topic for visual_params.query when using stock_image.
-9. You MUST call the submit_plan tool to submit your result. Do not just output text."""
-
-
-def _build_user_prompt(segments: List[SegmentPlan]) -> str:
-    lines = []
-    for seg in segments:
-        tag = " [EXPLICIT]" if seg.explicit else ""
-        lines.append(f"  {seg.id}: [{seg.segment_type}]{tag} \"{seg.text}\"")
-    return (
-        "Segments (in order):\n"
-        + "\n".join(lines)
-        + "\n\nGroup these segments into scenes with shots. "
-        "Each scene shares one visual style. Think about which segments "
-        "form a continuous visual unit (shot) and which shots share "
-        "the same visual style (scene)."
     )
 
 
@@ -447,83 +395,3 @@ class LlmPlanner:
         if missing:
             raise ValueError(f"Text integrity check failed — missing segments: {missing}")
 
-    def _convert(
-        self, segments: List[SegmentPlan], output: LlmPlannerOutput,
-    ) -> List[ScenePlan]:
-        """旧版单阶段兼容：将 LlmPlannerOutput 转为 ScenePlan。
-
-        不复用 _reconcile（旧版逻辑中一个 LlmScene 可含多个 Shot 共享 scene）。
-        """
-        seg_map = {s.id: s for s in segments}
-        all_seg_ids = set(s.id for s in segments)
-
-        # 校验: 每个 segment 恰好出现一次
-        seen: set[str] = set()
-        for scene in output.scenes:
-            for shot in scene.shots:
-                for sid in shot.segment_ids:
-                    if sid in seen:
-                        raise ValueError(f"Duplicate segment {sid}")
-                    if sid not in all_seg_ids:
-                        raise ValueError(f"Unknown segment {sid}")
-                    seen.add(sid)
-        missing = all_seg_ids - seen
-        if missing:
-            raise ValueError(f"Missing segments: {missing}")
-
-        # 校验: 每个 shot 内 segment 连续
-        seg_order = [s.id for s in segments]
-        for scene in output.scenes:
-            for shot in scene.shots:
-                indices = [seg_order.index(sid) for sid in shot.segment_ids]
-                for i in range(1, len(indices)):
-                    if indices[i] != indices[i - 1] + 1:
-                        raise ValueError(
-                            f"Non-consecutive segments in shot: {shot.segment_ids}"
-                        )
-
-        # 构建 ScenePlan，拆分 explicit segments
-        scenes: List[ScenePlan] = []
-        scene_counter = 0
-        shot_counter = 0
-
-        for llm_scene in output.scenes:
-            explicit_shots: List[List[str]] = []
-            non_explicit_shots: List[List[str]] = []
-
-            for llm_shot in llm_scene.shots:
-                exp_ids = [sid for sid in llm_shot.segment_ids if seg_map[sid].explicit]
-                non_exp_ids = [sid for sid in llm_shot.segment_ids if not seg_map[sid].explicit]
-                for eid in exp_ids:
-                    explicit_shots.append([eid])
-                if non_exp_ids:
-                    non_explicit_shots.append(non_exp_ids)
-
-            for seg_ids in explicit_shots:
-                scene_counter += 1
-                shot_counter += 1
-                eseg = seg_map[seg_ids[0]]
-                scenes.append(ScenePlan(
-                    id=f"scene_{scene_counter:03d}",
-                    visual_type=eseg.visual_type,
-                    visual_params=eseg.visual_params,
-                    section_context=eseg.section_context,
-                    shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=seg_ids)],
-                ))
-
-            if non_explicit_shots:
-                scene_counter += 1
-                shots = []
-                for seg_ids in non_explicit_shots:
-                    shot_counter += 1
-                    shots.append(ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=seg_ids))
-                first_seg = seg_map[non_explicit_shots[0][0]]
-                scenes.append(ScenePlan(
-                    id=f"scene_{scene_counter:03d}",
-                    visual_type=llm_scene.visual_type,
-                    visual_params=llm_scene.visual_params,
-                    section_context=first_seg.section_context,
-                    shots=shots,
-                ))
-
-        return scenes

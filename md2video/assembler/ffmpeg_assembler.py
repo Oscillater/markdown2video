@@ -189,6 +189,22 @@ def extract_image_entries(plan: PlanManifest, result: ResultManifest,
     return entries
 
 
+def extract_shot_visual_entries(result: ResultManifest) -> List[Dict]:
+    """从 result.scenes[].shots[].visual 中提取 per-shot 视觉产物条目。"""
+    entries = []
+    for scene_result in result.scenes:
+        for shot_result in scene_result.shots:
+            vis = shot_result.visual
+            if vis.path and vis.source != "none":
+                entries.append({
+                    "name": shot_result.id,
+                    "src": vis.path,
+                    "start": shot_result.start,
+                    "end": shot_result.end,
+                })
+    return entries
+
+
 # ========== ffmpeg 合成 ==========
 
 def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
@@ -317,11 +333,9 @@ class FFmpegAssembler:
         music_entries = extract_music_entries(self.plan, self.result, timeline_path)
         image_entries = extract_image_entries(self.plan, self.result, timeline_path)
 
-        # Phase 2A: scene-based 视觉处理（当前 all text_only，no-op）
-        for scene_plan in self.plan.scenes:
-            if scene_plan.visual_type == "text_only":
-                continue
-            # Phase 2B: 处理 stock_image 等视觉效果
+        # 提取 per-shot 视觉产物（来自 Tool.execute() 输出）
+        shot_visual_entries = extract_shot_visual_entries(self.result)
+        image_entries = image_entries + shot_visual_entries
 
         print("Music entries:", music_entries)
         print("Image entries:", image_entries)

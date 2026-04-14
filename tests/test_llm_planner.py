@@ -5,7 +5,7 @@ import pytest
 
 from md2video.manifest.schema import SegmentPlan
 from md2video.core.planner.llm_planner import (
-    LlmPlanner, LlmPlannerOutput, LlmScene, LlmShot,
+    LlmPlanner,
     SceneTemplate, BlueprintOutput, ShotMapping, ChunkMappingOutput,
 )
 
@@ -14,195 +14,13 @@ def _seg(id, text, stype="content", section="", **kw):
     return SegmentPlan(id=id, text=text, segment_type=stype, section_context=section, **kw)
 
 
-# ==================== _convert 测试 ====================
-
-class TestConvert:
-
-    def _make_planner(self):
-        """创建 LlmPlanner（不传入 API key，不会实际调用 LLM）。"""
-        return LlmPlanner(model="openai:gpt-4o", api_key="test-key")
-
-    def test_convert_basic(self):
-        """基本转换：两个 scene，各一个 shot。"""
-        segments = [
-            _seg("s1", "第一段", section="第一节"),
-            _seg("s2", "第二段", section="第一节"),
-            _seg("s3", "第三段", section="第二节"),
-        ]
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(visual_type="text_only", shots=[
-                LlmShot(segment_ids=["s1", "s2"]),
-            ]),
-            LlmScene(visual_type="stock_image", visual_params={"query": "neural network"}, shots=[
-                LlmShot(segment_ids=["s3"]),
-            ]),
-        ])
-        planner = self._make_planner()
-        scenes = planner._convert(segments, output)
-
-        assert len(scenes) == 2
-        assert scenes[0].visual_type == "text_only"
-        assert scenes[0].shots[0].segment_ids == ["s1", "s2"]
-        assert scenes[0].section_context == "第一节"
-        assert scenes[1].visual_type == "stock_image"
-        assert scenes[1].visual_params == {"query": "neural network"}
-        assert scenes[1].section_context == "第二节"
-
-    def test_convert_multi_shot_per_scene(self):
-        """一个 scene 含多个 shot。"""
-        segments = [
-            _seg("s1", "第一段"), _seg("s2", "第二段"), _seg("s3", "第三段"),
-        ]
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(visual_type="stock_image", visual_params={"query": "AI"}, shots=[
-                LlmShot(segment_ids=["s1"]),
-                LlmShot(segment_ids=["s2", "s3"]),
-            ]),
-        ])
-        planner = self._make_planner()
-        scenes = planner._convert(segments, output)
-
-        assert len(scenes) == 1
-        assert len(scenes[0].shots) == 2
-        assert scenes[0].shots[0].segment_ids == ["s1"]
-        assert scenes[0].shots[1].segment_ids == ["s2", "s3"]
-
-    def test_convert_explicit_preserved(self):
-        """explicit segment 被拆为 singleton scene，保留原 visual_type。"""
-        segments = [
-            _seg("s1", "普通", section="第一节"),
-            _seg("s2", "显式", explicit=True, visual_type="stock_image",
-                 visual_params={"query": "logo"}, section="第一节"),
-            _seg("s3", "普通2", section="第一节"),
-        ]
-        # LLM 把 explicit 和 non-explicit 混在同一个 shot 里
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(visual_type="text_only", shots=[
-                LlmShot(segment_ids=["s1", "s2", "s3"]),
-            ]),
-        ])
-        planner = self._make_planner()
-        scenes = planner._convert(segments, output)
-
-        # explicit s2 被拆出为独立 scene
-        explicit_scenes = [sc for sc in scenes if any(
-            sid == "s2" for shot in sc.shots for sid in shot.segment_ids
-        )]
-        assert len(explicit_scenes) == 1
-        assert explicit_scenes[0].visual_type == "stock_image"
-        assert explicit_scenes[0].visual_params == {"query": "logo"}
-        assert len(explicit_scenes[0].shots) == 1
-        assert explicit_scenes[0].shots[0].segment_ids == ["s2"]
-
-    def test_convert_duplicate_segment_raises(self):
-        """segment_ids 重复时报 ValueError。"""
-        segments = [_seg("s1", "第一段"), _seg("s2", "第二段")]
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(shots=[LlmShot(segment_ids=["s1", "s2"])]),
-            LlmScene(shots=[LlmShot(segment_ids=["s1"])]),
-        ])
-        planner = self._make_planner()
-        with pytest.raises(ValueError, match="Duplicate"):
-            planner._convert(segments, output)
-
-    def test_convert_missing_segment_raises(self):
-        """segment_ids 缺少时报 ValueError。"""
-        segments = [_seg("s1", "第一段"), _seg("s2", "第二段"), _seg("s3", "第三段")]
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(shots=[LlmShot(segment_ids=["s1", "s2"])]),
-        ])
-        planner = self._make_planner()
-        with pytest.raises(ValueError, match="Missing"):
-            planner._convert(segments, output)
-
-    def test_convert_non_consecutive_raises(self):
-        """shot 内 segment 非连续时报 ValueError。"""
-        segments = [_seg("s1", "一"), _seg("s2", "二"), _seg("s3", "三")]
-        # s1 和 s3 不连续，但 s2 在另一个 shot 里（全部覆盖，不触发 Missing）
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(shots=[
-                LlmShot(segment_ids=["s1", "s3"]),
-                LlmShot(segment_ids=["s2"]),
-            ]),
-        ])
-        planner = self._make_planner()
-        with pytest.raises(ValueError, match="Non-consecutive"):
-            planner._convert(segments, output)
-
-    def test_convert_unknown_segment_raises(self):
-        """segment_id 不存在时报 ValueError。"""
-        segments = [_seg("s1", "一")]
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(shots=[LlmShot(segment_ids=["s1", "s99"])]),
-        ])
-        planner = self._make_planner()
-        with pytest.raises(ValueError, match="Unknown"):
-            planner._convert(segments, output)
-
-
 # ==================== plan() 集成测试 ====================
 
-class TestPlanFallback:
+class TestPlan:
 
     def test_empty_input(self):
         planner = LlmPlanner(model="openai:gpt-4o", api_key="test-key")
         assert planner.plan([]) == []
-
-    def test_fallback_on_convert_error(self):
-        """_convert 校验失败 → fallback 到 RulePlanner。"""
-        segments = [_seg("s1", "第一段"), _seg("s2", "第二段"), _seg("s3", "第三段")]
-        # 故意制造缺失 segment 的错误输出
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(shots=[LlmShot(segment_ids=["s1"])]),
-        ])
-        planner = LlmPlanner(model="openai:gpt-4o", api_key="test-key")
-        # 直接调用 _convert 会报错
-        with pytest.raises(ValueError):
-            planner._convert(segments, output)
-
-    def test_scene_and_shot_ids_sequential(self):
-        """验证生成的 scene/shot ID 格式正确且递增。"""
-        segments = [
-            _seg("s1", "第一段", section="第一节"),
-            _seg("s2", "第二段", section="第二节"),
-            _seg("s3", "第三段", section="第二节"),
-            _seg("s4", "第四段", section="第三节"),
-        ]
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(visual_type="text_only", shots=[
-                LlmShot(segment_ids=["s1"]),
-            ]),
-            LlmScene(visual_type="stock_image", visual_params={"query": "test"}, shots=[
-                LlmShot(segment_ids=["s2"]),
-                LlmShot(segment_ids=["s3", "s4"]),
-            ]),
-        ])
-        planner = LlmPlanner(model="openai:gpt-4o", api_key="test-key")
-        scenes = planner._convert(segments, output)
-
-        assert scenes[0].id == "scene_001"
-        assert scenes[0].shots[0].id == "shot_001"
-        assert scenes[1].id == "scene_002"
-        assert scenes[1].shots[0].id == "shot_002"
-        assert scenes[1].shots[1].id == "shot_003"
-
-    def test_all_segments_covered(self):
-        """验证所有 segment 都被覆盖，无遗漏。"""
-        segments = [_seg(f"s{i}", f"第{i}段") for i in range(1, 6)]
-        output = LlmPlannerOutput(scenes=[
-            LlmScene(shots=[LlmShot(segment_ids=["s1", "s2"])]),
-            LlmScene(shots=[LlmShot(segment_ids=["s3"])],
-                     visual_params={"query": "x"}),
-            LlmScene(shots=[LlmShot(segment_ids=["s4", "s5"])]),
-        ])
-        planner = LlmPlanner(model="openai:gpt-4o", api_key="test-key")
-        scenes = planner._convert(segments, output)
-
-        covered = []
-        for sc in scenes:
-            for shot in sc.shots:
-                covered.extend(shot.segment_ids)
-        assert sorted(covered) == ["s1", "s2", "s3", "s4", "s5"]
 
 
 # ==================== _split_chunks 测试 ====================

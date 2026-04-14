@@ -21,5 +21,31 @@ class Tool(Protocol):
         ...
 
     def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """执行工具，接收结构化 dict 输入，返回结构化 dict 输出。"""
+        """执行工具，接收结构化 dict 输入，返回结构化 dict 输出。
+
+        Visual tool (tool_type='image'/'video') 输入契约::
+
+            {
+                "scene": {"id": str, "visual_type": str, "visual_params": dict, "section_context": str},
+                "shot":  {"id": str, "segment_ids": list[str], "target_duration": float},
+                "segments": [{"id": str, "text": str, "segment_type": str,
+                              "audio": {"path": str, "duration": float} | None}],
+                "output_dir": str,
+            }
+
+        Visual tool 输出契约::
+
+            {
+                "visuals": [{"shot_id": str, "path": str, "width": int,
+                             "height": int, "source": str}]
+            }
+
+        TTS tool (tool_type='tts') 输入契约::
+
+            {"text": str, "voice": str, "speed": float, "format": str}
+
+        TTS tool 输出契约::
+
+            {"path": str, "duration": float, "provider": str, "cache_key": str}
+        """
         ...

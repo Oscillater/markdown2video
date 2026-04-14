@@ -119,14 +119,14 @@ class Pipeline:
         # 构建 SceneResult
         result.scenes = self._build_scene_results(plan.scenes, result.segments)
 
-        # 保存 Result Manifest
-        result_path = self.artifacts_dir / "result.json"
-        result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-
         # 3. Render — 按 visual_type 分发
         print("[3/5] Rendering video...")
         video_path, timeline_path = self._dispatch_render(plan, result, md_path)
         print(f"  Video: {video_path}")
+
+        # 保存 Result Manifest（visuals 已在 dispatch 中填充）
+        result_path = self.artifacts_dir / "result.json"
+        result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
 
         # 4. Assemble
         print("[4/5] Assembling final video...")
@@ -142,64 +142,106 @@ class Pipeline:
         return output_path
 
     def _dispatch_render(self, plan, result, md_path):
-        """按 visual_type 分发渲染任务。Phase 3: 全部走 Manim 批量渲染。"""
-        visual_types = set(sc.visual_type for sc in plan.scenes if sc.shots)
-
-        # Phase 3: 只有 text_only，直接走 Manim 批量渲染
-        if visual_types == {"text_only"} or not visual_types:
-            return self._render_manim_batch(md_path)
-
-        # 未来: 多 visual_type 分发（Phase 4）
-        for vt in visual_types:
-            self._dispatch_tool(vt, plan, result, md_path)
-        # Phase 3 兜底
+        """按 scene 粒度分发：non-text_only 走 Tool.execute()，text_only 走 Manim 批量。"""
+        for sc in plan.scenes:
+            if sc.shots and sc.visual_type != "text_only":
+                self._dispatch_visual_tool(sc, plan, result)
         return self._render_manim_batch(md_path)
 
-    def _dispatch_tool(self, visual_type, plan, result, md_path):
-        """按优先级序列尝试 provider，首个成功即采用。"""
+    def _dispatch_visual_tool(self, scene_plan, plan, result):
+        """为单个 scene 按优先级尝试 provider，首个成功即填充 ShotResult.visual。"""
+        visual_type = scene_plan.visual_type
+        preferred = scene_plan.visual_params.get("preferred_provider")
         providers = self.tool_config.get_priority(visual_type)
 
-        # 检查 preferred_provider
-        preferred = None
-        for sc in plan.scenes:
-            if sc.visual_type == visual_type and "preferred_provider" in sc.visual_params:
-                preferred = sc.visual_params["preferred_provider"]
-                break
-
         tried = set()
-        if preferred and preferred not in tried:
+        if preferred and preferred != "_text_only":
             tried.add(preferred)
             tool = self.registry.get_tool(visual_type, preferred)
             if tool:
                 try:
-                    return self._invoke_tool(tool, plan, result, md_path)
+                    self._invoke_visual_tool(tool, scene_plan, plan, result)
+                    return
                 except Exception as e:
-                    print(f"  Tool {preferred} failed: {e}")
+                    print(f"  Tool {preferred} failed for scene {scene_plan.id}: {e}")
 
         for provider in providers:
-            if provider in tried:
+            if provider in tried or provider == "_text_only":
                 continue
-            if provider == "_text_only":
-                tool = self.registry.get_tool("text_only", "manim")
-                if tool:
-                    return self._invoke_tool(tool, plan, result, md_path)
-                continue
-
             tried.add(provider)
             tool = self.registry.get_tool(visual_type, provider)
             if tool:
                 try:
-                    return self._invoke_tool(tool, plan, result, md_path)
+                    self._invoke_visual_tool(tool, scene_plan, plan, result)
+                    return
                 except Exception as e:
-                    print(f"  Tool {provider} failed: {e}")
+                    print(f"  Tool {provider} failed for scene {scene_plan.id}: {e}")
 
-        raise RuntimeError(f"All tools failed for visual_type={visual_type}")
+        print(f"  WARNING: No tool available for {visual_type} in scene {scene_plan.id}")
 
-    def _invoke_tool(self, tool, plan, result, md_path):
-        """调用工具，处理不同执行模式。"""
-        if tool.provider_name == "manim" and tool.tool_type == "render":
-            return self._render_manim_batch(md_path)
-        raise NotImplementedError(f"Tool {tool.provider_name} execution not yet supported")
+    def _invoke_visual_tool(self, tool, scene_plan, plan, result):
+        """通用工具调用：构建 input_data，调用 tool.execute()，写回 ShotResult.visual。"""
+        seg_map = {s.id: s for s in plan.segments}
+        sr_map = {s.id: s for s in result.segments}
+
+        for shot_plan in scene_plan.shots:
+            segments_data = []
+            for sid in shot_plan.segment_ids:
+                sp = seg_map.get(sid)
+                sr = sr_map.get(sid)
+                seg_data = {"id": sid, "text": sp.text if sp else "", "segment_type": sp.segment_type if sp else ""}
+                if sr and sr.audio:
+                    seg_data["audio"] = {"path": sr.audio.path, "duration": sr.audio.duration}
+                else:
+                    seg_data["audio"] = None
+                segments_data.append(seg_data)
+
+            output_dir = self.artifacts_dir / "visuals" / scene_plan.id
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            input_data = {
+                "scene": {
+                    "id": scene_plan.id,
+                    "visual_type": scene_plan.visual_type,
+                    "visual_params": scene_plan.visual_params,
+                    "section_context": scene_plan.section_context,
+                },
+                "shot": {
+                    "id": shot_plan.id,
+                    "segment_ids": shot_plan.segment_ids,
+                    "target_duration": shot_plan.target_duration,
+                },
+                "segments": segments_data,
+                "output_dir": str(output_dir),
+            }
+
+            output = tool.execute(input_data)
+            self._apply_visual_result(output, shot_plan.id, result)
+
+    def _apply_visual_result(self, tool_output, shot_plan_id, result):
+        """将 tool.execute() 输出写回 result.scenes 中匹配的 ShotResult.visual。"""
+        visuals = tool_output.get("visuals", [])
+        # 优先匹配 shot_id，fallback 到第一个 visual
+        matched = None
+        for vis in visuals:
+            if vis.get("shot_id") == shot_plan_id:
+                matched = vis
+                break
+        if not matched and visuals:
+            matched = visuals[0]
+        if not matched:
+            return
+
+        for scene_result in result.scenes:
+            for shot_result in scene_result.shots:
+                if shot_result.id == shot_plan_id:
+                    shot_result.visual = VisualResult(
+                        path=matched.get("path", ""),
+                        width=matched.get("width", 0),
+                        height=matched.get("height", 0),
+                        source=matched.get("source", "none"),
+                    )
+                    return
 
     def _render_manim_batch(self, md_path):
         """Manim 批量渲染 (text_only scenes)。"""

@@ -399,16 +399,6 @@ Planner 的职责：接收 Segment 列表，完成三件事：
 }
 ```
 
-**未来可扩展：**
-- Azure TTS / Google TTS / ChatTTS 等其他 TTS Provider
-- 音效生成工具（如 AI 环境音效生成）
-- 背景音乐生成工具（AI 作曲）
-
-**当前实现状态**：
-- `EdgeTTSTool.synthesize(text, voice, speed, fmt)` → `{path, duration, provider, cache_key}`
-- Pipeline 直接实例化 `EdgeTTSTool`，无接口抽象
-- 需适配 Tool 接口（不改功能，只套统一抽象）
-
 #### Image Tools（图片工具）
 
 处理静态图片的获取和生成。
@@ -435,10 +425,6 @@ Planner 的职责：接收 Segment 列表，完成三件事：
   "cache_key": "def456"
 }
 ```
-
-**未来可扩展：**
-- AI 图片生成（Midjourney / DALL-E / Flux 等风格的 prompt 生成 + API 调用）
-- 图片后处理（风格迁移、抠图、调色）
 
 #### Video Tools（视频工具）
 
@@ -482,19 +468,6 @@ Planner 的职责：接收 Segment 列表，完成三件事：
   }
 }
 ```
-
-**未来可扩展：**
-- AI 视频生成（如 Runway / Kling / Sora 等生成式 AI 视频，由 Scene 的 visual_params 驱动 prompt）
-- Remotion 程序化视频（通过 [Remotion](https://github.com/remotion-dev/remotion) 生成特定风格的动画片段，如数据可视化、片头片尾）
-- 世界模型驱动视频（如操控机械臂等物理世界模型生成特定动作的视频片段）
-- Manim 模板渲染（将当前 construct() 方法中的效果拆为可复用模板：标题卡、流程图、关键词高亮等）
-
-**当前实现状态**：
-- `ManifestDrivenScene` 是一个 Manim `VoiceoverScene` 子类，通过 `construct()` 入口执行渲染
-- Pipeline **不直接调用**，而是通过子进程执行 `manim render manifest_scene.py ManifestDrivenScene`
-- 输入输出通过**文件系统传递**（plan.json、result.json → 渲染 → .mp4 + timeline.json），非方法调用
-- `CachedVoiceService` 是兼容层，将预生成的 TTS 音频桥接进 Manim 的 `voiceover()` 上下文
-- **适配难点**：子进程执行模式与 Tool 统一接口（进程内方法调用）差异较大，需要封装为接口适配器
 
 ---
 
@@ -646,162 +619,7 @@ providers:
 
 ---
 
-## 7. 当前代码与新架构的对应关系
-
-| 当前文件 | 对应新模块 | 状态 |
-|----------|-----------|------|
-| `md_parser.py` | Parser + Segmenter | ✅ 已完成 |
-| `schema.py` | Manifest Schema（Plan + Result） | ✅ 已完成（含 ShotPlan / ShotResult） |
-| `rule_planner.py` | Rule Planner（兜底 Planner） | ✅ 已完成（每个 Scene 1:1 Shot） |
-| `pipeline.py` | Pipeline 编排器 | ✅ 已完成（构建 ShotResult） |
-| `manim_renderer.py` | Manim Render Tool | ✅ 已完成（已适配 Tool 接口） |
-| `ffmpeg_assembler.py` | Assembler | ⚠️ 需适配：按 Shot 粒度叠加视觉产物 |
-| `edge_tts.py` | TTS Tool | ✅ 已完成（已适配 Tool 接口） |
-| `cached_voice.py` | CachedVoiceService | ✅ 已完成 |
-| ~~（新增）~~ | ShotPlan / ShotResult 数据模型 | ✅ 已完成 |
-| （新增） | LLM Planner（两阶段全局导演） | ✅ Phase 2B |
-| （新增） | Tool 统一接口 + 注册机制 | ✅ Phase 3 |
-| （新增） | 工具优先级 + 优先级链调度 | ✅ Phase 3 |
-| （新增） | 统一缓存层 | ✅ Phase 3 |
-| （新增） | 时长对齐契约（target_duration） | ✅ Phase 3 |
-| （新增） | Image Tool（Pexels API 等） | Phase 4 |
-
-**当前代码现状：**
-- 三层数据模型（Segment → Shot → Scene），Shot 层已引入
-- Tool Protocol + Registry + Priority Dispatch 已建立，Pipeline 按 visual_type 动态调度
-- EdgeTTSTool 已适配 Tool Protocol，Manim 渲染走 CLI 特殊路径（Phase 5 迁移）
-- RulePlanner 每个 Scene 1:1 映射一个 Shot（行为不变，结构升级），为后续 LLM Planner 做准备
-- Manim 渲染器使用 `scene.all_segment_ids` 遍历 segment，ScenePlan 用于迭代顺序
-- FFmpeg Assembler 接收单个渲染后的 .mp4，叠加音乐/图片，scene 循环当前为 no-op
-
----
-
-## 8. 开发路线图
-
-### Phase 1：重构 + Scene 架构 ✅
-
-已完成的工作：Manifest schema、Scene 数据模型、Rule Planner、Scene 粒度渲染、FFmpeg 合成、单元测试（127 tests）。
-
-### Phase 2：Shot 层 + LLM Planner ✅
-
-引入 Shot（镜头）作为时间连续的最小视觉单元，同时实现 LLM Planner 做语义决策。
-
-**2A：Shot 数据模型 + Schema 升级 ✅**
-- [x] 在 `schema.py` 中新增 `ShotPlan`（id, segment_ids）和 `ShotResult`（id, segment_ids, start, end, visual）
-- [x] `ScenePlan` 改为包含 `shots: List[ShotPlan]`，保留 `segment_ids` 向后兼容字段（exclude=True）
-- [x] `SceneResult` 改为包含 `shots: List[ShotResult]`，同样向后兼容
-- [x] RulePlanner 适配：每个 Scene 1:1 映射一个 Shot（Shot ID 全局递增），行为不变
-- [x] Pipeline 适配：`_build_scene_results()` 先构建 ShotResult，再聚合为 SceneResult
-- [x] Manim Renderer 适配：`scene.segment_ids` → `scene.all_segment_ids`
-- [x] 单元测试更新（test_schema +11 tests, test_rule_planner +1 test）
-- [x] 旧 JSON 向后兼容（`model_validator` 自动迁移 `segment_ids` 为单 Shot）
-
-**当前代码状态：三层模型（Segment → Shot → Scene），Pipeline 线性编排（Parse → Plan → TTS → Render → Assemble），所有 Scene 默认 `visual_type="text_only"`，RulePlanner 每个 Scene 1:1 映射 Shot。**
-
-**2B：LLM Planner 两阶段全局导演方案 ✅**
-
-两阶段方案已实现，取代初版单阶段调用。
-
-**架构**：
-- **Scene 就是视觉模板**（Style Class），相同模板的 Shot 合并到同一个 Scene
-- **Shot 是镜头实例**（Instance），每个 Shot 引用一个 Scene 模板并映射连续 Segment
-- LLM 负责"定义风格"和"语义分镜"，框架负责重组校验
-
-**三阶段流程**：
-1. **全局定调 `_global_blueprint()`**：输入完整 Markdown 原文 → LLM 定义 3~5 个 Scene 模板（Scene Registry）
-2. **局部分镜 `_chunk_mapping()`**：按章节分块，每块独立调 LLM → Shot 划分 + Scene 模板映射
-3. **框架重组 `_reconcile()`**：合并多 chunk 映射 → 按 scene_id 合并为 ScenePlan → 校验（去重/连续/完整/文本完整性）→ explicit 拆分
-
-**已实现**：
-- [x] `SceneTemplate` 数据结构：id, name, description, visual_type, visual_params
-- [x] `BlueprintOutput` / `ChunkMappingOutput` / `ShotMapping` 数据结构
-- [x] `_global_blueprint()`：第一阶段 LLM 调用，通过 `submit_blueprint` tool 提交
-- [x] `_chunk_mapping()`：第二阶段 LLM 调用，通过 `submit_chunk_mapping` tool 提交
-- [x] `_split_chunks()`：按 section_context + MAX_CHUNK_SEGS 分块，title 归入首块
-- [x] `_reconcile()`：按 scene_id 合并相同模板的 Shot 为同一 Scene
-- [x] `_validate_text_integrity()`：文本完整性检查
-- [x] explicit segment 保护：拆为 singleton scene，保留原 visual_type
-- [x] 旧版 `_convert()` 保留为兼容方法（11 个旧测试通过）
-- [x] 单元测试：25 tests（split_chunks + reconcile + text_integrity + convert + fallback）
-- [x] `__init__.py` 懒导出新类型
-- [x] `config.py` 新增 `MAX_CHUNK_SEGS = 30`
-
-**当前代码状态：三层模型（Segment → Shot → Scene），LLM Planner 两阶段方案已跑通，Scene 按模板合并。CLI `--planner rule|llm` 切换，LLM 失败自动 fallback 到 Rule Planner。**
-
-**已知问题**：
-- ~~LLM Blueprint prompt 仍要求输出 `visual_params.fallback`（`llm_planner.py:74`），与 §4 工具优先级设计冲突，需改为 `preferred_provider`~~ ✅ Phase 3 已修复
-- ~~LLM prompt 中 `visual_type` 列表为 `[text_only, stock_image, stock_video]`，缺少 `manim`~~ ✅ Phase 3 已修复
-- LLM 分镜阶段的 prompt 仍需调优（可能出现语义分组不合理的情况，如非连续段落归入同一 scene）
-- Scene Registry 的模板信息未写入 plan.json（scene 只存 visual_type/visual_params 副本）
-
-### Phase 3：工具接口 + 基础设施 ✅
-
-定义 Tool 统一抽象层，Pipeline 按 Shot 的 `visual_type` 动态调度工具。
-
-**3A：Tool Protocol + Adapter + Cache ✅**
-- [x] 定义 Tool Protocol（`tool_type`, `provider_name`, `execute(input) → output`）
-- [x] 定义 Adapter Protocol + ExecutionMode 常量（InProcess / CLI / HTTP）
-- [x] 实现 InProcessAdapter / CliAdapter / HttpAdapter
-- [x] 实现 ToolCache 统一缓存层（sha256 key，按 tool_type 分目录）
-- [x] 单元测试：10 (protocol) + 10 (cache) = 20 tests
-
-**3B：现有工具适配 ✅**
-- [x] EdgeTTSTool 适配 Tool Protocol（添加 `tool_type`/`provider_name`/`execute()`，迁移到 ToolCache）
-- [x] ManimRenderTool stub（Protocol 属性 + NotImplementedError，渲染逻辑仍由 Pipeline CLI 路径处理）
-- [x] 单元测试：3 (EdgeTTSTool protocol) + 4 (ManimRenderTool) = 7 tests
-
-**3C：Registry + Pipeline Dispatch + Priority ✅**
-- [x] ToolConfig（`DEFAULT_TOOL_PRIORITY` dict + `get_priority()` 方法）
-- [x] ToolRegistry（`register()` / `get_tool()` / `has()` / `get_providers()`）
-- [x] Pipeline 重构：创建 Registry，注册内建工具，TTS 走 `execute()` 调度
-- [x] `_dispatch_tool()`：按 visual_type 查优先级序列，按序尝试 Provider
-- [x] `preferred_provider` 支持（LLM 建议优先，用户优先级序列兜底）
-- [x] `_text_only` 降级机制
-- [x] `_render_manim_batch()` 提取为独立方法
-- [x] 单元测试：3 (ToolConfig) + 4 (dispatch) + 6 (registry) = 13 tests
-
-**3D：时长对齐契约 + LLM 修复 ✅**
-- [x] `ShotPlan.target_duration` 字段（TTS 后由 Pipeline 填充，写入 plan.json）
-- [x] LLM prompt 修复：`fallback` → `preferred_provider`，`visual_type` 加入 `manim`
-- [x] 单元测试：+2 (schema) = 2 tests
-
-**当前代码状态：229 tests 全通过。Pipeline 通过 Registry 按 visual_type 调度工具，新增工具只需实现 Tool Protocol + 注册。所有 scene 当前为 text_only，行为与 Phase 2 完全等价。**
-
-### Phase 4：具体工具实现
-
-有了 LLM Planner 的视觉决策和 Tool 接口之后，按需实现具体工具。
-
-- [ ] Pexels Image Tool（按 `visual_params.query` 搜索图片，返回标准 Tool 输出）
-- [ ] Pan/Zoom 动效（ffmpeg `zoompan` 滤镜，让静态图片有 Ken Burns 效果）
-- [ ] Assembler 适配：消费 `ShotResult.visual`，按 Shot 粒度叠加图片 + Ken Burns
-
-注：以下工具为远期规划，后续按需实现：
-- AI 视频生成（Runway / Kling / Sora 等）
-- Remotion 程序化视频（数据可视化、片头片尾等）
-- 世界模型驱动视频（机械臂等物理模拟）
-- AI 图片生成（Midjourney / DALL-E / Flux 风格）
-- AI 作曲 / 环境音效生成
-
-**产出：支持图文混合的视频生成，带 Pan/Zoom 动效和容错。**
-
-### Phase 5：模板库 + 渲染重构
-
-- [ ] 将现有 Renderer 中的视觉效果抽为可复用 Manim 模板：
-  - 标题卡片（title_card）
-  - 文字显示（text_display）
-  - 动画点（animated_dots）
-  - 章节标题堆叠（section_header_stack）
-- [ ] 每个 Scene 的 `visual_type` 对应一个模板，Render Tool 按模板名 + 参数调用
-- [ ] 建立标准 Manim 模板集（列表、流程图、关键词高亮等）
-- [ ] 引入 Remotion 作为补充渲染引擎
-- [ ] 缓存层完整实现（同模板 + 同参数 → 复用渲染片段）
-- [x] 单元测试覆盖 Parser、Planner、各 Tool
-
-**产出：稳定可复用的视频模板体系，Render 不再是一个巨大的 `construct()` 方法。**
-
----
-
-## 9. 关键设计原则
+## 7. 关键设计原则
 
 1. **Markdown 显式指令最高优先级**，框架规则其次，Planner 补全最后。
 2. **Planner 是可替换接口**，LLM Planner 和 Rule Planner 输入输出 schema 完全相同，框架按配置选择，LLM 不可用时自动 fallback。
@@ -809,3 +627,96 @@ providers:
 4. **合成由 FFmpeg 统一执行**，工具只产出原始素材。
 5. **Manifest 是唯一数据流**，不允许工具之间直接通信。
 6. **Segment 是 TTS 的单位，Shot 是时间连续的最小视觉单元，Scene 是风格分组**。三层各司其职，通过 Manifest 关联。
+
+---
+
+## 8. 开发路线图
+
+### Phase 1：基础架构 ✅
+
+Manifest schema、Scene 数据模型、Rule Planner、Scene 粒度渲染、FFmpeg 合成、单元测试。
+→ `changelog/phase1.md`
+
+### Phase 2：Shot 层 + LLM Planner ✅
+
+引入 Shot（镜头）作为最小视觉单元；实现 LLM Planner 两阶段方案（Blueprint → Chunk Mapping → Reconcile）。
+→ `changelog/phase2a_scene_architecture.md`, `changelog/phase2b_llm_planner.md`
+
+### Phase 3：Tool 接口 + 基础设施 ✅
+
+Tool Protocol + Adapter + Cache + Registry + Priority Dispatch + 时长对齐契约。
+→ `changelog/phase3_tool_infrastructure.md`
+
+**当前状态**：229 tests passing。所有 scene 为 text_only，Pipeline 按 Registry 调度工具。
+
+---
+
+### Phase 4：现有工具重构
+
+目标：修正代码与架构规范的偏差，打通 Phase 5 路径。
+
+#### 4A：Pipeline per-Shot 工具调度
+
+当前 `_dispatch_render()` 将所有 scene 统一交给 Manim 批量渲染，不区分 visual_type。`_invoke_tool()` 对非 manim 工具直接 `raise NotImplementedError`。
+
+- [ ] `_dispatch_render()` 按 scene 的 visual_type 分发：`text_only` 走现有 Manim 路径，其他类型走 Tool.execute()
+- [ ] `_invoke_tool()` 实现通用 Tool 调用（当前只特判 manim）
+- [ ] Tool 执行成功后填充 `ShotResult.visual`（当前始终为空默认值）
+
+#### 4B：Assembler 消费 per-Shot 视觉产物
+
+当前 `FFmpegAssembler` 将视频视为单一资产，scene 循环对非 text_only 是 no-op。
+
+- [ ] 遍历 `result.scenes[].shots[].visual`，收集非空 visual 的 shot
+- [ ] 用 ffmpeg overlay 将图片叠加到对应时间段
+- [ ] 消除 `ffmpeg_assembler.py:321-324` 的 no-op 循环
+
+#### 4C：清理死代码
+
+- [ ] 移除 LLM Planner 旧版代码（`_convert()`、`LlmShot`、`LlmScene`），迁移 11 个旧测试
+- [ ] 评估 Adapter 层（`adapter_impl.py`）：如近期不用 CLI/HTTP 工具，删除及对应测试
+
+**验收标准**：
+- 229 个现有测试全通过（或等量替换）
+- `--planner rule` 输出与重构前完全一致
+
+---
+
+### Phase 5：多视觉类型支持
+
+目标：实现 Pexels Image Tool，支持图文混合视频。
+
+#### 5A：Pexels Image Tool
+- [ ] 实现 `PexelsImageTool`（`tool_type="image"`, `provider_name="pexels"`）
+- [ ] 输入 `{query, source, orientation}` → 输出 `{path, width, height, source_url, cache_key}`
+- [ ] 使用 ToolCache 统一缓存
+- [ ] 注册到 ToolRegistry，config 支持 Pexels API Key
+- [ ] 单元测试
+
+#### 5B：Ken Burns 动效
+- [ ] Assembler 对图片 overlay 应用 ffmpeg `zoompan` 滤镜
+- [ ] 配置化：zoom 方向、速度、持续时间
+
+#### 5C：端到端验证
+- [ ] LLM Planner 生成包含 `stock_image` scene 的 plan → Pipeline 调度 Image Tool → Assembler 叠加图片
+- [ ] 回归测试：全 text_only 的输出与 Phase 4 行为一致
+
+---
+
+### Phase 6：渲染重构
+
+- [ ] Manim 迁移到 Tool 接口（替代 subprocess 调用）
+- [ ] Renderer 感知 Shot 粒度（按 Shot 分组渲染，而非逐 segment）
+- [ ] 时长对齐：传递 `target_duration` 到渲染器，替代 `self.wait(2)` 硬编码
+- [ ] 视觉效果抽为可复用 Manim 模板（标题卡、文字显示、动画点、章节标题）
+- [ ] Scene Registry 元数据写入 plan.json
+
+---
+
+### 远期规划
+
+- Remotion 程序化视频（数据可视化、片头片尾）
+- AI 视频生成（Runway / Kling / Sora）
+- AI 图片生成（DALL-E / Flux）
+- AI 作曲 / 环境音效生成
+- 世界模型驱动视频
