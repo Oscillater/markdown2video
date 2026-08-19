@@ -167,12 +167,12 @@ def parse_to_plan_manifest(md_path: str) -> "PlanManifest":
     if sections["h1"]:
         segments.append(SegmentPlan(
             id=next_id(), text=sections["h1"],
-            segment_type="title_main", audio_request=AudioRequest(),
+            segment_type="title_main",
         ))
     if sections["h2"]:
         segments.append(SegmentPlan(
             id=next_id(), text=sections["h2"],
-            segment_type="title_sub", audio_request=AudioRequest(),
+            segment_type="title_sub",
         ))
 
     # 内容区

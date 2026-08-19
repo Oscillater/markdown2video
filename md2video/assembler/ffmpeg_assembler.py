@@ -11,7 +11,35 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
-from md2video.manifest.schema import PlanManifest, ResultManifest
+from md2video.manifest.schema import (
+    ExecutionAssets,
+    PlanManifest,
+    ResultManifest,
+    result_manifest_from_execution_assets,
+)
+
+
+# ========== Ken Burns 动效 ==========
+
+def _build_ken_burns_filter(
+    input_label: str, output_label: str,
+    duration: float, width: int, height: int,
+    zoom_speed: float = 0.001, zoom_direction: str = "in", fps: int = 30,
+) -> str:
+    """构建 ffmpeg zoompan 滤镜字符串。"""
+    total_frames = int(duration * fps)
+    if zoom_direction == "out":
+        zoom_expr = f"if(eq(on,1),1.5,max(zoom-{zoom_speed},1.0))"
+    else:
+        zoom_expr = f"min(zoom+{zoom_speed},1.5)"
+    x_expr = "iw/2-(iw/zoom/2)"
+    y_expr = "ih/2-(ih/zoom/2)"
+    return (
+        f"{input_label}"
+        f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}'"
+        f":d={total_frames}:s={width}x{height}:fps={fps}"
+        f"{output_label}"
+    )
 
 
 # ========== ffmpeg helpers ==========
@@ -101,7 +129,40 @@ def _load_marker_timeline(timeline_path: Path) -> Dict[str, float]:
     import json as _json
     data = _json.loads(timeline_path.read_text(encoding="utf-8"))
     markers = data.get("markers", [])
-    return {m["id"]: m["time"] for m in markers}
+    return {
+        m.get("segment_id") or m.get("id"): m["time"]
+        for m in markers
+        if (m.get("segment_id") or m.get("id")) and "time" in m
+    }
+
+
+def _load_shot_timeline(timeline_path: Path) -> Dict[str, Tuple[float, float]]:
+    """Load actual shot timing from renderer timeline.json."""
+    if not timeline_path or not timeline_path.exists():
+        return {}
+    import json as _json
+    data = _json.loads(timeline_path.read_text(encoding="utf-8"))
+
+    timing: Dict[str, Tuple[float, float]] = {}
+    for shot in data.get("shots", []):
+        shot_id = shot.get("shot_id")
+        if not shot_id or shot.get("end") is None:
+            continue
+        timing[shot_id] = (float(shot["start"]), float(shot["end"]))
+    if timing:
+        return timing
+
+    for item in data.get("text", []):
+        shot_id = item.get("shot_id")
+        if not shot_id or item.get("end") is None:
+            continue
+        start, end = float(item["start"]), float(item["end"])
+        if shot_id in timing:
+            old_start, old_end = timing[shot_id]
+            timing[shot_id] = (min(old_start, start), max(old_end, end))
+        else:
+            timing[shot_id] = (start, end)
+    return timing
 
 
 def extract_music_entries(plan: PlanManifest, result: ResultManifest,
@@ -207,10 +268,42 @@ def extract_shot_visual_entries(result: ResultManifest) -> List[Dict]:
 
 # ========== ffmpeg 合成 ==========
 
+def extract_shot_visual_entries_from_assets(
+    plan: PlanManifest,
+    execution_assets: ExecutionAssets,
+    result: ResultManifest | None = None,
+    timeline_path: Path | None = None,
+) -> List[Dict]:
+    """Extract per-shot visual overlay entries from execution-assets."""
+    result = result or result_manifest_from_execution_assets(plan, execution_assets)
+    shot_timing = _load_shot_timeline(timeline_path)
+    fallback_timing = {
+        shot.id: (shot.start, shot.end)
+        for scene in result.scenes
+        for shot in scene.shots
+    }
+
+    entries = []
+    for asset in execution_assets.visual_assets:
+        if not asset.path or asset.provider == "none":
+            continue
+        start, end = shot_timing.get(
+            asset.shot_id,
+            fallback_timing.get(asset.shot_id, (0.0, 0.0)),
+        )
+        entries.append({
+            "name": asset.shot_id,
+            "src": asset.path,
+            "start": start,
+            "end": end,
+        })
+    return entries
+
+
 def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
                          base_has_audio: bool, out_path: Path,
                          video_duration: float, video_width: int, video_height: int,
-                         gain: float = None):
+                         gain: float = None, ken_burns_config=None):
 
     REL_MAX_WIDTH = 0.6
     REL_MAX_HEIGHT = 0.7
@@ -263,22 +356,46 @@ def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
 
     video_label = "[0:v]"
     vid_parts = []
+    kb_enabled = ken_burns_config and getattr(ken_burns_config, "enabled", False)
     for i, img in enumerate(image_segments):
         img_input_stream = f"[{img_input_base_idx + i}:v]"
-        scaled_img_stream = f"[img{i}_scaled]"
-        scale_filter = (
-            f"{img_input_stream}scale=w='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),{MAX_WIDTH},-2)'"
-            f":h='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),-2,{MAX_HEIGHT})',setsar=1{scaled_img_stream}"
-        )
-        vid_parts.append(scale_filter)
         start = img["start"]
         end = img["end"] if img["end"] is not None else video_duration
+        duration = end - start
         out_label = f"[v{i}]"
-        overlay_filter = (
-            f"{video_label}{scaled_img_stream}"
-            f"overlay=x='{CENTER_X}-w/2':y='{CENTER_Y}-h/2':enable='between(t,{start},{end})'{out_label}"
-        )
-        vid_parts.append(overlay_filter)
+
+        if kb_enabled and duration > 1.0:
+            # Ken Burns: scale(cover) → zoompan → overlay
+            scaled_stream = f"[img{i}_scaled]"
+            zoomed_stream = f"[img{i}_zoomed]"
+            scale_filter = (
+                f"{img_input_stream}scale={video_width}:{video_height}:"
+                f"force_original_aspect_ratio=increase,setsar=1{scaled_stream}"
+            )
+            kb_filter = _build_ken_burns_filter(
+                scaled_stream, zoomed_stream, duration,
+                video_width, video_height,
+                zoom_speed=ken_burns_config.zoom_speed,
+                zoom_direction=ken_burns_config.zoom_direction,
+                fps=ken_burns_config.fps,
+            )
+            overlay_filter = (
+                f"{video_label}{zoomed_stream}"
+                f"overlay=x='(W-w)/2':y='(H-h)/2':enable='between(t,{start},{end})'{out_label}"
+            )
+            vid_parts.extend([scale_filter, kb_filter, overlay_filter])
+        else:
+            # 静态 overlay（原有逻辑）
+            scaled_img_stream = f"[img{i}_scaled]"
+            scale_filter = (
+                f"{img_input_stream}scale=w='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),{MAX_WIDTH},-2)'"
+                f":h='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),-2,{MAX_HEIGHT})',setsar=1{scaled_img_stream}"
+            )
+            overlay_filter = (
+                f"{video_label}{scaled_img_stream}"
+                f"overlay=x='{CENTER_X}-w/2':y='{CENTER_Y}-h/2':enable='between(t,{start},{end})'{out_label}"
+            )
+            vid_parts.extend([scale_filter, overlay_filter])
         video_label = out_label
 
     has_filter = audio_filter_parts or vid_parts
@@ -306,7 +423,8 @@ class FFmpegAssembler:
                  video_path: Path, output_path: Path,
                  bg_scale: float = 0.2, vol: float = 0.8,
                  fade: float = 2.0, trim_silence: bool = False, gain: float = None,
-                 md_dir: Path = None, timeline_path: Path = None):
+                 md_dir: Path = None, timeline_path: Path = None,
+                 ken_burns_config=None, execution_assets: ExecutionAssets = None):
         self.plan = plan
         self.result = result
         self.video_path = video_path
@@ -318,6 +436,8 @@ class FFmpegAssembler:
         self.gain = gain
         self.md_dir = Path(md_dir) if md_dir else Path.cwd()
         self.timeline_path = Path(timeline_path) if timeline_path else None
+        self.ken_burns_config = ken_burns_config
+        self.execution_assets = execution_assets
 
     def assemble(self) -> Path:
         video_width, video_height = ffprobe_resolution(self.video_path)
@@ -334,7 +454,12 @@ class FFmpegAssembler:
         image_entries = extract_image_entries(self.plan, self.result, timeline_path)
 
         # 提取 per-shot 视觉产物（来自 Tool.execute() 输出）
-        shot_visual_entries = extract_shot_visual_entries(self.result)
+        if self.execution_assets is not None:
+            shot_visual_entries = extract_shot_visual_entries_from_assets(
+                self.plan, self.execution_assets, self.result, timeline_path,
+            )
+        else:
+            shot_visual_entries = extract_shot_visual_entries(self.result)
         image_entries = image_entries + shot_visual_entries
 
         print("Music entries:", music_entries)
@@ -382,10 +507,17 @@ class FFmpegAssembler:
                 if Path(img["src"]).exists():
                     prepared_images.append(img)
 
+            # 加载 Ken Burns 配置（若未在构造时传入）
+            kb_config = self.ken_burns_config
+            if kb_config is None:
+                from md2video.config import load_ken_burns_config
+                kb_config = load_ken_burns_config()
+
             build_and_run_ffmpeg(
                 self.video_path, prepared_music, prepared_images,
                 base_has_audio, self.output_path,
                 video_duration, video_width, video_height, gain=self.gain,
+                ken_burns_config=kb_config,
             )
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)

@@ -18,12 +18,14 @@ pydantic >= 2.0
 typing_extensions >= 4.15.0
 pydantic-ai >= 1.76.0
 python-dotenv >= 1.0.0
+Pillow
+requests
 ```
 
 ## 安装
 
 ```bash
-pip install manim manim-voiceover edge-tts pydantic pydantic-ai python-dotenv
+pip install manim manim-voiceover edge-tts pydantic pydantic-ai python-dotenv Pillow requests
 ```
 
 如果 manim 导入报错 `cannot import name 'TypeIs'`，需要升级 typing_extensions：
@@ -47,6 +49,11 @@ cd D:\Project\markdown2video
 python -m md2video example/example.md -o artifacts/output.mp4
 ```
 
+也可以直接执行 PlanManifest：
+```bash
+python -m md2video --plan path/to/plan.json -o artifacts/output.mp4
+```
+
 可选参数：
 
 ```
@@ -54,6 +61,7 @@ python -m md2video example/example.md -o artifacts/output.mp4
 --speed SPEED       TTS 语速 (默认: 1.0)
 --artifacts DIR     产物目录 (默认: artifacts/)
 --planner TYPE      Planner 类型: rule（默认）或 llm
+--plan FILE         PlanManifest JSON 输入（跳过 Markdown parser/planner）
 -o, --output FILE   输出文件路径 (默认: output.mp4)
 ```
 
@@ -82,14 +90,13 @@ python -m md2video example/example.md -o artifacts/output.mp4 --planner llm
 |------|------|------|
 | OpenAI | `openai:gpt-4o` | 官方 OpenAI API |
 | OpenAI 兼容 | `openai:gpt-4o` + 设 `MD2VIDEO_LLM_BASE_URL` | 中转站、本地部署等 |
-| Anthropic | `anthropic:claude-sonnet-4-5` | 需设 `ANTHROPIC_API_KEY` |
 
 LLM 调用失败时会自动 fallback 到 Rule Planner，不影响正常使用。
 
 ## 架构
 
 ```
-Markdown → Parser → Plan Manifest → Planner → TTS → Result Manifest → Manim Renderer → FFmpeg Assembler → MP4
+Markdown → Parser/Planner → Plan Manifest → Execution Assets → Manim Renderer → Timeline → FFmpeg Assembler → Final Result → MP4
 ```
 
 核心概念：
@@ -102,9 +109,11 @@ Markdown → Parser → Plan Manifest → Planner → TTS → Result Manifest �
 
 1. **Parser** 将 Markdown 解析为 Segment 列表
 2. **Planner** 将 Segment 分组为 Shot（镜头），并为每个 Shot 分配 Scene 模板（视觉方案）
-3. **TTS** 为每个 Segment 预生成语音
-4. **Manim Renderer** 按 Scene 粒度渲染动画
-5. **FFmpeg Assembler** 拼接视频、混入语音、叠加音乐和图片
+3. **PlanManifest** 保存计划和目标约束，不保存执行产物
+4. **ExecutionAssets** 记录 TTS 音频、本地图片或 Pexels 图片等素材事实
+5. **Manim Renderer** 渲染基础视频，并输出带 segment/shot id 的 `timeline.json`
+6. **FFmpeg Assembler** 根据真实 timeline 拼接视频、混入语音、叠加音乐和图片
+7. **FinalResultManifest** 在 assemble 完成后写出最终 MP4、used assets、warnings 和 artifact index
 
 ### Planner
 
@@ -187,7 +196,7 @@ md2video/              # 核心代码
     cli.py             # 命令行入口
     config.py          # 配置常量
 example/               # 示例 Markdown
-tests/                 # 单元测试 (229 tests)
+tests/                 # 单元测试 (267 tests)
 artifacts/             # 生成的中间产物（gitignored）
 changelog/             # 变更日志
 ```

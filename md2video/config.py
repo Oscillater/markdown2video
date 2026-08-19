@@ -55,15 +55,13 @@ MAX_CHUNK_SEGS = 30    # 单 chunk 最大 segment 数
 class PlannerConfig:
     default: str = "rule"          # "rule" or "llm"
     model: str = "openai:gpt-4o"  # pydantic-ai model string
-    api_key: str = ""             # 优先读 OPENAI_API_KEY / ANTHROPIC_API_KEY
+    api_key: str = ""             # OpenAI-compatible API key
     base_url: str = ""            # 可选，兼容 API 地址
 
 
 def load_planner_config() -> PlannerConfig:
     """从环境变量加载 planner 配置。"""
     api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     return PlannerConfig(
         default=os.environ.get("MD2VIDEO_PLANNER", "rule"),
         model=os.environ.get("MD2VIDEO_LLM_MODEL", "openai:gpt-4o"),
@@ -77,7 +75,7 @@ def load_planner_config() -> PlannerConfig:
 DEFAULT_TOOL_PRIORITY: dict[str, list[str]] = {
     "text_only": ["manim"],
     "tts": ["edge-tts"],
-    "stock_image": ["pexels", "pixabay", "_text_only"],
+    "stock_image": ["pexels", "local", "pixabay", "_text_only"],
     "stock_video": ["pexels_video", "pixabay_video", "_text_only"],
 }
 
@@ -99,3 +97,36 @@ class ToolConfig:
 def load_tool_config() -> ToolConfig:
     """加载工具配置（未来可从 config.yaml 读取）。"""
     return ToolConfig()
+
+
+# ==================== Pexels 配置 ====================
+
+@dataclass
+class PexelsConfig:
+    api_key: str = ""
+
+
+def load_pexels_config() -> PexelsConfig:
+    """从环境变量加载 Pexels 配置。免费申请: https://www.pexels.com/api/"""
+    return PexelsConfig(
+        api_key=os.environ.get("PEXELS_API_KEY", ""),
+    )
+
+
+# ==================== Ken Burns 配置 ====================
+
+@dataclass
+class KenBurnsConfig:
+    enabled: bool = True
+    zoom_speed: float = 0.001     # 每帧缩放因子
+    zoom_direction: str = "in"    # "in" / "out"
+    fps: int = 30
+
+
+def load_ken_burns_config() -> KenBurnsConfig:
+    """从环境变量加载 Ken Burns 动效配置。"""
+    return KenBurnsConfig(
+        enabled=os.environ.get("MD2VIDEO_KEN_BURNS", "true").lower() == "true",
+        zoom_speed=float(os.environ.get("MD2VIDEO_KEN_BURNS_SPEED", "0.001")),
+        zoom_direction=os.environ.get("MD2VIDEO_KEN_BURNS_DIRECTION", "in"),
+    )

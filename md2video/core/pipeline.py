@@ -1,7 +1,11 @@
 """
-Pipeline - 框架核心编排器。
+Pipeline - framework/runtime orchestration.
 
-流程: Parser → Planner → TTS (pre-compute) → Render (Manim) → Assembler (FFmpeg)
+Runtime artifacts:
+- plan.json: intent and target constraints.
+- execution-assets.json: material facts produced by tools.
+- timeline.json: renderer timing facts.
+- result.json: final delivery summary written after assemble.
 """
 from __future__ import annotations
 
@@ -9,20 +13,34 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
+from md2video.config import (
+    ARTIFACTS_DIR,
+    DEFAULT_SPEED,
+    DEFAULT_VOICE,
+    load_pexels_config,
+    load_planner_config,
+    load_tool_config,
+)
+from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
 from md2video.manifest.schema import (
-    PlanManifest, ResultManifest,
-    SegmentResult, AudioResult, SceneResult, ShotResult, VisualResult,
+    AudioAsset,
+    ExecutionAssets,
+    FinalResultManifest,
+    PlanManifest,
+    ResultManifest,
+    SceneResult,
+    SegmentResult,
+    ShotResult,
+    VisualAsset,
+    VisualResult,
+    result_manifest_from_execution_assets,
 )
 from md2video.parser.md_parser import parse_to_plan_manifest
-from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
-from md2video.tools.tts.edge_tts import EdgeTTSTool
 from md2video.tools.registry import ToolRegistry
-from md2video.config import (
-    ARTIFACTS_DIR, DEFAULT_VOICE, DEFAULT_SPEED,
-    load_planner_config, load_tool_config,
-)
+from md2video.tools.tts.edge_tts import EdgeTTSTool
 
 
 class Pipeline:
@@ -30,23 +48,38 @@ class Pipeline:
                  tool_config=None):
         self.artifacts_dir = Path(artifacts_dir or ARTIFACTS_DIR)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        self._warnings: list[str] = []
+        self._voice_override = voice is not None
+        self._speed_override = speed is not None
         self.voice = voice or DEFAULT_VOICE
         self.speed = speed or DEFAULT_SPEED
         self.planner = self._create_planner(planner)
 
-        # Tool infrastructure
         self.tool_config = tool_config or load_tool_config()
         self.registry = ToolRegistry()
         self._register_default_tools()
 
     def _register_default_tools(self):
-        """注册内建工具。"""
         # TTS
         tts_tool = EdgeTTSTool(cache_dir=self.artifacts_dir / "tts", voice=self.voice)
         self.registry.register("tts", tts_tool)
+
         # Render (Manim)
         from md2video.tools.render.manim_tool import ManimRenderTool
         self.registry.register("text_only", ManimRenderTool())
+
+        # Local image provider is the default no-key verification path.
+        from md2video.tools.image.local_image_tool import LocalImageTool
+        self.registry.register("stock_image", LocalImageTool())
+
+        # Pexels is optional and registered only when a key is configured.
+        pexels_cfg = load_pexels_config()
+        if pexels_cfg.api_key:
+            from md2video.tools.image.pexels_image_tool import PexelsImageTool
+            self.registry.register("stock_image", PexelsImageTool(
+                api_key=pexels_cfg.api_key,
+                cache_dir=self.artifacts_dir / "images",
+            ))
 
     @staticmethod
     def _create_planner(planner: str | None) -> RulePlanner | "LlmPlanner":
@@ -66,90 +99,168 @@ class Pipeline:
         md_path = Path(md_path)
         output_path = Path(output_path)
 
-        # 1. Parse → Plan Manifest
         print("[1/5] Parsing markdown...")
+        plan = self._load_or_build_plan_from_markdown(md_path)
+        return self._execute_plan(
+            plan=plan,
+            output_path=output_path,
+            base_dir=md_path.parent,
+            render_dir=self.artifacts_dir,
+        )
+
+    def run_plan(self, plan_path: str, output_path: str) -> Path:
+        plan_path = Path(plan_path)
+        output_path = Path(output_path)
+
+        print("[1/5] Loading plan manifest...")
+        plan = self._load_plan_from_json(plan_path)
+        return self._execute_plan(
+            plan=plan,
+            output_path=output_path,
+            base_dir=plan_path.parent,
+            render_dir=self.artifacts_dir,
+        )
+
+    def _load_or_build_plan_from_markdown(self, md_path: Path) -> PlanManifest:
         plan = parse_to_plan_manifest(str(md_path))
         scenes = self.planner.plan(plan.segments)
         denormalize_scenes_to_segments(plan.segments, scenes)
         plan.scenes = scenes
-        plan_path = self.artifacts_dir / "plan.json"
-        plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         print(f"  Plan: {len(plan.segments)} segments, {len(scenes)} scenes")
+        return plan
 
-        # 2. TTS pre-compute → fill Result Manifest
-        print("[2/5] Pre-computing TTS...")
-        result = ResultManifest()
-        current_time = 0.0
+    def _load_plan_from_json(self, plan_path: Path) -> PlanManifest:
+        plan = PlanManifest.model_validate_json(plan_path.read_text(encoding="utf-8"))
+        print(f"  Plan: {len(plan.segments)} segments, {len(plan.scenes)} scenes")
+        return plan
 
-        tts_tool = self.registry.get_tool("tts", "edge-tts")
-        for seg in plan.segments:
-            if seg.audio_request:
-                audio = tts_tool.execute({
-                    "text": seg.text,
-                    "voice": seg.audio_request.voice,
-                    "speed": seg.audio_request.speed,
-                    "format": seg.audio_request.format,
-                })
-                dur = audio["duration"]
-                result.segments.append(SegmentResult(
-                    id=seg.id,
-                    audio=AudioResult(
-                        path=audio["path"],
-                        duration=audio["duration"],
-                        provider=audio["provider"],
-                        cache_key=audio["cache_key"],
-                    ),
-                    start=current_time,
-                    end=current_time + dur,
-                ))
-                current_time += dur
-            else:
-                result.segments.append(SegmentResult(
-                    id=seg.id,
-                    start=current_time,
-                    end=current_time,
-                ))
+    def _execute_plan(
+        self,
+        plan: PlanManifest,
+        output_path: Path,
+        base_dir: Path,
+        render_dir: Path,
+    ) -> Path:
+        self._warnings = []
+        plan_path = self._write_plan_manifest(plan)
 
-        print(f"  TTS: {sum(1 for s in result.segments if s.audio)} audio segments")
+        print("[2/5] Preparing execution assets...")
+        assets = self._prepare_execution_assets(plan)
+        result = result_manifest_from_execution_assets(plan, assets)
 
-        # 填充 target_duration 并重新保存 plan.json
         self._fill_target_durations(plan.scenes, result.segments)
-        plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        plan_path = self._write_plan_manifest(plan)
+        result = result_manifest_from_execution_assets(plan, assets)
 
-        # 构建 SceneResult
-        result.scenes = self._build_scene_results(plan.scenes, result.segments)
+        for scene in plan.scenes:
+            if scene.shots and scene.visual_type != "text_only":
+                self._dispatch_visual_tool(
+                    scene,
+                    plan,
+                    result,
+                    base_dir=base_dir,
+                    execution_assets=assets,
+                )
 
-        # 3. Render — 按 visual_type 分发
+        assets_path = self._write_execution_assets(assets)
+        result = result_manifest_from_execution_assets(plan, assets)
+
         print("[3/5] Rendering video...")
-        video_path, timeline_path = self._dispatch_render(plan, result, md_path)
+        video_path, timeline_path = self._render_manim_batch(render_dir)
         print(f"  Video: {video_path}")
 
-        # 保存 Result Manifest（visuals 已在 dispatch 中填充）
-        result_path = self.artifacts_dir / "result.json"
-        result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
-
-        # 4. Assemble
         print("[4/5] Assembling final video...")
         from md2video.assembler.ffmpeg_assembler import FFmpegAssembler
         assembler = FFmpegAssembler(
-            plan, result, video_path, output_path,
-            md_dir=md_path.parent,
+            plan,
+            result,
+            video_path,
+            output_path,
+            md_dir=base_dir,
             timeline_path=timeline_path,
+            execution_assets=assets,
         )
         assembler.assemble()
         print(f"  Output: {output_path}")
 
+        self._write_final_result(output_path, plan_path, assets_path, timeline_path, assets)
         return output_path
 
-    def _dispatch_render(self, plan, result, md_path):
-        """按 scene 粒度分发：non-text_only 走 Tool.execute()，text_only 走 Manim 批量。"""
-        for sc in plan.scenes:
-            if sc.shots and sc.visual_type != "text_only":
-                self._dispatch_visual_tool(sc, plan, result)
-        return self._render_manim_batch(md_path)
+    def _prepare_execution_assets(self, plan: PlanManifest) -> ExecutionAssets:
+        assets = ExecutionAssets()
+        tts_tool = self.registry.get_tool("tts", "edge-tts")
+        for segment in plan.segments:
+            if not segment.audio_request or segment.segment_type in ("title_main", "title_sub"):
+                continue
+            audio = tts_tool.execute({
+                "text": segment.text,
+                "voice": self.voice if self._voice_override else segment.audio_request.voice,
+                "speed": self.speed if self._speed_override else segment.audio_request.speed,
+                "format": segment.audio_request.format,
+            })
+            audio_path = Path(audio["path"])
+            assets.audio_assets.append(AudioAsset(
+                segment_id=segment.id,
+                path=str(audio_path.resolve()),
+                duration=audio["duration"],
+                provider=audio["provider"],
+                cache_key=audio["cache_key"],
+            ))
 
-    def _dispatch_visual_tool(self, scene_plan, plan, result):
-        """为单个 scene 按优先级尝试 provider，首个成功即填充 ShotResult.visual。"""
+        print(f"  TTS: {len(assets.audio_assets)} audio assets")
+        return assets
+
+    def _write_plan_manifest(self, plan: PlanManifest) -> Path:
+        path = self.artifacts_dir / "plan.json"
+        path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        return path
+
+    def _write_execution_assets(self, assets: ExecutionAssets) -> Path:
+        path = self.artifacts_dir / "execution-assets.json"
+        path.write_text(assets.model_dump_json(indent=2), encoding="utf-8")
+        return path
+
+    def _write_final_result(
+        self,
+        output_path: Path,
+        plan_path: Path,
+        assets_path: Path,
+        timeline_path: Path | None,
+        assets: ExecutionAssets,
+    ) -> Path:
+        result_path = self.artifacts_dir / "result.json"
+        final_result = FinalResultManifest(
+            output_mp4=str(output_path),
+            used_assets={
+                "audio": [asset.model_dump() for asset in assets.audio_assets],
+                "visual": [asset.model_dump() for asset in assets.visual_assets],
+            },
+            warnings=self._warnings,
+            artifact_index={
+                "plan": str(plan_path),
+                "execution_assets": str(assets_path),
+                "timeline": str(timeline_path) if timeline_path else "",
+                "result": str(result_path),
+            },
+        )
+        result_path.write_text(final_result.model_dump_json(indent=2), encoding="utf-8")
+        return result_path
+
+    def _dispatch_render(self, plan, result, md_path, execution_assets=None):
+        """Backward-compatible helper used by existing tests."""
+        base_dir = md_path.parent
+        for scene in plan.scenes:
+            if scene.shots and scene.visual_type != "text_only":
+                self._dispatch_visual_tool(
+                    scene,
+                    plan,
+                    result,
+                    base_dir=base_dir,
+                    execution_assets=execution_assets,
+                )
+        return self._render_manim_batch(base_dir)
+
+    def _dispatch_visual_tool(self, scene_plan, plan, result, base_dir=None, execution_assets=None):
         visual_type = scene_plan.visual_type
         preferred = scene_plan.visual_params.get("preferred_provider")
         providers = self.tool_config.get_priority(visual_type)
@@ -160,10 +271,21 @@ class Pipeline:
             tool = self.registry.get_tool(visual_type, preferred)
             if tool:
                 try:
-                    self._invoke_visual_tool(tool, scene_plan, plan, result)
+                    self._invoke_visual_tool(
+                        tool,
+                        scene_plan,
+                        plan,
+                        result,
+                        base_dir=base_dir,
+                        execution_assets=execution_assets,
+                    )
                     return
-                except Exception as e:
-                    print(f"  Tool {preferred} failed for scene {scene_plan.id}: {e}")
+                except Exception as exc:
+                    warning = f"Tool {preferred} failed for scene {scene_plan.id}: {exc}"
+                    self._warnings.append(warning)
+                    print(f"  {warning}")
+                    if self._is_strict_local_visual(scene_plan, preferred):
+                        raise
 
         for provider in providers:
             if provider in tried or provider == "_text_only":
@@ -172,29 +294,57 @@ class Pipeline:
             tool = self.registry.get_tool(visual_type, provider)
             if tool:
                 try:
-                    self._invoke_visual_tool(tool, scene_plan, plan, result)
+                    self._invoke_visual_tool(
+                        tool,
+                        scene_plan,
+                        plan,
+                        result,
+                        base_dir=base_dir,
+                        execution_assets=execution_assets,
+                    )
                     return
-                except Exception as e:
-                    print(f"  Tool {provider} failed for scene {scene_plan.id}: {e}")
+                except Exception as exc:
+                    warning = f"Tool {provider} failed for scene {scene_plan.id}: {exc}"
+                    self._warnings.append(warning)
+                    print(f"  {warning}")
+                    if self._is_strict_local_visual(scene_plan, provider):
+                        raise
 
-        print(f"  WARNING: No tool available for {visual_type} in scene {scene_plan.id}")
+        warning = f"No tool available for {visual_type} in scene {scene_plan.id}"
+        self._warnings.append(warning)
+        print(f"  WARNING: {warning}")
 
-    def _invoke_visual_tool(self, tool, scene_plan, plan, result):
-        """通用工具调用：构建 input_data，调用 tool.execute()，写回 ShotResult.visual。"""
-        seg_map = {s.id: s for s in plan.segments}
-        sr_map = {s.id: s for s in result.segments}
+    @staticmethod
+    def _is_strict_local_visual(scene_plan, provider: str | None) -> bool:
+        visual_params = scene_plan.visual_params or {}
+        has_local_path = any(
+            visual_params.get(key)
+            for key in ("path", "src", "image_path")
+        )
+        return provider == "local" and has_local_path
+
+    def _invoke_visual_tool(self, tool, scene_plan, plan, result, base_dir=None, execution_assets=None):
+        seg_map = {segment.id: segment for segment in plan.segments}
+        sr_map = {segment.id: segment for segment in result.segments}
 
         for shot_plan in scene_plan.shots:
             segments_data = []
             for sid in shot_plan.segment_ids:
-                sp = seg_map.get(sid)
-                sr = sr_map.get(sid)
-                seg_data = {"id": sid, "text": sp.text if sp else "", "segment_type": sp.segment_type if sp else ""}
-                if sr and sr.audio:
-                    seg_data["audio"] = {"path": sr.audio.path, "duration": sr.audio.duration}
+                segment_plan = seg_map.get(sid)
+                segment_result = sr_map.get(sid)
+                segment_data = {
+                    "id": sid,
+                    "text": segment_plan.text if segment_plan else "",
+                    "segment_type": segment_plan.segment_type if segment_plan else "",
+                }
+                if segment_result and segment_result.audio:
+                    segment_data["audio"] = {
+                        "path": segment_result.audio.path,
+                        "duration": segment_result.audio.duration,
+                    }
                 else:
-                    seg_data["audio"] = None
-                segments_data.append(seg_data)
+                    segment_data["audio"] = None
+                segments_data.append(segment_data)
 
             output_dir = self.artifacts_dir / "visuals" / scene_plan.id
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -214,18 +364,23 @@ class Pipeline:
                 "segments": segments_data,
                 "output_dir": str(output_dir),
             }
+            if base_dir is not None:
+                input_data["base_dir"] = str(base_dir)
 
             output = tool.execute(input_data)
-            self._apply_visual_result(output, shot_plan.id, result)
+            self._apply_visual_result(
+                output,
+                shot_plan.id,
+                result,
+                execution_assets=execution_assets,
+            )
 
-    def _apply_visual_result(self, tool_output, shot_plan_id, result):
-        """将 tool.execute() 输出写回 result.scenes 中匹配的 ShotResult.visual。"""
+    def _apply_visual_result(self, tool_output, shot_plan_id, result, execution_assets=None):
         visuals = tool_output.get("visuals", [])
-        # 优先匹配 shot_id，fallback 到第一个 visual
         matched = None
-        for vis in visuals:
-            if vis.get("shot_id") == shot_plan_id:
-                matched = vis
+        for visual in visuals:
+            if visual.get("shot_id") == shot_plan_id:
+                matched = visual
                 break
         if not matched and visuals:
             matched = visuals[0]
@@ -241,18 +396,36 @@ class Pipeline:
                         height=matched.get("height", 0),
                         source=matched.get("source", "none"),
                     )
+                    if execution_assets is not None:
+                        self._upsert_visual_asset(execution_assets, shot_plan_id, matched)
                     return
 
-    def _render_manim_batch(self, md_path):
-        """Manim 批量渲染 (text_only scenes)。"""
-        anim_dir = md_path.parent
+    def _upsert_visual_asset(self, execution_assets, shot_plan_id, visual_data):
+        asset = VisualAsset(
+            shot_id=shot_plan_id,
+            path=visual_data.get("path", ""),
+            width=visual_data.get("width", 0),
+            height=visual_data.get("height", 0),
+            provider=visual_data.get("source", visual_data.get("provider", "none")),
+            cache_key=visual_data.get("cache_key", ""),
+            source_url=visual_data.get("source_url", ""),
+        )
+        execution_assets.visual_assets = [
+            existing for existing in execution_assets.visual_assets
+            if existing.shot_id != shot_plan_id
+        ]
+        execution_assets.visual_assets.append(asset)
+
+    def _render_manim_batch(self, render_dir):
+        render_root = Path(render_dir)
+        render_root.mkdir(parents=True, exist_ok=True)
+        anim_dir = Path(tempfile.mkdtemp(prefix="manim_render_", dir=render_root))
         renderer_src = Path(__file__).parent.parent / "tools" / "render" / "manim_renderer.py"
         anim_renderer = anim_dir / "manifest_scene.py"
 
         manim_cfg_src = Path(__file__).parent.parent / "tools" / "render" / "manim.cfg"
-        if not (anim_dir / "manim.cfg").exists():
-            shutil.copy2(manim_cfg_src, anim_dir / "manim.cfg")
-
+        anim_cfg = anim_dir / "manim.cfg"
+        shutil.copy2(manim_cfg_src, anim_cfg)
         shutil.copy2(renderer_src, anim_renderer)
 
         project_root = Path(__file__).parent.parent.parent
@@ -264,36 +437,41 @@ class Pipeline:
                 "-ql",
                 "manifest_scene.py", "ManifestDrivenScene",
             ]
-            env = {"PYTHONPATH": env_pythonpath, "MANIM_CACHE_DISABLE": "1"}
-            for key in ["PATH", "PATHEXT", "SYSTEMROOT", "COMSPEC", "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP"]:
-                if key in os.environ:
-                    env[key] = os.environ[key]
+            env = os.environ.copy()
+            env["PYTHONPATH"] = env_pythonpath
+            env["MANIM_CACHE_DISABLE"] = "1"
+            env["MD2VIDEO_ARTIFACTS_DIR"] = str(self.artifacts_dir.resolve())
+            env["MD2VIDEO_TIMELINE_PATH"] = str((self.artifacts_dir / "timeline.json").resolve())
 
-            proc = subprocess.run(cmd, cwd=str(anim_dir), env=env,
-                                  capture_output=True, text=True, timeout=300)
+            proc = subprocess.run(
+                cmd,
+                cwd=str(anim_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
             if proc.returncode != 0:
-                print(f"  Render stderr (last 20 lines):")
+                print("  Render stderr (last 20 lines):")
                 for line in proc.stderr.strip().split("\n")[-20:]:
                     print(f"    {line}")
                 raise RuntimeError(f"Manim rendering failed (exit {proc.returncode})")
 
-            print(f"  Render OK")
+            print("  Render OK")
 
             video_path = self._find_rendered_video(anim_dir)
             if not video_path:
                 raise FileNotFoundError("No rendered video found")
 
-            return video_path, anim_dir / "timeline.json"
+            return video_path, self.artifacts_dir / "timeline.json"
 
         finally:
             if anim_renderer.exists():
                 anim_renderer.unlink()
-            anim_cfg = anim_dir / "manim.cfg"
             if anim_cfg.exists():
                 anim_cfg.unlink()
 
     def _find_rendered_video(self, anim_dir: Path) -> Path | None:
-        """在 media/ 目录中找到最新渲染的 .mp4。"""
         media_dir = anim_dir / "media" / "videos"
         if not media_dir.exists():
             media_dir = anim_dir / "media"
@@ -302,31 +480,32 @@ class Pipeline:
         if not mp4s:
             return None
 
-        scene_mp4s = [p for p in mp4s if "ManifestDrivenScene" in str(p)]
+        scene_mp4s = [path for path in mp4s if "ManifestDrivenScene" in str(path)]
         if scene_mp4s:
-            return max(scene_mp4s, key=lambda p: p.stat().st_mtime)
+            return max(scene_mp4s, key=lambda path: path.stat().st_mtime)
 
-        return max(mp4s, key=lambda p: p.stat().st_mtime)
+        return max(mp4s, key=lambda path: path.stat().st_mtime)
 
     def _fill_target_durations(self, scene_plans, segment_results):
-        """填充 ShotPlan.target_duration（TTS 时长之和）。"""
-        seg_map = {sr.id: sr for sr in segment_results}
-        for sp in scene_plans:
-            for shot in sp.shots:
+        seg_map = {segment.id: segment for segment in segment_results}
+        for scene_plan in scene_plans:
+            for shot in scene_plan.shots:
                 starts = [seg_map[sid].start for sid in shot.segment_ids if sid in seg_map]
                 ends = [seg_map[sid].end for sid in shot.segment_ids if sid in seg_map]
-                if starts and ends:
-                    shot.target_duration = max(ends) - min(starts)
+                if not starts or not ends:
+                    continue
+                duration = max(ends) - min(starts)
+                if duration > 0 or shot.target_duration <= 0:
+                    shot.target_duration = duration
 
     def _build_scene_results(self, scene_plans, segment_results):
-        """从 segment 的 start/end 累加出 shot → scene 的 start/end。"""
-        result_map = {sr.id: sr for sr in segment_results}
+        result_map = {segment.id: segment for segment in segment_results}
         scene_results = []
-        for sp in scene_plans:
-            if not sp.shots:
+        for scene_plan in scene_plans:
+            if not scene_plan.shots:
                 continue
             shot_results = []
-            for shot_plan in sp.shots:
+            for shot_plan in scene_plan.shots:
                 if not shot_plan.segment_ids:
                     continue
                 starts = [result_map[sid].start for sid in shot_plan.segment_ids if sid in result_map]
@@ -341,7 +520,7 @@ class Pipeline:
                     ))
             if shot_results:
                 scene_results.append(SceneResult(
-                    id=sp.id,
+                    id=scene_plan.id,
                     shots=shot_results,
                     start=min(sr.start for sr in shot_results),
                     end=max(sr.end for sr in shot_results),

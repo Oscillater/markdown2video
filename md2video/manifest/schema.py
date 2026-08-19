@@ -127,3 +127,160 @@ class SceneResult(BaseModel):
 class ResultManifest(BaseModel):
     segments: List[SegmentResult] = Field(default_factory=list)
     scenes: List[SceneResult] = Field(default_factory=list)
+
+
+# ==================== Runtime Artifacts ====================
+
+class AudioAsset(BaseModel):
+    segment_id: str
+    path: str
+    duration: float
+    provider: str = "edge-tts"
+    cache_key: str = ""
+
+
+class VisualAsset(BaseModel):
+    shot_id: str
+    path: str
+    width: int = 0
+    height: int = 0
+    provider: str = "none"
+    cache_key: str = ""
+    source_url: str = ""
+
+
+class ExecutionAssets(BaseModel):
+    """Material facts produced during one runtime execution."""
+
+    version: str = "1"
+    audio_assets: List[AudioAsset] = Field(default_factory=list)
+    visual_assets: List[VisualAsset] = Field(default_factory=list)
+
+
+class FinalResultManifest(BaseModel):
+    """Final delivery summary written after assemble completes."""
+
+    version: str = "1"
+    output_mp4: str
+    used_assets: Dict[str, List[Dict]] = Field(default_factory=dict)
+    warnings: List[str] = Field(default_factory=list)
+    artifact_index: Dict[str, str] = Field(default_factory=dict)
+
+
+def result_manifest_from_execution_assets(
+    plan: PlanManifest,
+    assets: ExecutionAssets,
+) -> ResultManifest:
+    """Build the legacy in-memory result view from runtime execution assets."""
+
+    audio_by_segment = {asset.segment_id: asset for asset in assets.audio_assets}
+    visual_by_shot = {asset.shot_id: asset for asset in assets.visual_assets}
+    segment_by_id = {seg.id: seg for seg in plan.segments}
+    segment_result_by_id: Dict[str, SegmentResult] = {}
+
+    def _audio_result(segment_id: str) -> Optional[AudioResult]:
+        audio_asset = audio_by_segment.get(segment_id)
+        if not audio_asset:
+            return None
+        return AudioResult(
+            path=audio_asset.path,
+            duration=audio_asset.duration,
+            provider=audio_asset.provider,
+            cache_key=audio_asset.cache_key,
+        )
+
+    def _assign_segment(segment_id: str, start: float, end: float) -> SegmentResult:
+        existing = segment_result_by_id.get(segment_id)
+        if existing:
+            return existing
+        result = SegmentResult(
+            id=segment_id,
+            audio=_audio_result(segment_id),
+            start=start,
+            end=end,
+        )
+        segment_result_by_id[segment_id] = result
+        return result
+
+    current_time = 0.0
+    scene_results: List[SceneResult] = []
+    for scene in plan.scenes:
+        shot_results: List[ShotResult] = []
+        for shot in scene.shots:
+            shot_segment_ids = [
+                sid for sid in shot.segment_ids
+                if sid in segment_by_id
+            ]
+            if not shot_segment_ids:
+                continue
+
+            audio_duration = sum(
+                audio_by_segment[sid].duration
+                for sid in shot_segment_ids
+                if sid in audio_by_segment
+            )
+            shot_start = current_time
+            segment_results_for_shot: List[SegmentResult] = []
+
+            if audio_duration > 0:
+                segment_time = current_time
+                for sid in shot_segment_ids:
+                    duration = audio_by_segment[sid].duration if sid in audio_by_segment else 0.0
+                    segment_results_for_shot.append(
+                        _assign_segment(sid, segment_time, segment_time + duration)
+                    )
+                    segment_time += duration
+                current_time = segment_time
+            elif shot.target_duration > 0:
+                per_segment_duration = shot.target_duration / len(shot_segment_ids)
+                segment_time = current_time
+                for sid in shot_segment_ids:
+                    segment_results_for_shot.append(
+                        _assign_segment(sid, segment_time, segment_time + per_segment_duration)
+                    )
+                    segment_time += per_segment_duration
+                current_time = segment_time
+            else:
+                for sid in shot_segment_ids:
+                    segment_results_for_shot.append(_assign_segment(sid, current_time, current_time))
+
+            visual_asset = visual_by_shot.get(shot.id)
+            visual = VisualResult()
+            if visual_asset:
+                visual = VisualResult(
+                    path=visual_asset.path,
+                    width=visual_asset.width,
+                    height=visual_asset.height,
+                    source=visual_asset.provider,
+                )
+            shot_results.append(ShotResult(
+                id=shot.id,
+                segment_ids=shot.segment_ids,
+                start=shot_start,
+                end=current_time,
+                visual=visual,
+            ))
+
+        if shot_results:
+            scene_results.append(SceneResult(
+                id=scene.id,
+                shots=shot_results,
+                start=min(sr.start for sr in shot_results),
+                end=max(sr.end for sr in shot_results),
+            ))
+
+    for seg in plan.segments:
+        if seg.id in segment_result_by_id:
+            continue
+        audio_asset = audio_by_segment.get(seg.id)
+        duration = audio_asset.duration if audio_asset else 0.0
+        _assign_segment(seg.id, current_time, current_time + duration)
+        current_time += duration
+
+    segment_results = [
+        segment_result_by_id[seg.id]
+        for seg in plan.segments
+        if seg.id in segment_result_by_id
+    ]
+
+    return ResultManifest(segments=segment_results, scenes=scene_results)

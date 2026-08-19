@@ -1,17 +1,26 @@
 """Tests for extract_music_entries, extract_image_entries and extract_shot_visual_entries in ffmpeg_assembler."""
 from __future__ import annotations
 
+import json
+
 from md2video.assembler.ffmpeg_assembler import (
-    extract_image_entries, extract_music_entries, extract_shot_visual_entries,
+    extract_image_entries,
+    extract_music_entries,
+    extract_shot_visual_entries,
+    extract_shot_visual_entries_from_assets,
 )
 from md2video.manifest.schema import (
     AudioResult,
+    ExecutionAssets,
     PlanManifest,
     ResultManifest,
     SceneResult,
     SegmentPlan,
     SegmentResult,
+    ScenePlan,
+    ShotPlan,
     ShotResult,
+    VisualAsset,
     VisualResult,
 )
 
@@ -188,6 +197,75 @@ class TestExtractShotVisualEntries:
         result = ResultManifest()
         assert extract_shot_visual_entries(result) == []
 
+    def test_execution_assets_visual_collected(self):
+        plan = PlanManifest(
+            segments=[SegmentPlan(id="s1", text="x", segment_type="content")],
+            scenes=[
+                ScenePlan(
+                    id="scene_001",
+                    visual_type="stock_image",
+                    shots=[ShotPlan(id="shot_001", segment_ids=["s1"], target_duration=2.0)],
+                ),
+            ],
+        )
+        assets = ExecutionAssets(
+            visual_assets=[
+                VisualAsset(
+                    shot_id="shot_001",
+                    path="/repo/assets/local_image.jpg",
+                    width=500,
+                    height=631,
+                    provider="local",
+                ),
+            ],
+        )
+
+        entries = extract_shot_visual_entries_from_assets(plan, assets)
+        assert entries == [{
+            "name": "shot_001",
+            "src": "/repo/assets/local_image.jpg",
+            "start": 0.0,
+            "end": 2.0,
+        }]
+
+    def test_execution_assets_visual_uses_timeline_shot_timing(self, tmp_path):
+        plan = PlanManifest(
+            segments=[SegmentPlan(id="s1", text="x", segment_type="content")],
+            scenes=[
+                ScenePlan(
+                    id="scene_001",
+                    visual_type="stock_image",
+                    shots=[ShotPlan(id="shot_001", segment_ids=["s1"], target_duration=2.0)],
+                ),
+            ],
+        )
+        assets = ExecutionAssets(
+            visual_assets=[
+                VisualAsset(
+                    shot_id="shot_001",
+                    path="/repo/assets/local_image.jpg",
+                    width=500,
+                    height=631,
+                    provider="local",
+                ),
+            ],
+        )
+        timeline_path = tmp_path / "timeline.json"
+        timeline_path.write_text(json.dumps({
+            "shots": [{
+                "shot_id": "shot_001",
+                "scene_id": "scene_001",
+                "segment_ids": ["s1"],
+                "start": 4.25,
+                "end": 8.75,
+            }],
+        }), encoding="utf-8")
+
+        entries = extract_shot_visual_entries_from_assets(plan, assets, timeline_path=timeline_path)
+
+        assert entries[0]["start"] == 4.25
+        assert entries[0]["end"] == 8.75
+
     def test_text_only_scenes_omitted(self):
         """visual.source == "none" 的 shot 被跳过。"""
         result = ResultManifest(scenes=[
@@ -214,6 +292,23 @@ class TestExtractShotVisualEntries:
         assert entries[0]["src"] == "/artifacts/visuals/scene_001/img.jpg"
         assert entries[0]["start"] == 0.0
         assert entries[0]["end"] == 5.0
+
+    def test_local_image_visual_collected(self):
+        """local provider visual 被作为 per-shot overlay 条目提取。"""
+        result = ResultManifest(scenes=[
+            SceneResult(id="scene_001", shots=[
+                ShotResult(id="shot_001", segment_ids=["s1"], start=1.0, end=3.0,
+                           visual=VisualResult(
+                               path="/repo/assets/local_image.jpg",
+                               width=500, height=631, source="local")),
+            ]),
+        ])
+        entries = extract_shot_visual_entries(result)
+        assert len(entries) == 1
+        assert entries[0]["name"] == "shot_001"
+        assert entries[0]["src"] == "/repo/assets/local_image.jpg"
+        assert entries[0]["start"] == 1.0
+        assert entries[0]["end"] == 3.0
 
     def test_multiple_shots_same_scene(self):
         """同一 scene 下的多个 shot 各自产出条目。"""

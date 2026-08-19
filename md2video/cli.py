@@ -8,7 +8,8 @@ from md2video.core.pipeline import Pipeline
 
 def main():
     p = argparse.ArgumentParser(description="Markdown to Video - Manifest driven pipeline")
-    p.add_argument("input", help="Path to markdown file")
+    p.add_argument("input", nargs="?", help="Path to markdown file")
+    p.add_argument("--plan", default=None, help="Path to PlanManifest JSON")
     p.add_argument("-o", "--output", default="output.mp4", help="Output video path")
     p.add_argument("--voice", default=None, help="TTS voice (default: zh-CN-YunxiNeural)")
     p.add_argument("--speed", type=float, default=None, help="TTS speed (default: 1.0)")
@@ -26,9 +27,15 @@ def main():
     if args.planner:
         kwargs["planner"] = args.planner
 
+    if bool(args.input) == bool(args.plan):
+        p.error("provide exactly one input: markdown path or --plan plan.json")
+
     pipeline = Pipeline(**kwargs)
     try:
-        output = pipeline.run(args.input, args.output)
+        if args.plan:
+            output = pipeline.run_plan(args.plan, args.output)
+        else:
+            output = pipeline.run(args.input, args.output)
         print(f"\nDone! Output: {output}")
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)

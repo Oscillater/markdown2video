@@ -31,6 +31,7 @@ class Tool(Protocol):
                 "segments": [{"id": str, "text": str, "segment_type": str,
                               "audio": {"path": str, "duration": float} | None}],
                 "output_dir": str,
+                "base_dir": str | None,  # optional, for resolving local relative paths
             }
 
         Visual tool 输出契约::

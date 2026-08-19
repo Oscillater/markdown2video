@@ -209,8 +209,10 @@ class TestParseToPlanManifest:
         manifest = parse_to_plan_manifest(str(full_md))
         # 标题
         assert manifest.segments[0].segment_type == "title_main"
+        assert manifest.segments[0].audio_request is None
         assert manifest.segments[0].text == "大标题"
         assert manifest.segments[1].segment_type == "title_sub"
+        assert manifest.segments[1].audio_request is None
         assert manifest.segments[1].text == "二级标题"
         # 第一个 section_header
         assert manifest.segments[2].segment_type == "section_header"

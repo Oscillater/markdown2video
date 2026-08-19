@@ -2,17 +2,23 @@
 ManifestDrivenScene - 基于 PlanManifest + ResultManifest 的 Manim 场景。
 
 用法 (在 anim/ 目录下运行):
-    manim -pql manim_renderer.py ManifestDrivenScene -- --plan ../artifacts/plan.json --result ../artifacts/result.json
+    MD2VIDEO_ARTIFACTS_DIR=../artifacts manim -pql manim_renderer.py ManifestDrivenScene
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-from md2video.manifest.schema import PlanManifest, ResultManifest
+from md2video.manifest.schema import (
+    ExecutionAssets,
+    PlanManifest,
+    ResultManifest,
+    result_manifest_from_execution_assets,
+)
 from md2video.tools.render.cached_voice import CachedVoiceService
 from md2video.parser.md_parser import _parse_music_marker, _parse_image_marker
 from md2video.config import (
@@ -35,6 +41,7 @@ def textWithFont(text, font=DEFAULT_FONT, **kwargs):
 class ManifestDrivenScene(VoiceoverScene):
     def construct(self):
         plan, result = self._load_manifests()
+        self._segment_result_by_id = {seg.id: seg for seg in result.segments}
 
         # 设置语音服务为 CachedVoiceService
         project_root = Path.cwd().parent
@@ -52,18 +59,47 @@ class ManifestDrivenScene(VoiceoverScene):
         self.current_subtitles = []
         self.subtitle_heights = []
         self.is_image_active = False
+        self._segment_location_by_id = {}
 
-        # 构建 segment -> scene 映射
+        # 构建 segment -> scene/shot 映射
         segment_to_scene = {}
         for scene in plan.scenes:
-            for seg_id in scene.all_segment_ids:
-                segment_to_scene[seg_id] = scene
+            for shot in scene.shots:
+                for seg_id in shot.segment_ids:
+                    segment_to_scene[seg_id] = scene
+                    self._segment_location_by_id[seg_id] = {
+                        "scene_id": scene.id,
+                        "shot_id": shot.id,
+                    }
 
         # Fallback: 如果没有 scenes（Phase 1 旧数据），用扁平循环
         if not plan.scenes:
             self._construct_flat(plan, result)
         else:
             self._construct_by_scenes(plan, result, segment_to_scene)
+
+    def _timeline_entry(self, seg, start: float, text: str | None = None, end: float | None = None) -> dict:
+        location = getattr(self, "_segment_location_by_id", {}).get(seg.id, {})
+        entry = {
+            "segment_id": seg.id,
+            "segment_type": seg.segment_type,
+            "text": text if text is not None else seg.text,
+            "start": start,
+            "end": end,
+        }
+        entry.update(location)
+        return entry
+
+    def _marker_entry(self, seg) -> dict:
+        entry = {
+            "segment_id": seg.id,
+            "segment_type": seg.segment_type,
+            "kind": seg.marker_data["kind"],
+            "name": seg.marker_data["name"],
+            "time": self.time,
+        }
+        entry.update(getattr(self, "_segment_location_by_id", {}).get(seg.id, {}))
+        return entry
 
     def _construct_flat(self, plan, result):
         """Phase 1 兼容: 扁平 segment 循环（与原逻辑完全一致）。"""
@@ -111,7 +147,7 @@ class ManifestDrivenScene(VoiceoverScene):
                         subtitle.scale(SUBTITLE_MAX_WIDTH / subtitle.width)
                     self.play(Write(subtitle))
                     self.wait(0.5)
-                timeline.append({"text": subtitle_text, "start": start_t, "end": None})
+                timeline.append(self._timeline_entry(seg, start_t, text=subtitle_text))
 
                 # 换行小标题
                 if len(subtitle_text) > 5:
@@ -161,13 +197,7 @@ class ManifestDrivenScene(VoiceoverScene):
 
             # --- 图片标记 ---
             if stype == "marker_image" and seg.marker_data:
-                marker_timeline.append({
-                    "id": seg.id,
-                    "segment_type": "marker_image",
-                    "kind": seg.marker_data["kind"],
-                    "name": seg.marker_data["name"],
-                    "time": self.time,
-                })
+                marker_timeline.append(self._marker_entry(seg))
                 kind = seg.marker_data["kind"]
                 if kind == "start" and not self.is_image_active:
                     self.is_image_active = True
@@ -186,13 +216,7 @@ class ManifestDrivenScene(VoiceoverScene):
             # --- 音乐标记 ---
             if stype == "marker_music":
                 if seg.marker_data:
-                    marker_timeline.append({
-                        "id": seg.id,
-                        "segment_type": "marker_music",
-                        "kind": seg.marker_data["kind"],
-                        "name": seg.marker_data["name"],
-                        "time": self.time,
-                    })
+                    marker_timeline.append(self._marker_entry(seg))
                 continue
 
             # --- 正文 / 附录 ---
@@ -207,7 +231,7 @@ class ManifestDrivenScene(VoiceoverScene):
                 sentence = textWithFont(wrapped_line, font_size=15).move_to(text_position)
                 with self.voiceover(text=line) as tracker:
                     self.add(sentence)
-                    timeline.append({"text": line, "start": start_t, "end": None})
+                    timeline.append(self._timeline_entry(seg, start_t, text=line))
                 self.wait(2)
                 self.remove(sentence)
                 for item in timeline:
@@ -270,13 +294,7 @@ class ManifestDrivenScene(VoiceoverScene):
             return
 
         if stype == "marker_image" and seg.marker_data:
-            marker_timeline.append({
-                "id": seg.id,
-                "segment_type": "marker_image",
-                "kind": seg.marker_data["kind"],
-                "name": seg.marker_data["name"],
-                "time": self.time,
-            })
+            marker_timeline.append(self._marker_entry(seg))
             kind = seg.marker_data["kind"]
             if kind == "start" and not self.is_image_active:
                 self.is_image_active = True
@@ -294,13 +312,7 @@ class ManifestDrivenScene(VoiceoverScene):
 
         if stype == "marker_music":
             if seg.marker_data:
-                marker_timeline.append({
-                    "id": seg.id,
-                    "segment_type": "marker_music",
-                    "kind": seg.marker_data["kind"],
-                    "name": seg.marker_data["name"],
-                    "time": self.time,
-                })
+                marker_timeline.append(self._marker_entry(seg))
             return
 
         if stype in ("content", "appendix"):
@@ -311,15 +323,27 @@ class ManifestDrivenScene(VoiceoverScene):
             start_t = self.time
             text_position = IMAGE_TEXT_POSITION if self.is_image_active else DEFAULT_TEXT_POSITION
             sentence = textWithFont(wrapped_line, font_size=15).move_to(text_position)
-            with self.voiceover(text=line) as tracker:
+            timeline.append(self._timeline_entry(seg, start_t, text=line))
+            if seg.audio_request is not None:
+                with self.voiceover(text=line) as tracker:
+                    self.add(sentence)
+                self.wait(2)
+            else:
                 self.add(sentence)
-                timeline.append({"text": line, "start": start_t, "end": None})
-            self.wait(2)
+                self.wait(self._segment_duration(seg.id, default=2.0))
             self.remove(sentence)
             for item in timeline:
                 if item.get("text") == line and item.get("end") is None:
                     item["end"] = self.time
                     break
+
+    def _segment_duration(self, segment_id: str, default: float = 2.0) -> float:
+        result = getattr(self, "_segment_result_by_id", {}).get(segment_id)
+        if result:
+            duration = result.end - result.start
+            if duration > 0:
+                return duration
+        return default
 
     def _render_section_header(self, seg, dots_offset_tracker):
         """渲染 section header（左侧字幕堆叠）。"""
@@ -336,7 +360,7 @@ class ManifestDrivenScene(VoiceoverScene):
                 subtitle.scale(SUBTITLE_MAX_WIDTH / subtitle.width)
             self.play(Write(subtitle))
             self.wait(0.5)
-        timeline.append({"text": subtitle_text, "start": start_t, "end": None})
+        timeline.append(self._timeline_entry(seg, start_t, text=subtitle_text))
 
         if len(subtitle_text) > 5:
             wrapped_text = "\n".join(
@@ -388,8 +412,8 @@ class ManifestDrivenScene(VoiceoverScene):
         sub_title = textWithFont(subtitle_seg.text, font_size=30).move_to([0, -1, 0])
         start_t = self.time
         self.play(Write(main_title), Write(sub_title))
-        self.timeline.append({"text": title_seg.text, "start": start_t, "end": None})
-        self.timeline.append({"text": subtitle_seg.text, "start": start_t, "end": None})
+        self.timeline.append(self._timeline_entry(title_seg, start_t, text=title_seg.text))
+        self.timeline.append(self._timeline_entry(subtitle_seg, start_t, text=subtitle_seg.text))
         self.wait(1)
         self._title_main_mobj = main_title
         self._title_sub_mobj = sub_title
@@ -445,30 +469,60 @@ class ManifestDrivenScene(VoiceoverScene):
         self.play(FadeOut(dot1), FadeOut(dot2))
         t_tracker.clear_updaters()
 
-        timeline_path = Path("timeline.json")
+        timeline_path = Path(os.environ.get("MD2VIDEO_TIMELINE_PATH", "timeline.json"))
+        timeline_path.parent.mkdir(parents=True, exist_ok=True)
+        shots = self._build_shot_timeline()
         with open(timeline_path, "w", encoding="utf-8") as f:
-            json.dump({"text": self.timeline, "markers": self.marker_timeline},
+            json.dump({"text": self.timeline, "markers": self.marker_timeline, "shots": shots},
                        f, ensure_ascii=False, indent=2)
         print(f"Timeline saved: {timeline_path}")
+
+    def _build_shot_timeline(self) -> list[dict]:
+        shots_by_id = {}
+        for item in self.timeline:
+            shot_id = item.get("shot_id")
+            if not shot_id or item.get("end") is None:
+                continue
+            entry = shots_by_id.setdefault(shot_id, {
+                "shot_id": shot_id,
+                "scene_id": item.get("scene_id", ""),
+                "segment_ids": [],
+                "start": item["start"],
+                "end": item["end"],
+            })
+            entry["start"] = min(entry["start"], item["start"])
+            entry["end"] = max(entry["end"], item["end"])
+            segment_id = item.get("segment_id")
+            if segment_id and segment_id not in entry["segment_ids"]:
+                entry["segment_ids"].append(segment_id)
+        return list(shots_by_id.values())
 
     def _load_manifests(self) -> tuple[PlanManifest, ResultManifest]:
         """从 artifacts/ 目录加载 PlanManifest 和 ResultManifest。"""
         # 从 anim/ 目录运行，manifests 在上级 artifacts/ 目录
+        env_artifacts = os.environ.get("MD2VIDEO_ARTIFACTS_DIR")
         candidates = [
+            Path(env_artifacts) if env_artifacts else None,
             Path.cwd().parent / "artifacts",  # anim/ -> project/artifacts/
             Path.cwd() / "artifacts",          # 直接在 cwd/artifacts/
         ]
         artifacts_dir = None
         for d in candidates:
-            if d.exists():
+            if d and d.exists():
                 artifacts_dir = d
                 break
         if artifacts_dir is None:
             raise FileNotFoundError("artifacts/ directory not found")
 
         plan_path = artifacts_dir / "plan.json"
+        assets_path = artifacts_dir / "execution-assets.json"
         result_path = artifacts_dir / "result.json"
 
         plan = PlanManifest.model_validate_json(plan_path.read_text(encoding="utf-8"))
+        if assets_path.exists():
+            assets = ExecutionAssets.model_validate_json(assets_path.read_text(encoding="utf-8"))
+            result = result_manifest_from_execution_assets(plan, assets)
+            return plan, result
+
         result = ResultManifest.model_validate_json(result_path.read_text(encoding="utf-8"))
         return plan, result

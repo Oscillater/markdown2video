@@ -4,8 +4,11 @@ from __future__ import annotations
 import json
 
 from md2video.manifest.schema import (
+    AudioAsset,
     AudioRequest,
     AudioResult,
+    ExecutionAssets,
+    FinalResultManifest,
     PlanManifest,
     ResultManifest,
     ScenePlan,
@@ -14,7 +17,9 @@ from md2video.manifest.schema import (
     SegmentResult,
     ShotPlan,
     ShotResult,
+    VisualAsset,
     VisualResult,
+    result_manifest_from_execution_assets,
 )
 
 
@@ -412,3 +417,125 @@ class TestResultManifestWithScenes:
         assert restored.scenes[0].id == "scene_001"
         assert restored.scenes[0].shots[0].segment_ids == ["seg_001", "seg_002"]
         assert restored.scenes[0].end == 9.0
+
+
+# ========== Runtime Artifacts ==========
+
+
+class TestExecutionAssets:
+    def test_round_trip_json(self):
+        assets = ExecutionAssets(
+            audio_assets=[
+                AudioAsset(
+                    segment_id="seg_001",
+                    path="artifacts/tts/seg_001.wav",
+                    duration=2.5,
+                    cache_key="audio-key",
+                ),
+            ],
+            visual_assets=[
+                VisualAsset(
+                    shot_id="shot_001",
+                    path="assets/local_image.jpg",
+                    width=500,
+                    height=631,
+                    provider="local",
+                    cache_key="visual-key",
+                ),
+            ],
+        )
+
+        restored = ExecutionAssets.model_validate_json(assets.model_dump_json())
+        assert restored.version == "1"
+        assert restored.audio_assets[0].segment_id == "seg_001"
+        assert restored.visual_assets[0].provider == "local"
+        assert restored.visual_assets[0].cache_key == "visual-key"
+
+    def test_result_manifest_adapter_uses_audio_and_visual_assets(self):
+        plan = PlanManifest(
+            segments=[SegmentPlan(id="seg_001", text="x", segment_type="content")],
+            scenes=[
+                ScenePlan(
+                    id="scene_001",
+                    visual_type="stock_image",
+                    shots=[ShotPlan(id="shot_001", segment_ids=["seg_001"])],
+                ),
+            ],
+        )
+        assets = ExecutionAssets(
+            audio_assets=[AudioAsset(segment_id="seg_001", path="a.wav", duration=3.0)],
+            visual_assets=[VisualAsset(shot_id="shot_001", path="img.jpg", provider="local")],
+        )
+
+        result = result_manifest_from_execution_assets(plan, assets)
+        assert result.segments[0].audio.path == "a.wav"
+        assert result.segments[0].start == 0.0
+        assert result.segments[0].end == 3.0
+        assert result.scenes[0].shots[0].visual.path == "img.jpg"
+        assert result.scenes[0].shots[0].visual.source == "local"
+
+    def test_result_manifest_adapter_uses_target_duration_without_audio(self):
+        plan = PlanManifest(
+            segments=[SegmentPlan(id="seg_001", text="x", segment_type="content")],
+            scenes=[
+                ScenePlan(
+                    id="scene_001",
+                    visual_type="stock_image",
+                    shots=[ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=2.0)],
+                ),
+            ],
+        )
+
+        result = result_manifest_from_execution_assets(plan, ExecutionAssets())
+        assert result.segments[0].start == 0.0
+        assert result.segments[0].end == 2.0
+        assert result.scenes[0].shots[0].start == 0.0
+        assert result.scenes[0].shots[0].end == 2.0
+
+    def test_result_manifest_adapter_keeps_silent_then_voiced_shots_monotonic(self):
+        plan = PlanManifest(
+            segments=[
+                SegmentPlan(id="seg_001", text="silent", segment_type="content"),
+                SegmentPlan(id="seg_002", text="voiced", segment_type="content"),
+            ],
+            scenes=[
+                ScenePlan(
+                    id="scene_001",
+                    shots=[ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=2.0)],
+                ),
+                ScenePlan(
+                    id="scene_002",
+                    shots=[ShotPlan(id="shot_002", segment_ids=["seg_002"])],
+                ),
+            ],
+        )
+        assets = ExecutionAssets(
+            audio_assets=[
+                AudioAsset(segment_id="seg_002", path="voice.wav", duration=1.0),
+            ],
+        )
+
+        result = result_manifest_from_execution_assets(plan, assets)
+
+        by_segment = {segment.id: segment for segment in result.segments}
+        assert by_segment["seg_001"].start == 0.0
+        assert by_segment["seg_001"].end == 2.0
+        assert by_segment["seg_002"].start == 2.0
+        assert by_segment["seg_002"].end == 3.0
+
+        assert result.scenes[0].shots[0].start == 0.0
+        assert result.scenes[0].shots[0].end == 2.0
+        assert result.scenes[1].shots[0].start == 2.0
+        assert result.scenes[1].shots[0].end == 3.0
+
+
+class TestFinalResultManifest:
+    def test_round_trip_json(self):
+        result = FinalResultManifest(
+            output_mp4="artifacts/no_key_demo.mp4",
+            used_assets={"visual": [{"shot_id": "shot_001", "path": "img.jpg"}]},
+            artifact_index={"plan": "artifacts/plan.json"},
+        )
+        restored = FinalResultManifest.model_validate_json(result.model_dump_json())
+        assert restored.output_mp4 == "artifacts/no_key_demo.mp4"
+        assert restored.used_assets["visual"][0]["shot_id"] == "shot_001"

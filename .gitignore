@@ -4,6 +4,9 @@
 artifacts/
 example/
 voice_cache/
+tests/test_data/%SystemDrive%/
+tests/test_data/media/
+tests/test_data/voice_cache/
 
 # Python
 __pycache__/

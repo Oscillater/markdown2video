@@ -1,7 +1,9 @@
 """Pipeline dispatch + priority 单元测试。"""
+from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
 import pytest
+from PIL import Image
 
 from md2video.config import ToolConfig, DEFAULT_TOOL_PRIORITY
 from md2video.tools.registry import ToolRegistry
@@ -10,6 +12,7 @@ from md2video.manifest.schema import (
     PlanManifest, ResultManifest, SceneResult, ShotResult, VisualResult,
     SegmentResult, ScenePlan, ShotPlan,
 )
+from md2video.tools.image.local_image_tool import LocalImageTool
 
 
 def _make_tool(provider_name, tool_type="image"):
@@ -198,6 +201,55 @@ class TestDispatchVisualTool:
         p._apply_visual_result(tool_output, "shot_001", result)
         # fallback 到第一个 visual
         assert result.scenes[0].shots[0].visual.path == "/img.jpg"
+
+    def test_local_image_dispatch(self, tmp_path):
+        """local provider 可以写入 ShotResult.visual。"""
+        image_path = tmp_path / "local_image.jpg"
+        Image.new("RGB", (500, 631), color=(32, 96, 160)).save(image_path)
+        plan = PlanManifest(
+            segments=[],
+            scenes=[
+                _make_scene_plan(
+                    visual_type="stock_image",
+                    visual_params={"preferred_provider": "local", "path": image_path.name},
+                ),
+            ],
+        )
+        result = _make_result_with_scenes(["scene_001"], [["shot_001"]])
+
+        reg = ToolRegistry()
+        reg.register("stock_image", LocalImageTool())
+        cfg = ToolConfig(priority={"stock_image": ["local"]})
+        p = _make_pipeline(cfg, reg)
+
+        p._dispatch_visual_tool(plan.scenes[0], plan, result, base_dir=tmp_path)
+
+        visual = result.scenes[0].shots[0].visual
+        assert visual.path == str(image_path.resolve())
+        assert visual.source == "local"
+        assert visual.width == 500
+        assert visual.height == 631
+
+    def test_explicit_local_image_failure_is_hard_fail(self):
+        reg = ToolRegistry()
+        reg.register("stock_image", LocalImageTool())
+        cfg = ToolConfig(priority={"stock_image": ["local"]})
+        p = _make_pipeline(cfg, reg)
+
+        scene = _make_scene_plan(
+            visual_type="stock_image",
+            visual_params={"preferred_provider": "local", "path": "missing.jpg"},
+        )
+        plan = PlanManifest(segments=[], scenes=[scene])
+        result = _make_result_with_scenes(["scene_001"], [["shot_001"]])
+
+        with pytest.raises(FileNotFoundError, match="Local image not found"):
+            p._dispatch_visual_tool(
+                scene,
+                plan,
+                result,
+                base_dir=Path(__file__).parent / "test_data",
+            )
 
 
 class TestDispatchRender:
