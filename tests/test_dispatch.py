@@ -42,6 +42,8 @@ def _make_scene_plan(scene_id="scene_001", visual_type="stock_image", shot_ids=N
         id=scene_id,
         visual_type=visual_type,
         visual_params=kw.get("visual_params", {}),
+        layout_type=kw.get("layout_type", "center_title_body"),
+        layout_params=kw.get("layout_params", {}),
         section_context=kw.get("section_context", "test"),
         shots=shots,
     )
@@ -161,7 +163,12 @@ class TestDispatchVisualTool:
         cfg = ToolConfig(priority={"stock_image": ["pexels"]})
         p = _make_pipeline(cfg, reg)
 
-        scene = _make_scene_plan(visual_type="stock_image", visual_params={"query": "AI neural network"})
+        scene = _make_scene_plan(
+            visual_type="stock_image",
+            visual_params={"query": "AI neural network"},
+            layout_type="image_top_text_bottom",
+            layout_params={"split": "text_focus"},
+        )
         plan = PlanManifest(segments=[], scenes=[scene])
         result = _make_result_with_scenes(["scene_001"], [["shot_001"]])
 
@@ -172,6 +179,8 @@ class TestDispatchVisualTool:
         assert "scene" in input_data
         assert input_data["scene"]["visual_type"] == "stock_image"
         assert input_data["scene"]["visual_params"] == {"query": "AI neural network"}
+        assert input_data["scene"]["layout_type"] == "image_top_text_bottom"
+        assert input_data["scene"]["layout_params"] == {"split": "text_focus"}
         assert "shot" in input_data
         assert input_data["shot"]["id"] == "shot_001"
         assert "segments" in input_data
@@ -253,6 +262,46 @@ class TestDispatchVisualTool:
 
 
 class TestDispatchRender:
+    def test_execute_plan_validates_layout_before_tts(self, tmp_path):
+        p = _make_pipeline()
+        p._prepare_execution_assets = MagicMock()
+        plan = PlanManifest(
+            segments=[],
+            scenes=[
+                _make_scene_plan(
+                    scene_id="scene_bad",
+                    layout_type="missing_layout",
+                ),
+            ],
+        )
+
+        with pytest.raises(ValueError, match="Invalid layout for scene scene_bad"):
+            p._execute_plan(plan, tmp_path / "out.mp4", tmp_path, tmp_path)
+
+        assert not p._prepare_execution_assets.called
+
+    def test_dispatch_render_validates_layout_before_tools(self, tmp_path):
+        p = _make_pipeline()
+        p._dispatch_visual_tool = MagicMock()
+        p._render_manim_batch = MagicMock(return_value=("video.mp4", "timeline.json"))
+        plan = PlanManifest(
+            segments=[],
+            scenes=[
+                _make_scene_plan(
+                    scene_id="scene_bad",
+                    visual_type="stock_image",
+                    layout_type="missing_layout",
+                ),
+            ],
+        )
+        result = ResultManifest()
+
+        with pytest.raises(ValueError, match="Invalid layout for scene scene_bad"):
+            p._dispatch_render(plan, result, tmp_path / "source.md")
+
+        assert not p._dispatch_visual_tool.called
+        assert not p._render_manim_batch.called
+
     def test_dispatch_render_text_only_only(self):
         """全部 text_only 时不调用 visual tool。"""
         p = _make_pipeline()

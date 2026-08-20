@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 
 from md2video.manifest.schema import ScenePlan, SegmentPlan, ShotPlan
 from md2video.core.planner.rule_planner import RulePlanner
+from md2video.layout import create_default_layout_registry
+from md2video.layout.schema import DEFAULT_LAYOUT_TYPE
 
 
 # ==================== 两阶段数据结构 ====================
@@ -22,6 +24,8 @@ class SceneTemplate(BaseModel):
     description: str                 # LLM 对该风格的描述
     visual_type: str                 # text_only / stock_image / stock_video / manim
     visual_params: Dict = Field(default_factory=dict)
+    layout_type: str = DEFAULT_LAYOUT_TYPE
+    layout_params: Dict = Field(default_factory=dict)
 
 
 class BlueprintOutput(BaseModel):
@@ -53,6 +57,9 @@ For each template, decide:
 - visual_type: one of [text_only, stock_image, stock_video, manim]
 - visual_params: if stock_image/stock_video, include "query" with English keywords; \
 optionally include "preferred_provider" as a suggested provider name (e.g. "pexels")
+- layout_type: one of [center_title_body, full_bleed_image_caption_bottom, \
+image_top_text_bottom]. Use center_title_body unless image placement is essential.
+- layout_params: optional finite template options only; never include pixel coordinates.
 
 Rules:
 1. text_only is for abstract/analytical content with no clear visual
@@ -103,7 +110,7 @@ def _build_chunk_mapping_user_prompt(
         vp = ", ".join(f"{k}={v}" for k, v in tmpl.visual_params.items()) or "(none)"
         registry_lines.append(
             f"  {tmpl.id}: \"{tmpl.name}\" — {tmpl.description} "
-            f"[{tmpl.visual_type}, {vp}]"
+            f"[{tmpl.visual_type}, {vp}, layout={tmpl.layout_type}]"
         )
 
     return (
@@ -134,6 +141,7 @@ class LlmPlanner:
             base_url=base_url or None,
         )
         ai_model = OpenAIChatModel(model, provider=provider)
+        self._layout_registry = create_default_layout_registry()
 
         # 第一阶段 agent：全局定调
         self._blueprint_agent = Agent(
@@ -148,13 +156,20 @@ class LlmPlanner:
             """提交场景模板列表。每个模板包含 id, name, description, visual_type, visual_params。"""
             parsed = []
             for t in templates:
-                parsed.append(SceneTemplate(
+                template = SceneTemplate(
                     id=t["id"],
                     name=t["name"],
                     description=t["description"],
                     visual_type=t.get("visual_type", "text_only"),
                     visual_params=t.get("visual_params", {}),
-                ))
+                    layout_type=t.get("layout_type", DEFAULT_LAYOUT_TYPE),
+                    layout_params=t.get("layout_params", {}),
+                )
+                self._layout_registry.validate(
+                    template.layout_type,
+                    template.layout_params,
+                )
+                parsed.append(template)
             self._blueprint_output = BlueprintOutput(scene_templates=parsed)
             return "Blueprint submitted successfully."
 
@@ -297,6 +312,11 @@ class LlmPlanner:
         all_seg_ids = set(s.id for s in segments)
         seg_order = [s.id for s in segments]
         registry_map = {t.id: t for t in registry}
+        for template in registry:
+            self._layout_registry.validate(
+                template.layout_type,
+                template.layout_params,
+            )
 
         # 展平所有 chunk 的 mappings
         flat_mappings: List[ShotMapping] = []
@@ -359,6 +379,8 @@ class LlmPlanner:
                 id=f"scene_{scene_counter:03d}",
                 visual_type=eseg.visual_type,
                 visual_params=eseg.visual_params,
+                layout_type=eseg.layout_type,
+                layout_params=eseg.layout_params,
                 section_context=eseg.section_context,
                 shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[eid])],
             ))
@@ -376,6 +398,8 @@ class LlmPlanner:
                 id=f"scene_{scene_counter:03d}",
                 visual_type=template.visual_type,
                 visual_params=template.visual_params,
+                layout_type=template.layout_type,
+                layout_params=template.layout_params,
                 section_context=first_seg.section_context,
                 shots=shots,
             ))

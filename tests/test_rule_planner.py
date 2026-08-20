@@ -81,6 +81,7 @@ class TestRulePlanner:
         assert len(scenes) == 3
         assert scenes[1].visual_type == "stock_image"
         assert scenes[1].visual_params == {"query": "test"}
+        assert scenes[1].layout_type == "center_title_body"
         assert scenes[1].shots[0].segment_ids == ["s2"]
 
     def test_explicit_not_overridden(self):
@@ -91,6 +92,19 @@ class TestRulePlanner:
         scenes = RulePlanner().plan(segments)
         assert len(scenes) == 1
         assert scenes[0].visual_type == "custom"
+
+    def test_explicit_layout_preserved(self):
+        segments = [
+            _seg(
+                "s1", "special", "content", explicit=True,
+                layout_type="image_top_text_bottom",
+                layout_params={"split": "image_focus"},
+            ),
+        ]
+        scenes = RulePlanner().plan(segments)
+        assert len(scenes) == 1
+        assert scenes[0].layout_type == "image_top_text_bottom"
+        assert scenes[0].layout_params == {"split": "image_focus"}
 
     def test_empty_input(self):
         assert RulePlanner().plan([]) == []
@@ -159,6 +173,8 @@ class TestRulePlanner:
         scenes = RulePlanner().plan(segments)
         assert all(sc.visual_type == "text_only" for sc in scenes)
         assert all(sc.visual_params == {} for sc in scenes)
+        assert all(sc.layout_type == "center_title_body" for sc in scenes)
+        assert all(sc.layout_params == {} for sc in scenes)
 
     def test_section_header_alone(self):
         """Section header with no content forms its own scene."""
@@ -220,7 +236,23 @@ class TestDenormalize:
         denormalize_scenes_to_segments(segments, scenes)
         assert segments[0].visual_type == "stock_image"
         assert segments[0].visual_params == {"query": "test"}
+        assert segments[0].layout_type == "center_title_body"
+        assert segments[0].layout_params == {}
         assert segments[1].visual_type == "stock_image"
+
+    def test_copies_layout_to_segments(self):
+        from md2video.manifest.schema import ScenePlan
+        segments = [_seg("s1", "content"), _seg("s2", "more")]
+        scenes = [ScenePlan(
+            id="scene_001",
+            layout_type="image_top_text_bottom",
+            layout_params={"split": "text_focus"},
+            shots=[ShotPlan(id="shot_001", segment_ids=["s1", "s2"])],
+        )]
+        denormalize_scenes_to_segments(segments, scenes)
+        assert segments[0].layout_type == "image_top_text_bottom"
+        assert segments[0].layout_params == {"split": "text_focus"}
+        assert segments[1].layout_type == "image_top_text_bottom"
 
     def test_explicit_not_overridden(self):
         from md2video.manifest.schema import ScenePlan
@@ -234,3 +266,4 @@ class TestDenormalize:
         )]
         denormalize_scenes_to_segments(segments, scenes)
         assert segments[0].visual_type == "custom"
+        assert segments[0].layout_type == "center_title_body"

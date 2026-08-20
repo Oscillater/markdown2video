@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Optional, Dict, List
 from pydantic import BaseModel, Field, model_validator
 
+from md2video.layout.schema import DEFAULT_LAYOUT_TYPE
+
 
 # ==================== Plan Manifest ====================
 
@@ -18,6 +20,8 @@ class SegmentPlan(BaseModel):
     segment_type: str  # title_main, title_sub, section_header, content, appendix, marker_music, marker_image
     visual_type: str = "text_only"
     visual_params: Dict = Field(default_factory=dict)
+    layout_type: str = DEFAULT_LAYOUT_TYPE
+    layout_params: Dict = Field(default_factory=dict)
     audio_request: Optional[AudioRequest] = None
     explicit: bool = False
     # 上下文信息
@@ -35,6 +39,8 @@ class ScenePlan(BaseModel):
     id: str
     visual_type: str = "text_only"
     visual_params: Dict = Field(default_factory=dict)
+    layout_type: str = DEFAULT_LAYOUT_TYPE
+    layout_params: Dict = Field(default_factory=dict)
     shots: List[ShotPlan] = Field(default_factory=list)
     section_context: str = ""
     # 向后兼容: 旧 JSON 含 segment_ids 时自动迁移为单 Shot

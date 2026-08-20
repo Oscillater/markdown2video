@@ -78,7 +78,13 @@ Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可�
 - `visual_type`：用什么素材或工具，例如 text、stock image、local image、Manim、video。
 - `layout_type`：这些素材、文字、字幕放在屏幕哪里。
 
-Agent 只能从有限 layout template 和参数中选择，不应该自由摆像素。
+当前 layout 契约是 scene 级别，`SegmentPlan` 保留同名字段用于兼容 explicit segment 的继承和回填。内置模板包括：
+
+- `center_title_body`
+- `full_bleed_image_caption_bottom`
+- `image_top_text_bottom`
+
+Agent 只能从有限 layout template 和参数中选择，不应该自由摆像素。Layout 参数由模板自己的 Pydantic schema 校验；runtime 在执行 TTS、渲染和合成前先校验 `layout_type` / `layout_params`。Phase 5.5 只保证 Manifest 契约、layout 计算和校验成立；Manim / FFmpeg 真正消费同一套 layout 是 Phase 6 的目标。
 
 ## 时长
 

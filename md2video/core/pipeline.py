@@ -25,6 +25,7 @@ from md2video.config import (
     load_tool_config,
 )
 from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
+from md2video.layout import create_default_layout_registry
 from md2video.manifest.schema import (
     AudioAsset,
     ExecutionAssets,
@@ -45,7 +46,7 @@ from md2video.tools.tts.edge_tts import EdgeTTSTool
 
 class Pipeline:
     def __init__(self, artifacts_dir=None, voice=None, speed=None, planner=None,
-                 tool_config=None):
+                 tool_config=None, layout_registry=None):
         self.artifacts_dir = Path(artifacts_dir or ARTIFACTS_DIR)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._warnings: list[str] = []
@@ -56,6 +57,7 @@ class Pipeline:
         self.planner = self._create_planner(planner)
 
         self.tool_config = tool_config or load_tool_config()
+        self.layout_registry = layout_registry or create_default_layout_registry()
         self.registry = ToolRegistry()
         self._register_default_tools()
 
@@ -142,6 +144,7 @@ class Pipeline:
         render_dir: Path,
     ) -> Path:
         self._warnings = []
+        self._validate_plan_layouts(plan)
         plan_path = self._write_plan_manifest(plan)
 
         print("[2/5] Preparing execution assets...")
@@ -246,8 +249,18 @@ class Pipeline:
         result_path.write_text(final_result.model_dump_json(indent=2), encoding="utf-8")
         return result_path
 
+    def _validate_plan_layouts(self, plan: PlanManifest) -> None:
+        for scene in plan.scenes:
+            try:
+                self.layout_registry.compute(scene.layout_type, scene.layout_params)
+            except Exception as exc:
+                raise ValueError(
+                    f"Invalid layout for scene {scene.id}: {exc}"
+                ) from exc
+
     def _dispatch_render(self, plan, result, md_path, execution_assets=None):
         """Backward-compatible helper used by existing tests."""
+        self._validate_plan_layouts(plan)
         base_dir = md_path.parent
         for scene in plan.scenes:
             if scene.shots and scene.visual_type != "text_only":
@@ -354,6 +367,8 @@ class Pipeline:
                     "id": scene_plan.id,
                     "visual_type": scene_plan.visual_type,
                     "visual_params": scene_plan.visual_params,
+                    "layout_type": scene_plan.layout_type,
+                    "layout_params": scene_plan.layout_params,
                     "section_context": scene_plan.section_context,
                 },
                 "shot": {

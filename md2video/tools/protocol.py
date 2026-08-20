@@ -26,7 +26,9 @@ class Tool(Protocol):
         Visual tool (tool_type='image'/'video') 输入契约::
 
             {
-                "scene": {"id": str, "visual_type": str, "visual_params": dict, "section_context": str},
+                "scene": {"id": str, "visual_type": str, "visual_params": dict,
+                          "layout_type": str, "layout_params": dict,
+                          "section_context": str},
                 "shot":  {"id": str, "segment_ids": list[str], "target_duration": float},
                 "segments": [{"id": str, "text": str, "segment_type": str,
                               "audio": {"path": str, "duration": float} | None}],

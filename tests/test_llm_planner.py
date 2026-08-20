@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from md2video.manifest.schema import SegmentPlan
 from md2video.core.planner.llm_planner import (
@@ -86,6 +87,8 @@ class TestReconcile:
             SceneTemplate(
                 id="SCENE_IMAGE", name="配图", description="配图讲解",
                 visual_type="stock_image", visual_params={"query": "AI", "preferred_provider": "pexels"},
+                layout_type="image_top_text_bottom",
+                layout_params={"split": "image_focus"},
             ),
         ]
 
@@ -109,6 +112,8 @@ class TestReconcile:
         assert scenes[0].shots[0].segment_ids == ["s1", "s2"]
         assert scenes[1].visual_type == "stock_image"
         assert scenes[1].visual_params == {"query": "AI", "preferred_provider": "pexels"}
+        assert scenes[1].layout_type == "image_top_text_bottom"
+        assert scenes[1].layout_params == {"split": "image_focus"}
 
     def test_reconcile_sequential_ids(self):
         """多 chunk 合并后 scene/shot ID 全局递增，相同 scene_id 合并。"""
@@ -140,7 +145,9 @@ class TestReconcile:
         segments = [
             _seg("s1", "普通", section="第一节"),
             _seg("s2", "显式", section="第一节",
-                 explicit=True, visual_type="stock_image", visual_params={"query": "logo"}),
+                 explicit=True, visual_type="stock_image", visual_params={"query": "logo"},
+                 layout_type="full_bleed_image_caption_bottom",
+                 layout_params={"caption_size": "compact"}),
             _seg("s3", "普通2", section="第一节"),
         ]
         mappings = [
@@ -157,6 +164,8 @@ class TestReconcile:
         assert len(explicit) == 1
         assert explicit[0].visual_type == "stock_image"
         assert explicit[0].visual_params == {"query": "logo"}
+        assert explicit[0].layout_type == "full_bleed_image_caption_bottom"
+        assert explicit[0].layout_params == {"caption_size": "compact"}
 
     def test_reconcile_unknown_scene_raises(self):
         """scene_id 不在 registry 中时报错。"""
@@ -165,6 +174,26 @@ class TestReconcile:
         planner = self._make_planner()
         with pytest.raises(ValueError, match="Unknown scene_id"):
             planner._reconcile(mappings, segments, self._make_registry())
+
+    def test_reconcile_invalid_registry_layout_raises(self):
+        segments = [_seg("s1", "one")]
+        mappings = [[ShotMapping(scene_id="SCENE_TEXT", segment_ids=["s1"])]]
+        registry = self._make_registry()
+        registry[0] = registry[0].model_copy(update={"layout_type": "missing_layout"})
+        planner = self._make_planner()
+
+        with pytest.raises(ValueError, match="Unknown layout_type"):
+            planner._reconcile(mappings, segments, registry)
+
+    def test_reconcile_invalid_registry_layout_params_raises(self):
+        segments = [_seg("s1", "one")]
+        mappings = [[ShotMapping(scene_id="SCENE_IMAGE", segment_ids=["s1"])]]
+        registry = self._make_registry()
+        registry[1] = registry[1].model_copy(update={"layout_params": {"split": "giant"}})
+        planner = self._make_planner()
+
+        with pytest.raises(ValidationError, match="split"):
+            planner._reconcile(mappings, segments, registry)
 
     def test_reconcile_missing_raises(self):
         """缺少 segment 时报错。"""

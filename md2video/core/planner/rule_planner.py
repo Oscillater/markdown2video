@@ -22,19 +22,25 @@ class RulePlanner:
         counter = 0  # scene 计数器
         shot_counter = 0  # shot 计数器
 
-        def flush(visual_type="text_only", visual_params=None):
+        def flush(visual_type="text_only", visual_params=None,
+                  layout_type=None, layout_params=None):
             nonlocal counter, shot_counter, buf, char_count, context
             if not buf:
                 return
             counter += 1
             shot_counter += 1
-            scenes.append(ScenePlan(
-                id=f"scene_{counter:03d}",
-                visual_type=visual_type,
-                visual_params=visual_params or {},
-                section_context=context,
-                shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[s.id for s in buf])],
-            ))
+            scene_data = {
+                "id": f"scene_{counter:03d}",
+                "visual_type": visual_type,
+                "visual_params": visual_params or {},
+                "section_context": context,
+                "shots": [ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[s.id for s in buf])],
+            }
+            if layout_type is not None:
+                scene_data["layout_type"] = layout_type
+            if layout_params is not None:
+                scene_data["layout_params"] = layout_params
+            scenes.append(ScenePlan(**scene_data))
             buf = []
             char_count = 0
 
@@ -60,6 +66,8 @@ class RulePlanner:
                     id=f"scene_{counter:03d}",
                     visual_type=seg.visual_type,
                     visual_params=seg.visual_params,
+                    layout_type=seg.layout_type,
+                    layout_params=seg.layout_params,
                     section_context=seg.section_context,
                     shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[seg.id])],
                 ))
@@ -109,3 +117,5 @@ def denormalize_scenes_to_segments(
         if scene:
             seg.visual_type = scene.visual_type
             seg.visual_params = scene.visual_params
+            seg.layout_type = scene.layout_type
+            seg.layout_params = scene.layout_params

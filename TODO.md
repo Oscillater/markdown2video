@@ -56,13 +56,13 @@ future harness preview/review/partial rerun
 ## 当前状态
 
 - Phase 1-4 已完成。
-- 当前处在 Phase 5。
-- 最新验证：2026-08-19 运行 `PYTHON_DOTENV_DISABLED=1 python -m pytest -q`，结果是 `267 passed, 5 warnings`。
+- 当前处在 Phase 5.5 已完成、Phase 6 之前。
+- 最新验证：2026-08-20 运行 `python -m pytest -q`，结果是 `289 passed, 4 warnings`。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
 - 旧流程可以用 Markdown 显式图片标记 `[image_start]` / `[image_end]` 生成图片 overlay。
 - Phase 5 no-key 图片链路已有测试闭环：`LocalImageTool -> execution-assets.visual_assets -> timeline -> FFmpeg overlay`。
 - Runtime artifact 分层已落地：Pipeline 会写出 `plan.json`、`execution-assets.json`、`timeline.json` 和最终 `result.json`；renderer 优先消费 `PlanManifest + ExecutionAssets`，不再依赖半成品 `result.json`。
-- cleanup 后的独立 review 结论：进入 Phase 5.5 前没有 must-fix blocker；剩余问题按 Phase 6 / Phase 7 / Maintenance 技术债处理。
+- Phase 5.5 已完成 Manifest/layout-engine 契约；剩余 renderer 消费 layout 的问题按 Phase 6 处理。
 
 ## Phase 1: 基础架构 - 已完成
 
@@ -197,12 +197,12 @@ output_mp4 + used_assets + warnings
 - 图片事实落在 execution-assets，而不是半成品 result。
 - 时间事实落在 timeline，per-shot visual overlay 优先使用 renderer 真实 shot 时间。
 - 最终 `result.json` 只在 assemble 完成后生成。
-- 单元测试保持通过：当前基线是 `267 passed, 5 warnings`。
+- 单元测试保持通过：当前基线是 `289 passed, 4 warnings`。
 - 真实 Pexels 只是可选验证，不是唯一验证方式。
 
 ## Phase 5.5: Runtime Layout Template
 
-状态：计划中。
+状态：已完成。
 
 目标：把“用什么视觉素材”和“画面怎么摆”分开。
 
@@ -210,23 +210,35 @@ output_mp4 + used_assets + warnings
 
 计划任务：
 
-- [ ] 在 Manifest 中新增一等布局字段，暂定 `layout_type` + `layout_params`。
-- [ ] 保留 `visual_type` 表达素材/工具选择：`text_only`、`stock_image`、`local_image`、`manim`、`stock_video` 等。
-- [ ] 用 `layout_type` 表达画面摆法：全屏图+底部字幕、上图下文、左图右文、纯文字标题页等。
-- [ ] 定义 `LayoutTemplate`。
-- [ ] 定义 `LayoutRegistry`。
-- [ ] 先实现 2-3 个稳定模板：
+- [x] 在 Manifest 中新增一等布局字段，暂定 `layout_type` + `layout_params`。
+- [x] 保留 `visual_type` 表达素材/工具选择：`text_only`、`stock_image`（含 local provider）、`manim`、`stock_video` 等。
+- [x] 用 `layout_type` 表达画面摆法：全屏图+底部字幕、上图下文、纯文字标题页等。
+- [x] 定义 `LayoutTemplate`。
+- [x] 定义 `LayoutRegistry`。
+- [x] 先实现 2-3 个稳定模板：
   - `center_title_body`
   - `full_bleed_image_caption_bottom`
-  - `image_top_text_bottom` 或 `image_left_text_right`
-- [ ] layout 参数必须是有限选项，并且能做 schema 校验。
-- [ ] 增加 safe area、文字边界、字幕/图片不重叠测试。
+  - `image_top_text_bottom`
+- [x] layout 参数必须是有限选项，并且能做 schema 校验。
+- [x] 增加 safe area、文字边界、字幕/图片不重叠测试。
 
 验收标准：
 
 - Agent 或 Planner 只能选择模板和参数。
 - 不允许自由决定像素坐标。
 - 不生成完整视频也能测试 layout 计算和约束。
+
+交付边界：
+
+- 本阶段完成 Manifest/layout-engine 契约和 runtime 校验。
+- Manim / FFmpeg 真正消费 `LayoutTemplate` 仍归 Phase 6。
+
+Phase 5.5 review guardrails：
+
+- [x] 文档不得把未实现模板写成已完成范围；当前内置模板只有 `center_title_body`、`full_bleed_image_caption_bottom`、`image_top_text_bottom`。
+- [x] Layout 参数不能接受“看似有效但当前不生效”的字段；caption 样式类参数留到 Phase 6 renderer 真正消费时再引入。
+- [x] `LayoutRegistry` 重复注册同一个 template id 时必须 fail fast，避免未来扩展时静默覆盖。
+- [ ] Phase 6 接入 renderer/assembler 后补截图或像素级 smoke，验证视频画面确实按 layout 摆放。
 
 ## Phase 6: Renderer Closure
 
@@ -327,14 +339,14 @@ Docs mismatch / consistency：
 
 - [x] README 已补充直接依赖 `requests`。
 - [x] README / config 已收敛为 OpenAI-compatible LLM planner，不再把 Anthropic 写成当前支持项。
-- [x] README / TODO 测试基线已更新到 `267 passed, 5 warnings`。
+- [x] TODO 测试基线已更新到 `289 passed, 4 warnings`。
 - [x] TODO 已删除“是否需要 owner 授权真实短视频 demo”的 stale 项；demo 不作为当前 commit 的交付内容。
 - [ ] 定期核对 README、TODO、`docs/architecture.md` 对 runtime artifact 分层的描述，避免 `result.json` 再被写成中间执行状态。
 
 Test / cleanup：
 
 - [ ] 决定 README 是否继续写固定测试数量，还是只写最新验证命令。
-- [ ] 调查当前 5 个 pytest warnings，来源主要是 mock async TTS 调用。
+- [ ] 调查当前 4 个 pytest warnings，来源主要是 mock async TTS 调用。
 - [ ] 补测试：音频按 `segment_id` 绑定，不依赖 segment 列表顺序。
 - [ ] 补测试：失败 run 不会让旧 `result.json` / `timeline.json` 被误认为当前 run 产物。
 - [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确。

@@ -48,6 +48,8 @@ class TestSegmentPlan:
         seg = SegmentPlan(id="s1", text="x", segment_type="content")
         assert seg.visual_type == "text_only"
         assert seg.visual_params == {}
+        assert seg.layout_type == "center_title_body"
+        assert seg.layout_params == {}
         assert seg.audio_request is None
         assert seg.explicit is False
         assert seg.section_context == ""
@@ -60,6 +62,15 @@ class TestSegmentPlan:
         )
         assert seg.explicit is True
         assert seg.visual_type == "custom"
+
+    def test_custom_layout(self):
+        seg = SegmentPlan(
+            id="s1", text="x", segment_type="content",
+            layout_type="image_top_text_bottom",
+            layout_params={"split": "image_focus"},
+        )
+        assert seg.layout_type == "image_top_text_bottom"
+        assert seg.layout_params == {"split": "image_focus"}
 
     def test_marker_data(self):
         seg = SegmentPlan(
@@ -255,6 +266,8 @@ class TestScenePlan:
         sp = ScenePlan(id="scene_001")
         assert sp.visual_type == "text_only"
         assert sp.visual_params == {}
+        assert sp.layout_type == "center_title_body"
+        assert sp.layout_params == {}
         assert sp.shots == []
         assert sp.all_segment_ids == []
         assert sp.section_context == ""
@@ -278,11 +291,22 @@ class TestScenePlan:
         assert sp.visual_type == "stock_image"
         assert sp.visual_params["query"] == "neural network"
 
+    def test_custom_layout_type(self):
+        sp = ScenePlan(
+            id="scene_001",
+            layout_type="full_bleed_image_caption_bottom",
+            layout_params={"caption_size": "compact"},
+        )
+        assert sp.layout_type == "full_bleed_image_caption_bottom"
+        assert sp.layout_params == {"caption_size": "compact"}
+
     def test_json_round_trip(self):
         original = ScenePlan(
             id="scene_001",
             visual_type="stock_image",
             visual_params={"query": "test"},
+            layout_type="image_top_text_bottom",
+            layout_params={"split": "text_focus"},
             shots=[ShotPlan(id="shot_001", segment_ids=["seg_001", "seg_002"])],
             section_context="测试",
         )
@@ -290,6 +314,8 @@ class TestScenePlan:
         restored = ScenePlan.model_validate_json(json_str)
         assert restored.id == "scene_001"
         assert restored.visual_type == "stock_image"
+        assert restored.layout_type == "image_top_text_bottom"
+        assert restored.layout_params == {"split": "text_focus"}
         assert restored.shots[0].segment_ids == ["seg_001", "seg_002"]
         assert restored.all_segment_ids == ["seg_001", "seg_002"]
 
@@ -300,6 +326,7 @@ class TestScenePlan:
         assert len(sp.shots) == 1
         assert sp.shots[0].segment_ids == ["seg_001", "seg_002"]
         assert sp.all_segment_ids == ["seg_001", "seg_002"]
+        assert sp.layout_type == "center_title_body"
 
 
 # ========== SceneResult ==========
