@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from PIL import Image
+import pytest
 
 from md2video.config import ToolConfig
 from md2video.core.pipeline import Pipeline
@@ -20,7 +21,39 @@ from md2video.tools.image.local_image_tool import LocalImageTool
 from md2video.tools.registry import ToolRegistry
 
 
-def _make_pipeline(tmp_path, voice=None, speed=None):
+class FakeRenderTool:
+    provider_name = "manim"
+    tool_type = "render"
+
+    def __init__(self, tmp_path: Path, output=None, write_artifacts: bool = True):
+        self.tmp_path = tmp_path
+        self.output = output
+        self.write_artifacts = write_artifacts
+        self.calls = []
+
+    def execute(self, input_data):
+        self.calls.append(input_data)
+        video_path = self.tmp_path / "base.mp4"
+        timeline_path = Path(input_data["timeline_path"])
+        render_dir = self.tmp_path / "manim_render_fake"
+        if self.write_artifacts:
+            video_path.write_bytes(b"fake mp4")
+            timeline_path.write_text(
+                json.dumps({"text": [], "markers": [], "shots": []}),
+                encoding="utf-8",
+            )
+            render_dir.mkdir(parents=True, exist_ok=True)
+        if self.output is not None:
+            return self.output
+        return {
+            "video_path": str(video_path),
+            "timeline_path": str(timeline_path),
+            "provider": "manim",
+            "render_dir": str(render_dir),
+        }
+
+
+def _make_pipeline(tmp_path, voice=None, speed=None, render_tool=None):
     with patch.object(Pipeline, "_create_planner"):
         with patch.object(Pipeline, "_register_default_tools"):
             pipeline = Pipeline(
@@ -31,6 +64,7 @@ def _make_pipeline(tmp_path, voice=None, speed=None):
             )
     registry = ToolRegistry()
     registry.register("stock_image", LocalImageTool())
+    registry.register("render", render_tool or FakeRenderTool(tmp_path))
     pipeline.registry = registry
     return pipeline
 
@@ -73,16 +107,19 @@ def test_run_plan_writes_execution_assets_and_final_result(tmp_path):
     output_path = tmp_path / "output.mp4"
 
     pipeline = _make_pipeline(tmp_path)
-    pipeline._render_manim_batch = MagicMock(
-        return_value=(tmp_path / "base.mp4", tmp_path / "timeline.json"),
-    )
 
     with patch("md2video.assembler.ffmpeg_assembler.FFmpegAssembler") as assembler_cls:
         assembler_cls.return_value.assemble.return_value = output_path
         result = pipeline.run_plan(str(plan_path), str(output_path))
 
     assert result == output_path
-    pipeline._render_manim_batch.assert_called_once_with(tmp_path)
+    render_tool = pipeline.registry.get_tool("render", "manim")
+    assert len(render_tool.calls) == 1
+    render_input = render_tool.calls[0]
+    assert render_input["plan_path"] == str(tmp_path / "plan.json")
+    assert render_input["execution_assets_path"] == str(tmp_path / "execution-assets.json")
+    assert render_input["timeline_path"] == str(tmp_path / "timeline.json")
+    assert render_input["output_dir"] == str(tmp_path)
 
     assets_path = tmp_path / "execution-assets.json"
     assets = ExecutionAssets.model_validate_json(assets_path.read_text(encoding="utf-8"))
@@ -100,10 +137,93 @@ def test_run_plan_writes_execution_assets_and_final_result(tmp_path):
     )
     assert final_result.output_mp4 == str(output_path)
     assert final_result.artifact_index["execution_assets"] == str(assets_path)
+    assert final_result.artifact_index["base_video"] == str(tmp_path / "base.mp4")
+    assert final_result.artifact_index["render_dir"] == str(tmp_path / "manim_render_fake")
+    assert final_result.artifact_index["render_provider"] == "manim"
     assert final_result.used_assets["visual"][0]["shot_id"] == "shot_001"
 
     raw_result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
     assert "segments" not in raw_result
+
+
+def test_run_plan_rejects_render_output_missing_fields_before_assembler(tmp_path):
+    plan_path, _ = _write_stock_image_plan(tmp_path)
+    output_path = tmp_path / "output.mp4"
+    render_tool = FakeRenderTool(
+        tmp_path,
+        output={
+            "video_path": str(tmp_path / "base.mp4"),
+            "timeline_path": str(tmp_path / "timeline.json"),
+            "provider": "manim",
+        },
+    )
+    pipeline = _make_pipeline(tmp_path, render_tool=render_tool)
+
+    with patch("md2video.assembler.ffmpeg_assembler.FFmpegAssembler") as assembler_cls:
+        with pytest.raises(RuntimeError, match="missing fields.*render_dir"):
+            pipeline.run_plan(str(plan_path), str(output_path))
+
+    assembler_cls.assert_not_called()
+
+
+def test_run_plan_rejects_missing_render_artifacts_before_assembler(tmp_path):
+    plan_path, _ = _write_stock_image_plan(tmp_path)
+    output_path = tmp_path / "output.mp4"
+    render_tool = FakeRenderTool(tmp_path, write_artifacts=False)
+    pipeline = _make_pipeline(tmp_path, render_tool=render_tool)
+
+    with patch("md2video.assembler.ffmpeg_assembler.FFmpegAssembler") as assembler_cls:
+        with pytest.raises(RuntimeError, match="missing artifacts.*base.mp4"):
+            pipeline.run_plan(str(plan_path), str(output_path))
+
+    assembler_cls.assert_not_called()
+
+
+def test_run_plan_rejects_unexpected_render_timeline_before_assembler(tmp_path):
+    plan_path, _ = _write_stock_image_plan(tmp_path)
+    output_path = tmp_path / "output.mp4"
+    old_timeline_path = tmp_path / "old-timeline.json"
+    old_timeline_path.write_text(
+        json.dumps({"text": [], "markers": [], "shots": []}),
+        encoding="utf-8",
+    )
+    render_tool = FakeRenderTool(
+        tmp_path,
+        output={
+            "video_path": str(tmp_path / "base.mp4"),
+            "timeline_path": str(old_timeline_path),
+            "provider": "manim",
+            "render_dir": str(tmp_path / "manim_render_fake"),
+        },
+    )
+    pipeline = _make_pipeline(tmp_path, render_tool=render_tool)
+
+    with patch("md2video.assembler.ffmpeg_assembler.FFmpegAssembler") as assembler_cls:
+        with pytest.raises(RuntimeError, match="unexpected timeline_path.*old-timeline"):
+            pipeline.run_plan(str(plan_path), str(output_path))
+
+    assembler_cls.assert_not_called()
+
+
+def test_run_plan_rejects_unexpected_render_provider_before_assembler(tmp_path):
+    plan_path, _ = _write_stock_image_plan(tmp_path)
+    output_path = tmp_path / "output.mp4"
+    render_tool = FakeRenderTool(
+        tmp_path,
+        output={
+            "video_path": str(tmp_path / "base.mp4"),
+            "timeline_path": str(tmp_path / "timeline.json"),
+            "provider": "other-renderer",
+            "render_dir": str(tmp_path / "manim_render_fake"),
+        },
+    )
+    pipeline = _make_pipeline(tmp_path, render_tool=render_tool)
+
+    with patch("md2video.assembler.ffmpeg_assembler.FFmpegAssembler") as assembler_cls:
+        with pytest.raises(RuntimeError, match="unexpected provider.*other-renderer"):
+            pipeline.run_plan(str(plan_path), str(output_path))
+
+    assembler_cls.assert_not_called()
 
 
 def test_tts_assets_use_cli_voice_speed_overrides_and_absolute_paths(tmp_path):
@@ -186,34 +306,6 @@ def test_tts_assets_skip_title_segments(tmp_path):
     assert len(fake_tts.calls) == 1
     assert fake_tts.calls[0]["text"] == "Body"
     assert [asset.segment_id for asset in assets.audio_assets] == ["body"]
-
-
-def test_render_manim_batch_uses_isolated_workdir(tmp_path):
-    pipeline = _make_pipeline(tmp_path)
-    root_manifest_scene = tmp_path / "manifest_scene.py"
-    root_manim_cfg = tmp_path / "manim.cfg"
-    root_manifest_scene.write_text("caller scene", encoding="utf-8")
-    root_manim_cfg.write_text("caller cfg", encoding="utf-8")
-
-    completed = MagicMock(returncode=0, stderr="")
-    with patch("md2video.core.pipeline.subprocess.run", return_value=completed) as run:
-        with patch.object(
-            pipeline,
-            "_find_rendered_video",
-            return_value=tmp_path / "rendered.mp4",
-        ) as find_rendered:
-            video_path, timeline_path = pipeline._render_manim_batch(tmp_path)
-
-    assert video_path == tmp_path / "rendered.mp4"
-    assert timeline_path == tmp_path / "timeline.json"
-    assert root_manifest_scene.read_text(encoding="utf-8") == "caller scene"
-    assert root_manim_cfg.read_text(encoding="utf-8") == "caller cfg"
-
-    render_cwd = Path(run.call_args.kwargs["cwd"])
-    assert render_cwd != tmp_path
-    assert render_cwd.parent == tmp_path
-    find_rendered.assert_called_once_with(render_cwd)
-
 
 def test_cli_plan_dispatch(monkeypatch):
     from md2video import cli

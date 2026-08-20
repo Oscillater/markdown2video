@@ -73,11 +73,13 @@ def load_planner_config() -> PlannerConfig:
 # ==================== Tool 配置 ====================
 
 DEFAULT_TOOL_PRIORITY: dict[str, list[str]] = {
-    "text_only": ["manim"],
     "tts": ["edge-tts"],
     "stock_image": ["pexels", "local", "pixabay", "_text_only"],
     "stock_video": ["pexels_video", "pixabay_video", "_text_only"],
 }
+
+# These names identify render backends, not scene-level visual providers.
+RENDER_BACKEND_ONLY_VISUAL_TYPES = {"manim"}
 
 
 @dataclass

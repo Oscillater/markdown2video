@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from md2video.manifest.schema import SegmentPlan
 from md2video.core.planner.llm_planner import (
+    BLUEPRINT_SYSTEM_PROMPT,
     LlmPlanner,
     SceneTemplate, BlueprintOutput, ShotMapping, ChunkMappingOutput,
 )
@@ -16,6 +17,16 @@ def _seg(id, text, stype="content", section="", **kw):
 
 
 # ==================== plan() 集成测试 ====================
+
+def test_blueprint_prompt_does_not_offer_manim_as_visual_type():
+    visual_type_line = next(
+        line
+        for line in BLUEPRINT_SYSTEM_PROMPT.splitlines()
+        if "visual_type: one of" in line
+    )
+
+    assert "manim" not in visual_type_line
+
 
 class TestPlan:
 
@@ -193,6 +204,22 @@ class TestReconcile:
         planner = self._make_planner()
 
         with pytest.raises(ValidationError, match="split"):
+            planner._reconcile(mappings, segments, registry)
+
+    def test_reconcile_rejects_manim_visual_type(self):
+        segments = [_seg("s1", "one")]
+        mappings = [[ShotMapping(scene_id="SCENE_MANIM", segment_ids=["s1"])]]
+        registry = [
+            SceneTemplate(
+                id="SCENE_MANIM",
+                name="Manim",
+                description="render backend by mistake",
+                visual_type="manim",
+            ),
+        ]
+        planner = self._make_planner()
+
+        with pytest.raises(ValueError, match="Unsupported visual_type.*SCENE_MANIM.*manim"):
             planner._reconcile(mappings, segments, registry)
 
     def test_reconcile_missing_raises(self):

@@ -109,3 +109,72 @@ class TestWrapGenerateFromText:
 
         result = svc._wrap_generate_from_text("text")
         assert result["final_audio"] == str(p)
+
+    def test_use_segment_returns_matching_audio_when_order_differs(self, audio_file, tmp_path):
+        audio_a = tmp_path / "seg_a.wav"
+        audio_b = tmp_path / "seg_b.wav"
+        audio_a.write_bytes(audio_file.read_bytes())
+        audio_b.write_bytes(audio_file.read_bytes())
+
+        manifest = ResultManifest(segments=[
+            SegmentResult(id="seg_b", start=0.0, end=2.0,
+                          audio=AudioResult(path=str(audio_b), duration=2.0)),
+            SegmentResult(id="seg_a", start=2.0, end=4.0,
+                          audio=AudioResult(path=str(audio_a), duration=2.0)),
+        ])
+        svc = CachedVoiceService(result_manifest=manifest)
+
+        with svc.use_segment("seg_a"):
+            result_a = svc._wrap_generate_from_text("text a")
+        with svc.use_segment("seg_b"):
+            result_b = svc._wrap_generate_from_text("text b")
+
+        assert result_a["final_audio"] == str(audio_a)
+        assert result_a["text"] == "text a"
+        assert result_b["final_audio"] == str(audio_b)
+        assert result_b["text"] == "text b"
+
+    def test_use_segment_missing_segment_hard_fails(self):
+        svc = CachedVoiceService(result_manifest=ResultManifest())
+
+        with svc.use_segment("seg_missing"):
+            with pytest.raises(RuntimeError, match="seg_missing"):
+                svc._wrap_generate_from_text("text")
+
+    def test_use_segment_without_audio_hard_fails(self):
+        manifest = ResultManifest(segments=[
+            SegmentResult(id="seg_001", start=0.0, end=0.0, audio=None),
+        ])
+        svc = CachedVoiceService(result_manifest=manifest)
+
+        with svc.use_segment("seg_001"):
+            with pytest.raises(RuntimeError, match="seg_001"):
+                svc._wrap_generate_from_text("text")
+
+    def test_use_segment_excluded_from_voiced_ids_hard_fails(self, audio_file, tmp_path):
+        p = tmp_path / "seg_001.wav"
+        p.write_bytes(audio_file.read_bytes())
+        manifest = ResultManifest(segments=[
+            SegmentResult(id="seg_001", start=0.0, end=1.0,
+                          audio=AudioResult(path=str(p), duration=1.0)),
+        ])
+        svc = CachedVoiceService(
+            result_manifest=manifest,
+            voiced_segment_ids={"seg_other"},
+        )
+
+        with svc.use_segment("seg_001"):
+            with pytest.raises(RuntimeError, match="seg_001"):
+                svc._wrap_generate_from_text("text")
+
+    def test_use_segment_missing_file_hard_fails(self, tmp_path):
+        missing = tmp_path / "missing.wav"
+        manifest = ResultManifest(segments=[
+            SegmentResult(id="seg_001", start=0.0, end=1.0,
+                          audio=AudioResult(path=str(missing), duration=1.0)),
+        ])
+        svc = CachedVoiceService(result_manifest=manifest)
+
+        with svc.use_segment("seg_001"):
+            with pytest.raises(FileNotFoundError, match="seg_001"):
+                svc._wrap_generate_from_text("text")

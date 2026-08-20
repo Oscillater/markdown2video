@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict
 
@@ -22,7 +23,9 @@ class CachedVoiceService:
         self.project_root = Path(project_root) if project_root else None
         # 只对 voiced_segment_ids 中的 segment 返回音频，其他跳过
         self._voiced_ids = voiced_segment_ids  # None 表示全部可用
-        # 构建 text -> audio_path 查找表
+        self._segment_by_id = {seg.id: seg for seg in result_manifest.segments}
+        self._current_segment_id: str | None = None
+        # 构建 segment_id -> audio_path 查找表
         self._audio_map: Dict[str, str] = {}
         for seg in result_manifest.segments:
             if seg.audio and seg.audio.path:
@@ -36,6 +39,15 @@ class CachedVoiceService:
         self.cache_dir.mkdir(exist_ok=True)
         self.global_speed = 1.0
         self._whisper_model = None
+
+    @contextmanager
+    def use_segment(self, segment_id: str):
+        previous_segment_id = self._current_segment_id
+        self._current_segment_id = segment_id
+        try:
+            yield
+        finally:
+            self._current_segment_id = previous_segment_id
 
     def _resolve_path(self, audio_path: str) -> str:
         """将相对路径解析为绝对路径（manim 从 anim/ 运行，但音频在项目根目录下）。"""
@@ -55,6 +67,40 @@ class CachedVoiceService:
         return audio_path
 
     def _wrap_generate_from_text(self, text: str, path: str = None, **kwargs) -> dict:
+        """Return pregenerated audio, preferring the active segment id."""
+        if self._current_segment_id is not None:
+            return self._audio_for_segment(self._current_segment_id, text)
+
+        return self._audio_by_sequence(text)
+
+    def _audio_for_segment(self, segment_id: str, text: str) -> dict:
+        if self._voiced_ids is not None and segment_id not in self._voiced_ids:
+            raise RuntimeError(
+                f"CachedVoiceService: segment_id is not voiced: {segment_id}"
+            )
+
+        seg = self._segment_by_id.get(segment_id)
+        if seg is None:
+            raise RuntimeError(
+                f"CachedVoiceService: segment_id not found: {segment_id}"
+            )
+        if not seg.audio or not seg.audio.path:
+            raise RuntimeError(
+                f"CachedVoiceService: no audio for segment_id: {segment_id}"
+            )
+
+        audio_path = self._resolve_path(seg.audio.path)
+        if not Path(audio_path).exists():
+            raise FileNotFoundError(
+                f"预生成音频不存在 for segment_id {segment_id}: {audio_path}"
+            )
+        return {
+            "final_audio": audio_path,
+            "original_audio": audio_path,
+            "text": text,
+        }
+
+    def _audio_by_sequence(self, text: str) -> dict:
         """按调用顺序返回预生成的音频文件。"""
         # voiceover 每次只调用一个 segment，按调用顺序匹配
         # 找到下一个有音频的 segment

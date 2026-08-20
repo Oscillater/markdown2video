@@ -39,7 +39,7 @@ Manifest 是 Planner、Tool、Renderer、Assembler 之间唯一的数据流。�
 
 - `plan.json`：计划和目标约束，描述 segments、scenes、shots、visual intent 和 target duration。
 - `execution-assets.json`：素材事实，记录 TTS 音频路径/时长、图片路径/尺寸、provider 和 cache key。
-- `timeline.json`：renderer 实际输出的时间事实，包含 segment/shot/marker 的 start/end。
+- `timeline.json`：renderer 实际输出的时间事实；text/shot 使用 `start/end`，marker 使用 `time`。
 - `result.json`：最终交付摘要，只在 assemble 完成后写出，记录 output MP4、used assets、warnings 和 artifact index。
 
 `result.json` 不应该承担中间执行状态；renderer 和 assembler 应该显式消费 plan、execution assets 和 timeline。
@@ -75,7 +75,7 @@ Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可�
 
 项目应该拆开两个决定：
 
-- `visual_type`：用什么素材或工具，例如 text、stock image、local image、Manim、video。
+- `visual_type`：用什么素材或工具，例如 text、stock image、local image、video；Manim 是 `render/manim` backend，不是 visual provider。
 - `layout_type`：这些素材、文字、字幕放在屏幕哪里。
 
 当前 layout 契约是 scene 级别，`SegmentPlan` 保留同名字段用于兼容 explicit segment 的继承和回填。内置模板包括：

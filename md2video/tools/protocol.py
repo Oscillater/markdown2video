@@ -50,5 +50,25 @@ class Tool(Protocol):
         TTS tool 输出契约::
 
             {"path": str, "duration": float, "provider": str, "cache_key": str}
+
+        Render tool (tool_type='render') 输入契约::
+
+            {
+                "plan_path": str,
+                "execution_assets_path": str,
+                "timeline_path": str,
+                "output_dir": str,
+                "quality": str,   # e.g. "ql"
+                "timeout": int,
+            }
+
+        Render tool 输出契约::
+
+            {
+                "video_path": str,
+                "timeline_path": str,
+                "provider": str,
+                "render_dir": str,
+            }
         """
         ...

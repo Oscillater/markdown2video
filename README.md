@@ -189,14 +189,14 @@ md2video/              # 核心代码
     parser/            # Markdown 解析
     tools/tts/         # TTS 工具 (edge-tts)
     tools/render/      # Manim 渲染 + CachedVoiceService
-    tools/             # Tool 基础设施 (Protocol, Adapter, Registry, Cache)
+    tools/             # Tool 基础设施 (Protocol, Registry, Cache)
     assembler/         # FFmpeg 合成
     core/              # Pipeline 编排
         planner/       # Planner (Rule + LLM 两阶段)
     cli.py             # 命令行入口
     config.py          # 配置常量
 example/               # 示例 Markdown
-tests/                 # 单元测试 (267 tests)
+tests/                 # 单元测试
 artifacts/             # 生成的中间产物（gitignored）
 changelog/             # 变更日志
 ```

@@ -65,7 +65,8 @@ def _make_result_with_scenes(scene_ids, shot_ids_per_scene):
 class TestToolConfig:
     def test_default_priority(self):
         cfg = ToolConfig()
-        assert cfg.get_priority("text_only") == ["manim"]
+        assert "text_only" not in DEFAULT_TOOL_PRIORITY
+        assert cfg.get_priority("text_only") == ["_text_only"]
         assert cfg.get_priority("tts") == ["edge-tts"]
 
     def test_unknown_type_fallback(self):
@@ -280,10 +281,9 @@ class TestDispatchRender:
 
         assert not p._prepare_execution_assets.called
 
-    def test_dispatch_render_validates_layout_before_tools(self, tmp_path):
+    def test_dispatch_visual_tools_validates_layout_before_tools(self, tmp_path):
         p = _make_pipeline()
         p._dispatch_visual_tool = MagicMock()
-        p._render_manim_batch = MagicMock(return_value=("video.mp4", "timeline.json"))
         plan = PlanManifest(
             segments=[],
             scenes=[
@@ -297,31 +297,64 @@ class TestDispatchRender:
         result = ResultManifest()
 
         with pytest.raises(ValueError, match="Invalid layout for scene scene_bad"):
-            p._dispatch_render(plan, result, tmp_path / "source.md")
+            p._dispatch_visual_tools(plan, result, tmp_path)
 
         assert not p._dispatch_visual_tool.called
-        assert not p._render_manim_batch.called
 
-    def test_dispatch_render_text_only_only(self):
+    def test_execute_plan_rejects_manim_visual_type_before_tts(self, tmp_path):
+        p = _make_pipeline()
+        p._prepare_execution_assets = MagicMock()
+        plan = PlanManifest(
+            segments=[],
+            scenes=[
+                _make_scene_plan(
+                    scene_id="scene_manim",
+                    visual_type="manim",
+                ),
+            ],
+        )
+
+        with pytest.raises(ValueError, match="Unsupported visual_type.*scene_manim.*manim"):
+            p._execute_plan(plan, tmp_path / "out.mp4", tmp_path, tmp_path)
+
+        assert not p._prepare_execution_assets.called
+
+    def test_dispatch_visual_tools_rejects_manim_visual_type(self, tmp_path):
+        p = _make_pipeline()
+        p._dispatch_visual_tool = MagicMock()
+        plan = PlanManifest(
+            segments=[],
+            scenes=[
+                _make_scene_plan(
+                    scene_id="scene_manim",
+                    visual_type="manim",
+                ),
+            ],
+        )
+        result = ResultManifest()
+
+        with pytest.raises(ValueError, match="Unsupported visual_type.*scene_manim.*manim"):
+            p._dispatch_visual_tools(plan, result, tmp_path)
+
+        assert not p._dispatch_visual_tool.called
+
+    def test_dispatch_visual_tools_text_only_only(self):
         """全部 text_only 时不调用 visual tool。"""
         p = _make_pipeline()
         p._dispatch_visual_tool = MagicMock()
-        p._render_manim_batch = MagicMock(return_value=("video.mp4", "timeline.json"))
 
         plan = PlanManifest(segments=[], scenes=[
             _make_scene_plan(scene_id="s1", visual_type="text_only"),
         ])
         result = ResultManifest()
 
-        p._dispatch_render(plan, result, MagicMock())
+        p._dispatch_visual_tools(plan, result, Path.cwd())
         assert not p._dispatch_visual_tool.called
-        p._render_manim_batch.assert_called_once()
 
-    def test_dispatch_render_mixed(self):
+    def test_dispatch_visual_tools_mixed(self):
         """混合 text_only 和 stock_image 时，对 stock_image scene 调用 visual tool。"""
         p = _make_pipeline()
         p._dispatch_visual_tool = MagicMock()
-        p._render_manim_batch = MagicMock(return_value=("video.mp4", "timeline.json"))
 
         plan = PlanManifest(segments=[], scenes=[
             _make_scene_plan(scene_id="s1", visual_type="text_only"),
@@ -329,7 +362,12 @@ class TestDispatchRender:
         ])
         result = ResultManifest()
 
-        p._dispatch_render(plan, result, MagicMock())
+        p._dispatch_visual_tools(plan, result, Path.cwd())
         # 只对 stock_image scene 调用 visual tool
         assert p._dispatch_visual_tool.call_count == 1
         assert p._dispatch_visual_tool.call_args[0][0].visual_type == "stock_image"
+
+    def test_dispatch_render_is_deprecated(self):
+        p = _make_pipeline()
+        with pytest.raises(RuntimeError, match="_dispatch_render no longer renders"):
+            p._dispatch_render()

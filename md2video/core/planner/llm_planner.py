@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from md2video.manifest.schema import ScenePlan, SegmentPlan, ShotPlan
 from md2video.core.planner.rule_planner import RulePlanner
+from md2video.config import RENDER_BACKEND_ONLY_VISUAL_TYPES
 from md2video.layout import create_default_layout_registry
 from md2video.layout.schema import DEFAULT_LAYOUT_TYPE
 
@@ -22,7 +23,7 @@ class SceneTemplate(BaseModel):
     id: str                          # e.g. "SCENE_CONCEPT"
     name: str                        # e.g. "科技概念讲解"
     description: str                 # LLM 对该风格的描述
-    visual_type: str                 # text_only / stock_image / stock_video / manim
+    visual_type: str                 # text_only / stock_image / stock_video
     visual_params: Dict = Field(default_factory=dict)
     layout_type: str = DEFAULT_LAYOUT_TYPE
     layout_params: Dict = Field(default_factory=dict)
@@ -54,7 +55,7 @@ For each template, decide:
 - id: short uppercase identifier (e.g. SCENE_CONCEPT, SCENE_NARRATIVE)
 - name: short Chinese name (e.g. "概念讲解", "叙事抒情")
 - description: what kind of content this style is for
-- visual_type: one of [text_only, stock_image, stock_video, manim]
+- visual_type: one of [text_only, stock_image, stock_video]
 - visual_params: if stock_image/stock_video, include "query" with English keywords; \
 optionally include "preferred_provider" as a suggested provider name (e.g. "pexels")
 - layout_type: one of [center_title_body, full_bleed_image_caption_bottom, \
@@ -313,6 +314,11 @@ class LlmPlanner:
         seg_order = [s.id for s in segments]
         registry_map = {t.id: t for t in registry}
         for template in registry:
+            if template.visual_type in RENDER_BACKEND_ONLY_VISUAL_TYPES:
+                raise ValueError(
+                    f"Unsupported visual_type in scene template "
+                    f"{template.id}: {template.visual_type}"
+                )
             self._layout_registry.validate(
                 template.layout_type,
                 template.layout_params,

@@ -24,7 +24,7 @@ execution-assets.json
 = 素材事实：TTS 音频路径、音频时长、图片路径、图片尺寸、provider、cache key
 
 timeline.json
-= 时间事实：renderer 实际输出的字幕、marker、shot 或 segment 时间
+= 时间事实：renderer 实际输出；text/shot 使用 `start/end`，marker 使用 `time`
 
 result.json
 = 最终交付：output MP4、used assets、warnings、artifact index
@@ -56,12 +56,12 @@ future harness preview/review/partial rerun
 ## 当前状态
 
 - Phase 1-4 已完成。
-- 当前处在 Phase 5.5 已完成、Phase 6 之前。
-- 最新验证：2026-08-20 运行 `python -m pytest -q`，结果是 `289 passed, 4 warnings`。
+- 当前处在 Phase 6 进行中，6.1/6.2 已完成。
+- 最新验证：2026-08-20 运行 `python -m pytest -q`，结果是 `339 passed, 4 warnings`。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
 - 旧流程可以用 Markdown 显式图片标记 `[image_start]` / `[image_end]` 生成图片 overlay。
 - Phase 5 no-key 图片链路已有测试闭环：`LocalImageTool -> execution-assets.visual_assets -> timeline -> FFmpeg overlay`。
-- Runtime artifact 分层已落地：Pipeline 会写出 `plan.json`、`execution-assets.json`、`timeline.json` 和最终 `result.json`；renderer 优先消费 `PlanManifest + ExecutionAssets`，不再依赖半成品 `result.json`。
+- Runtime artifact 分层已落地：Pipeline 会写出 `plan.json`、`execution-assets.json`、`timeline.json` 和最终 `result.json`；renderer 只通过显式路径消费 `PlanManifest + ExecutionAssets`，不再依赖半成品 `result.json`。
 - Phase 5.5 已完成 Manifest/layout-engine 契约；剩余 renderer 消费 layout 的问题按 Phase 6 处理。
 
 ## Phase 1: 基础架构 - 已完成
@@ -118,7 +118,7 @@ future harness preview/review/partial rerun
 
 ## Phase 5: Runtime artifact 分层 + Manifest-first execution
 
-状态：进行中。
+状态：已完成。
 
 目标：证明非文字视觉素材可以进入 pipeline，并且按 shot 出现在最终视频时间线上。
 
@@ -141,7 +141,7 @@ future harness preview/review/partial rerun
 - [x] 已有 no-key `stock_image` 测试：`Plan -> Pipeline visual dispatch -> ShotResult.visual -> FFmpeg overlay entry`。
 - [x] 文档说明 Pexels 是可选 provider，不是本地验证的前置条件。
 
-剩余任务：
+完成任务：
 
 - [x] 定义 runtime artifact 分层：`plan.json` / `execution-assets.json` / `timeline.json` / `result.json`。
 - [x] 新增 `ExecutionAssets` 或等价 schema，记录 audio assets 和 visual assets。
@@ -197,7 +197,7 @@ output_mp4 + used_assets + warnings
 - 图片事实落在 execution-assets，而不是半成品 result。
 - 时间事实落在 timeline，per-shot visual overlay 优先使用 renderer 真实 shot 时间。
 - 最终 `result.json` 只在 assemble 完成后生成。
-- 单元测试保持通过：当前基线是 `289 passed, 4 warnings`。
+- 单元测试保持通过：当前基线是 `339 passed, 4 warnings`。
 - 真实 Pexels 只是可选验证，不是唯一验证方式。
 
 ## Phase 5.5: Runtime Layout Template
@@ -211,7 +211,7 @@ output_mp4 + used_assets + warnings
 计划任务：
 
 - [x] 在 Manifest 中新增一等布局字段，暂定 `layout_type` + `layout_params`。
-- [x] 保留 `visual_type` 表达素材/工具选择：`text_only`、`stock_image`（含 local provider）、`manim`、`stock_video` 等。
+- [x] 保留 `visual_type` 表达素材/工具选择：`text_only`、`stock_image`（含 local provider）、`stock_video` 等；`manim` 只作为 `render/manim` backend。
 - [x] 用 `layout_type` 表达画面摆法：全屏图+底部字幕、上图下文、纯文字标题页等。
 - [x] 定义 `LayoutTemplate`。
 - [x] 定义 `LayoutRegistry`。
@@ -242,26 +242,30 @@ Phase 5.5 review guardrails：
 
 ## Phase 6: Renderer Closure
 
-状态：计划中。
+状态：进行中，6.1/6.2 已完成。
 
 目标：让渲染器消费和其他环节一致的 Shot + Layout + ExecutionAssets 模型。
 
 当前不匹配的地方：
 
-- `ManimRenderTool.execute()` 仍然是 stub。
-- Pipeline 仍然用 subprocess 特判 Manim。
 - `manim_renderer.py` 仍然主要按 segment 循环渲染。
 - 仍有 `self.wait(2)` 这类硬编码等待。
 - `target_duration` 已经算出来，但 Manim 还没有真正消费它。
-- renderer 已优先消费 `plan.json` / `execution-assets.json`，但 Manim 仍由 Pipeline subprocess 特判调用，还没有成为标准 Tool backend。
-- 预生成音频仍按 `result_manifest.segments` 顺序消费，而不是按 `segment_id` 绑定；当前 RulePlanner 主路径顺序一致，但 manifest-first 自定义顺序可能把错误音频配到文本上。
+- renderer 已经通过标准 `render/manim` Tool backend 调用，并且只接受显式 `plan.json` / `execution-assets.json` / `timeline.json` 输入路径；但渲染逻辑仍未真正按 Shot + Layout 消费。
 
 计划任务：
 
-- [ ] 实现 `ManimRenderTool.execute()`。
-- [ ] Tool 路径可用后，移除 Pipeline 对 Manim subprocess 的特殊分支。
-- [ ] Renderer 显式接收 `PlanManifest + ExecutionAssets + layout`。
-- [ ] 文件 artifact 只是输出记录，不是 renderer 的隐藏输入状态。
+- [x] 实现 `ManimRenderTool.execute()`。
+- [x] Tool 路径可用后，移除 Pipeline 对 Manim subprocess 的特殊分支。
+- [x] Renderer 显式接收 `PlanManifest + ExecutionAssets`。
+- [ ] Renderer 消费 `layout_type` / `layout_params` / `LayoutTemplate`。
+- [x] 文件 artifact 只是输出记录，不是 renderer 的隐藏输入状态。
+- [x] RenderTool 在渲染前清理旧 `timeline.json`，并在渲染后校验本次生成的 timeline。
+- [x] RenderTool 会校验 timeline 覆盖当前 plan 的 shot 和 segment。
+- [x] Pipeline 会在 assemble 前校验 render backend 输出字段和文件存在性。
+- [x] Renderer manifest/env loader 已从 Manim 场景模块中抽出为轻量 helper，避免纯输入测试依赖 Manim。
+- [x] Renderer 输入契约已有纯 helper 测试，覆盖标题正文遍历、未知 segment 引用、音频 asset 绑定和 `visual_type` 边界。
+- [x] Timeline 写入已改为按 handle 关闭，并有重复文本/同文本 header-content 的回归测试。
 - [ ] 按 Shot 渲染，而不是松散的 segment 循环。
 - [ ] 传递并消费 `target_duration`。
 - [ ] 用时长感知渲染替代硬编码 wait。
@@ -269,7 +273,8 @@ Phase 5.5 review guardrails：
 - [ ] 让 Manim 消费 `LayoutTemplate`。
 - [ ] 让 FFmpeg 图片/视频布局也消费同一套 layout 契约。
 - [ ] 把可复用 Manim 模板重新定义为 layout/render backend，而不是零散视觉效果。
-- [ ] 把 renderer 音频播放从“按列表顺序消费”改为“按 `segment_id` 查找 audio asset”，避免自定义 manifest 顺序变化时配错音频。
+- [x] 把 renderer 音频播放从“按列表顺序消费”改为“按 `segment_id` 查找 audio asset”，避免自定义 manifest 顺序变化时配错音频。
+- [ ] 补 renderer contract 测试：shot 顺序是主遍历顺序、`target_duration` 会影响静音时长、layout 决策会进入 renderer。
 
 验收标准：
 
@@ -305,8 +310,8 @@ Phase 5.5 review guardrails：
 已知技术债：
 
 - [ ] 定义 run-dir 生命周期策略：`manim_render_*` 临时子目录可以保留用于 debug，但需要被 artifact index 索引或按策略清理。
-- [ ] final `result.json` 应索引 base render MP4、assembled MP4、plan、execution-assets、timeline 和关键临时产物。
-- [ ] 新 run 开始时显式标记 run id/status，或清理/失效旧 `result.json`、`timeline.json`，避免失败路径留下“新 plan/assets + 旧 result/timeline”的混合 artifacts。
+- [x] final `result.json` 索引 base render MP4、render dir、render provider、plan、execution-assets 和 timeline。
+- [ ] 新 run 开始时显式标记 run id/status，或清理/失效旧 `result.json`，避免失败路径留下“新 plan/assets + 旧 result”的混合 artifacts。
 
 ## Future: Harness / Agent Workflow Layer
 
@@ -339,14 +344,15 @@ Docs mismatch / consistency：
 
 - [x] README 已补充直接依赖 `requests`。
 - [x] README / config 已收敛为 OpenAI-compatible LLM planner，不再把 Anthropic 写成当前支持项。
-- [x] TODO 测试基线已更新到 `289 passed, 4 warnings`。
+- [x] TODO 测试基线已更新到 `339 passed, 4 warnings`。
 - [x] TODO 已删除“是否需要 owner 授权真实短视频 demo”的 stale 项；demo 不作为当前 commit 的交付内容。
 - [ ] 定期核对 README、TODO、`docs/architecture.md` 对 runtime artifact 分层的描述，避免 `result.json` 再被写成中间执行状态。
 
 Test / cleanup：
 
-- [ ] 决定 README 是否继续写固定测试数量，还是只写最新验证命令。
-- [ ] 调查当前 4 个 pytest warnings，来源主要是 mock async TTS 调用。
-- [ ] 补测试：音频按 `segment_id` 绑定，不依赖 segment 列表顺序。
-- [ ] 补测试：失败 run 不会让旧 `result.json` / `timeline.json` 被误认为当前 run 产物。
+- [x] README 不再写固定测试数量；测试基线只保留在 TODO 的最新验证记录中。
+- [ ] 调查当前 pytest warnings，来源主要是 mock async TTS 调用和部分第三方 deprecation。
+- [x] 补测试：音频按 `segment_id` 绑定，不依赖 segment 列表顺序。
+- [x] 补测试：render 成功但未生成新 `timeline.json` 时 hard fail，不复用旧 timeline。
+- [ ] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物。
 - [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确。

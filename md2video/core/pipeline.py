@@ -9,11 +9,6 @@ Runtime artifacts:
 """
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 from md2video.config import (
@@ -41,6 +36,7 @@ from md2video.manifest.schema import (
 )
 from md2video.parser.md_parser import parse_to_plan_manifest
 from md2video.tools.registry import ToolRegistry
+from md2video.tools.render.manim_renderer_inputs import validate_renderer_visual_types
 from md2video.tools.tts.edge_tts import EdgeTTSTool
 
 
@@ -68,7 +64,7 @@ class Pipeline:
 
         # Render (Manim)
         from md2video.tools.render.manim_tool import ManimRenderTool
-        self.registry.register("text_only", ManimRenderTool())
+        self.registry.register("render", ManimRenderTool())
 
         # Local image provider is the default no-key verification path.
         from md2video.tools.image.local_image_tool import LocalImageTool
@@ -145,6 +141,7 @@ class Pipeline:
     ) -> Path:
         self._warnings = []
         self._validate_plan_layouts(plan)
+        self._validate_plan_visual_types(plan)
         plan_path = self._write_plan_manifest(plan)
 
         print("[2/5] Preparing execution assets...")
@@ -155,21 +152,31 @@ class Pipeline:
         plan_path = self._write_plan_manifest(plan)
         result = result_manifest_from_execution_assets(plan, assets)
 
-        for scene in plan.scenes:
-            if scene.shots and scene.visual_type != "text_only":
-                self._dispatch_visual_tool(
-                    scene,
-                    plan,
-                    result,
-                    base_dir=base_dir,
-                    execution_assets=assets,
-                )
+        self._dispatch_visual_tools(
+            plan,
+            result,
+            base_dir=base_dir,
+            execution_assets=assets,
+            validate_layouts=False,
+        )
 
         assets_path = self._write_execution_assets(assets)
         result = result_manifest_from_execution_assets(plan, assets)
 
         print("[3/5] Rendering video...")
-        video_path, timeline_path = self._render_manim_batch(render_dir)
+        render_tool = self.registry.get_tool("render", "manim")
+        if not render_tool:
+            raise ValueError("Render tool not registered: render/manim")
+        timeline_path = render_dir / "timeline.json"
+        render_output = render_tool.execute({
+            "plan_path": str(plan_path),
+            "execution_assets_path": str(assets_path),
+            "timeline_path": str(timeline_path),
+            "output_dir": str(render_dir),
+            "quality": "ql",
+            "timeout": 300,
+        })
+        video_path, timeline_path = self._validate_render_output(render_output, timeline_path)
         print(f"  Video: {video_path}")
 
         print("[4/5] Assembling final video...")
@@ -186,8 +193,62 @@ class Pipeline:
         assembler.assemble()
         print(f"  Output: {output_path}")
 
-        self._write_final_result(output_path, plan_path, assets_path, timeline_path, assets)
+        self._write_final_result(
+            output_path,
+            plan_path,
+            assets_path,
+            timeline_path,
+            assets,
+            video_path=video_path,
+            render_output=render_output,
+        )
         return output_path
+
+    @staticmethod
+    def _validate_render_output(render_output, expected_timeline_path: Path) -> tuple[Path, Path]:
+        if not isinstance(render_output, dict):
+            raise RuntimeError("Render backend returned invalid output: expected dict")
+
+        required_fields = ("video_path", "timeline_path", "provider", "render_dir")
+        missing_fields = [
+            field
+            for field in required_fields
+            if not str(render_output.get(field, "")).strip()
+        ]
+        if missing_fields:
+            raise RuntimeError(
+                f"Render backend returned invalid output: missing fields {missing_fields}"
+            )
+
+        provider = str(render_output["provider"])
+        if provider != "manim":
+            raise RuntimeError(
+                f"Render backend returned unexpected provider: expected manim, got {provider}"
+            )
+
+        video_path = Path(str(render_output["video_path"]))
+        timeline_path = Path(str(render_output["timeline_path"]))
+        render_dir = Path(str(render_output["render_dir"]))
+        if timeline_path.resolve() != expected_timeline_path.resolve():
+            raise RuntimeError(
+                "Render backend returned unexpected timeline_path: "
+                f"expected {expected_timeline_path}, got {timeline_path}"
+            )
+
+        missing_artifacts = []
+        if not video_path.is_file():
+            missing_artifacts.append(f"video_path={video_path}")
+        if not timeline_path.is_file():
+            missing_artifacts.append(f"timeline_path={timeline_path}")
+        if not render_dir.is_dir():
+            missing_artifacts.append(f"render_dir={render_dir}")
+        if missing_artifacts:
+            raise RuntimeError(
+                "Render backend returned missing artifacts: "
+                + ", ".join(missing_artifacts)
+            )
+
+        return video_path, timeline_path
 
     def _prepare_execution_assets(self, plan: PlanManifest) -> ExecutionAssets:
         assets = ExecutionAssets()
@@ -230,8 +291,22 @@ class Pipeline:
         assets_path: Path,
         timeline_path: Path | None,
         assets: ExecutionAssets,
+        video_path: Path | None = None,
+        render_output: dict | None = None,
     ) -> Path:
         result_path = self.artifacts_dir / "result.json"
+        artifact_index = {
+            "plan": str(plan_path),
+            "execution_assets": str(assets_path),
+            "timeline": str(timeline_path) if timeline_path else "",
+            "result": str(result_path),
+        }
+        if video_path:
+            artifact_index["base_video"] = str(video_path)
+        if render_output:
+            artifact_index["render_dir"] = str(render_output.get("render_dir", ""))
+            artifact_index["render_provider"] = str(render_output.get("provider", ""))
+
         final_result = FinalResultManifest(
             output_mp4=str(output_path),
             used_assets={
@@ -239,12 +314,7 @@ class Pipeline:
                 "visual": [asset.model_dump() for asset in assets.visual_assets],
             },
             warnings=self._warnings,
-            artifact_index={
-                "plan": str(plan_path),
-                "execution_assets": str(assets_path),
-                "timeline": str(timeline_path) if timeline_path else "",
-                "result": str(result_path),
-            },
+            artifact_index=artifact_index,
         )
         result_path.write_text(final_result.model_dump_json(indent=2), encoding="utf-8")
         return result_path
@@ -258,10 +328,18 @@ class Pipeline:
                     f"Invalid layout for scene {scene.id}: {exc}"
                 ) from exc
 
-    def _dispatch_render(self, plan, result, md_path, execution_assets=None):
-        """Backward-compatible helper used by existing tests."""
-        self._validate_plan_layouts(plan)
-        base_dir = md_path.parent
+    def _dispatch_visual_tools(
+        self,
+        plan,
+        result,
+        base_dir,
+        execution_assets=None,
+        validate_layouts=True,
+    ):
+        """Dispatch non-text visual tools for scenes that need material assets."""
+        if validate_layouts:
+            self._validate_plan_layouts(plan)
+            self._validate_plan_visual_types(plan)
         for scene in plan.scenes:
             if scene.shots and scene.visual_type != "text_only":
                 self._dispatch_visual_tool(
@@ -271,7 +349,13 @@ class Pipeline:
                     base_dir=base_dir,
                     execution_assets=execution_assets,
                 )
-        return self._render_manim_batch(base_dir)
+        return None
+
+    def _dispatch_render(self, *args, **kwargs):
+        raise RuntimeError(
+            "_dispatch_render no longer renders. Use _dispatch_visual_tools() "
+            "for visual providers and the render/manim tool for base rendering."
+        )
 
     def _dispatch_visual_tool(self, scene_plan, plan, result, base_dir=None, execution_assets=None):
         visual_type = scene_plan.visual_type
@@ -335,6 +419,10 @@ class Pipeline:
             for key in ("path", "src", "image_path")
         )
         return provider == "local" and has_local_path
+
+    @staticmethod
+    def _validate_plan_visual_types(plan: PlanManifest) -> None:
+        validate_renderer_visual_types(plan)
 
     def _invoke_visual_tool(self, tool, scene_plan, plan, result, base_dir=None, execution_assets=None):
         seg_map = {segment.id: segment for segment in plan.segments}
@@ -430,76 +518,6 @@ class Pipeline:
             if existing.shot_id != shot_plan_id
         ]
         execution_assets.visual_assets.append(asset)
-
-    def _render_manim_batch(self, render_dir):
-        render_root = Path(render_dir)
-        render_root.mkdir(parents=True, exist_ok=True)
-        anim_dir = Path(tempfile.mkdtemp(prefix="manim_render_", dir=render_root))
-        renderer_src = Path(__file__).parent.parent / "tools" / "render" / "manim_renderer.py"
-        anim_renderer = anim_dir / "manifest_scene.py"
-
-        manim_cfg_src = Path(__file__).parent.parent / "tools" / "render" / "manim.cfg"
-        anim_cfg = anim_dir / "manim.cfg"
-        shutil.copy2(manim_cfg_src, anim_cfg)
-        shutil.copy2(renderer_src, anim_renderer)
-
-        project_root = Path(__file__).parent.parent.parent
-        env_pythonpath = str(project_root)
-
-        try:
-            cmd = [
-                sys.executable, "-m", "manim", "render",
-                "-ql",
-                "manifest_scene.py", "ManifestDrivenScene",
-            ]
-            env = os.environ.copy()
-            env["PYTHONPATH"] = env_pythonpath
-            env["MANIM_CACHE_DISABLE"] = "1"
-            env["MD2VIDEO_ARTIFACTS_DIR"] = str(self.artifacts_dir.resolve())
-            env["MD2VIDEO_TIMELINE_PATH"] = str((self.artifacts_dir / "timeline.json").resolve())
-
-            proc = subprocess.run(
-                cmd,
-                cwd=str(anim_dir),
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            if proc.returncode != 0:
-                print("  Render stderr (last 20 lines):")
-                for line in proc.stderr.strip().split("\n")[-20:]:
-                    print(f"    {line}")
-                raise RuntimeError(f"Manim rendering failed (exit {proc.returncode})")
-
-            print("  Render OK")
-
-            video_path = self._find_rendered_video(anim_dir)
-            if not video_path:
-                raise FileNotFoundError("No rendered video found")
-
-            return video_path, self.artifacts_dir / "timeline.json"
-
-        finally:
-            if anim_renderer.exists():
-                anim_renderer.unlink()
-            if anim_cfg.exists():
-                anim_cfg.unlink()
-
-    def _find_rendered_video(self, anim_dir: Path) -> Path | None:
-        media_dir = anim_dir / "media" / "videos"
-        if not media_dir.exists():
-            media_dir = anim_dir / "media"
-
-        mp4s = list(media_dir.rglob("*.mp4"))
-        if not mp4s:
-            return None
-
-        scene_mp4s = [path for path in mp4s if "ManifestDrivenScene" in str(path)]
-        if scene_mp4s:
-            return max(scene_mp4s, key=lambda path: path.stat().st_mtime)
-
-        return max(mp4s, key=lambda path: path.stat().st_mtime)
 
     def _fill_target_durations(self, scene_plans, segment_results):
         seg_map = {segment.id: segment for segment in segment_results}
