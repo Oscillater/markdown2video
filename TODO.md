@@ -55,14 +55,12 @@ future harness preview/review/partial rerun
 
 ## 当前状态
 
-- Phase 1-4 已完成。
-- Phase 6 已完成：renderer contract cleanup 与 layout consumption 均已落地，像素级 smoke 验证通过。
+- Phase 1-6 已完成：渲染契约 + layout consumption 落地，像素级 smoke 验证通过。
+- 设计共识定稿（2026-09-05）：四本账、四道闸门、双 track 路线。设计定义见 `docs/architecture.md`（「总体模型」「覆盖地图」）。
 - 最新验证：2026-09-05 运行 `python -m pytest -q`，结果是 `374 passed, 1 skipped, 4 warnings`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的真实渲染像素 smoke（`tests/test_render_smoke.py`）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
-- 旧流程可以用 Markdown 显式图片标记 `[image_start]` / `[image_end]` 生成图片 overlay。
-- Phase 5 no-key 图片链路已有测试闭环：`LocalImageTool -> execution-assets.visual_assets -> timeline -> FFmpeg overlay`。
-- Runtime artifact 分层已落地：Pipeline 会写出 `plan.json`、`execution-assets.json`、`timeline.json` 和最终 `result.json`；renderer 只通过显式路径消费 `PlanManifest + ExecutionAssets`，不再依赖半成品 `result.json`。
-- Phase 5.5 已完成 Manifest/layout-engine 契约；剩余 renderer 消费 layout 的问题按 Phase 6 处理。
+- 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）；`stock_video` 幽灵配置待清理（A1）。
+- 后续施工按 Track A / Track B 推进；原 Phase 7 计划并入 A4。
 
 ## Phase 1: 基础架构 - 已完成
 
@@ -323,44 +321,135 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 - Manim 和 FFmpeg 对 layout 的理解一致。
 - renderer 不依赖旧的 stale manifest/result 文件。
 
-## Phase 7: Runtime Inspectability
+## Track A: Infrastructure
 
-状态：计划中。前置条件已满足（Phase 6 renderer contract 与 layout consumption 已完成）。
+目标：完善裁判、账本、闸门与机制。设计定义见 `docs/architecture.md`（总体模型 / 覆盖地图）。
 
-目标：让 runtime 的中间结果对人和未来 harness 可检查。
+### A1 契约收紧
 
-这还不是完整 preview/review harness，只是输出可读、可追踪、可诊断的中间结果。Phase 7 必须依赖 Phase 6 的新 renderer contract 稳定后再做，不能为旧 artifact 结构补 UI。
+目标：把时间与配置的事实约束补成闸门。纯收紧，无 breaking。
 
-计划任务：
+- [ ] 新增 `timeline/invariants.py` 纯函数检查器：shots 覆盖全部 plan shots、按序、两两不重叠、无负时长；text cue 落在所属 shot 区间；marker 落在所属 shot 边界；朗读段时长与音频事实差值告警。
+- [ ] 接入渲染后闸门（manim_tool 现有校验逻辑搬入，行为保持）。
+- [ ] 清理 `stock_video` 幽灵配置（`DEFAULT_TOOL_PRIORITY` 中已声明、无工具注册）。
+- [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确。
+
+验收：构造重叠/乱序/缺 cue 的 timeline 必须被拒且报错可定位；example 端到端不受影响。
+
+### A2 Style Pack 机制
+
+目标：风格声明化——token 声明 + 每引擎一个 Realizer。与 B1 同一里程碑，互相验收。
+
+- [ ] `md2video/style/`：ThemeTokens schema（palette / typography 归一化字号 / motion 意图级 + 静默段节奏 / motif 槽位）。
+- [ ] pack 加载与 token 校验（v0 代码内置注册，外部文件加载留接口）。
+- [ ] ManimRealizer：token → 引擎参数的唯一换算点；动效意图映射；motif kind 注册表（orbit_dots 圆点代码从渲染器搬家至此）。
+- [ ] 渲染器切换为消费 token；风格常量退役（DEFAULT_FONT 等）。
+- [ ] 与 B1（reference pack）联合验收。
+
+验收：`MD2VIDEO_RENDER_SMOKE=1` 像素逐帧不变（抽取无损的硬标准）。
+
+### A2.5 渲染后端去硬编码
+
+- [ ] render provider 从 plan/配置读取，替换 pipeline 中的 `"manim"` 硬编码与 provider 校验。
+
+验收：注册新后端后可整条切换，不改管线代码。
+
+### A3 Plan Schema v2 + 时间合同
+
+目标：plan 不含时间。**Breaking：是**（唯一一次 schema 破坏性迁移）。
+
+- [ ] 删除 `SegmentPlan.target_duration`；段时长裁决统一为：音频事实 > hold cue > pack 节奏。
+- [ ] 删除 `pipeline._fill_target_durations` 回写。
+- [ ] SegmentPlan 的 visual/layout 副本字段收拢到 scene 级（去 denormalize，与去时间同一次迁移）。
+- [ ] Tool Protocol + VisualAsset 增加 duration 合同（视频素材 probe 上报）。
+- [ ] 时长估算器纯函数（音频事实 + pack 节奏 + 转场开销常数）——只服务容错决策与展示，永不用于组合。
+- [ ] schema 迁移 validator + 一次切换；受影响测试同步改写。
+
+验收：plan.json 无时长字段；example 端到端输出不变；估算器有单测。
+
+### A4 Runtime Inspectability（原 Phase 7 全部内容）
+
+目标：让 runtime 的中间结果对人、对未来 harness、对 LLM 反馈回路可检查。
 
 - [ ] 输出 artifact index，记录本次生成的 plan、execution-assets、timeline、result、音频、图片、视频路径。
-- [ ] 输出一份紧凑、可读的静态查看页面，例如 `plan.html` 或 `manifest_viewer.html`。
-- [ ] 展示 plan：segments with target duration、shots with cues、scenes with visual/layout intent。
-- [ ] 展示 execution-assets：audio assets、visual assets、provider、cache key、尺寸、路径。
+- [ ] 输出紧凑可读的静态查看页面（`manifest_viewer.html`）。
+- [ ] 展示 plan：segments（类型/文本/角色）、shots with cues、scenes with visual/layout/theme intent。
+- [ ] 展示 execution-assets：audio/visual assets、provider、cache key、尺寸、duration、路径。
 - [ ] 展示 timeline：shot 主时间轴、text cue、marker cue、实际 duration。
 - [ ] 展示 result：最终 MP4、used assets、warnings、artifact index。
-- [ ] 展示 warning：provider 缺失、降级到文字、时长差异、layout 风险等。
+- [ ] 展示 warnings：provider 缺失、降级、时长差异、style 缺失/降级。
+- [ ] 展示预计 vs 实际时长（消费 A3 估算器 + timeline）。
+- [ ] 吸收技术债：新 run 开始时失效旧 `result.json`（run id/status），避免失败路径留下混合 artifacts。
+- [ ] 吸收技术债：`manim_render_*` run-dir 生命周期策略（artifact index 索引 + 按策略清理）。
 
-验收标准：
+验收：人不用读原始 JSON 能看懂一次运行；输出可被未来 harness 直接读取；不要求编辑/审批 UI。
 
-- 人不用读原始 JSON 也能看懂将要渲染什么、实际用了哪些素材、最终产出了什么。
-- 这一阶段不要求完整编辑、审批、局部重跑 UI。
-- 输出结果可以被未来 harness 直接读取。
+### A5 Layout 提案机制
 
-已知技术债：
+目标：layout 从"模板选择"升级为"约束机制"。
 
-- [ ] 定义 run-dir 生命周期策略：`manim_render_*` 临时子目录可以保留用于 debug，但需要被 artifact index 索引或按策略清理；该策略应基于新 timeline/contract。
-- [x] final `result.json` 索引 base render MP4、render dir、render provider、plan、execution-assets 和 timeline。
-- [ ] 新 run 开始时显式标记 run id/status，或清理/失效旧 `result.json`，避免失败路径留下“新 plan/assets + 旧 result”的混合 artifacts。
+- [ ] `ScenePlan.layout_regions` 直接提案入口（与模板走同一套属性校验）。
+- [ ] 结构化 LayoutIssue：code + region + 数值差 + 修改建议，一次报全部问题。
+- [ ] 约束注册表（设计包可注册追加约束）。
+- [ ] 子构图 region 化：section header 左列堆叠改由模板子 region 表达。
+
+验收：非法提案得到可执行的结构化报错；现有模板路径行为不变。
+
+### A6 混合引擎（按 scene）
+
+目标：不同 scene 用不同渲染引擎；Remotion 作为第一个真实第二后端。
+
+- [ ] scene 级 `render_backend` 字段；要求的后端未注册时开渲前 fail fast。
+- [ ] 按 scene 分组分发：plan 切片 → 各后端 → N 段视频 + N 份局部 timeline。
+- [ ] 视频拼接（concat，编码参数一致）+ timeline 前缀和偏移合并 → 重过全局闸门。
+- [ ] 组边界状态策略：引擎切换即场景切换，渲染器内部跨 shot 状态（字幕堆叠/母题）清零。
+- [ ] Remotion 后端：同一渲染契约 + 自带 Realizer + 能力词汇声明（动效意图、母题 kind）。
+
+验收：混合 manim/remotion 的 plan 出一条成片；Remotion 通过全部闸门。
+
+### A7 内容槽位（按需阀门）
+
+识别归 infra（parser/schema/降级规则），表现归 pack。只在 B 系列包需要时激活。
+
+- [ ] parser 识别列表/加粗/引用 → 新 segment 类型；不支持的 pack 强制降级 + warning。
+- [ ] 表现语义（列表逐条浮现、金句、引用样式）由 pack 提供。
+
+验收：带列表/引用的 markdown 出片；不支持的 pack 干净降级。
+
+## Track B: 自研设计包
+
+目标：框架自带"开箱能看"的参考设计，并验证社区包路径。包 = 纯数据宣言（palette/typography/motion/motif 槽位），不含引擎代码；引擎与包正交，能力按名字引用。
+
+### B1 Reference Pack（与 A2 同一里程碑）
+
+- [ ] 现有 house style（黑底白字仿宋 + 圆点母题 + 现节奏常量）抽取为 `ink_night` pack。
+- [ ] 与 A2 联合验收：像素逐帧不变。
+
+### B2 知识口播 Pack
+
+- [ ] 节奏、字号梯度、母题、内容表现语义（列表逐条浮现、金句、引用）。
+- [ ] 需要 A7 槽位时按需触发。
+
+验收：一篇带列表/引用的知识 markdown 出"至少能看、不划走"的片。
+
+### B3（远期）第二套风格
+
+- [ ] 外部结构落地第二套 pack，验证"社区包与内置包零特权差别"。
+
+## 里程碑与依赖
+
+依赖链：**A1、A2.5 随时可做；A2 + B1 绑定落地 → A3（静默节奏来源 = pack motion token）→ A4（viewer，B2 调参受益）→ B2（按需触发 A7）→ A5 → A6**。breaking 迁移只有 A3 一次。
 
 ## Future: Harness / Agent Workflow Layer
 
 这些属于未来 harness/workflow，不应该混进当前 runtime 交付。
 
+前置条件：A4 viewer（LLM 反馈回路）、A5 提案机制（结构化报错）、LLM planner API 配置修复（当前 401）。
+
 - `md2video` Codex/Raft skill。
 - 视频任务上下文打包。
-- Agent 生成或编辑 `PlanManifest`，包括 `SegmentPlan.target_duration`、shot grouping、scene layout 和 shot cues。
-- Agent 选图、写 query、提出 layout 建议，但不能写自由像素坐标，也不能绕过 `LayoutTemplate`。
+- Agent 生成或编辑 `PlanManifest`：内容、shot grouping、scene layout/theme 选择、cue 与显式停顿（hold cue）。
+- Agent 选图、写 query、提出 layout 提案，但不能写自由像素坐标，也不能绕过约束校验。
 - Preview/review UI。
 - 人工替换图片、调整 layout、确认或驳回 shot。
 - 局部 shot 重生成。
@@ -372,13 +461,17 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 这些先保留为想法，等 runtime 稳定后再判断优先级。
 
-- Remotion backend：必须实现同一 renderer contract，并输出同结构 timeline。
+- Remotion backend：必须实现同一 renderer contract，并输出同结构 timeline（Track A6 的验收工程）。
 - AI image provider 插件：只能产出 execution-assets，不直接改 timeline。
 - AI video provider adapter：Runway / Kling / Sora 等，只能作为 visual assets/provider 接入。
 - AI 作曲或环境音效生成：放在 runtime contract 稳定之后。
 - 世界模型驱动视频。
 
 ## Maintenance
+
+Ops / config：
+
+- [ ] 修复 LLM planner API 配置（`.env` key 当前 401；Skill / LLM planner 生效前提）。
 
 Docs mismatch / consistency：
 
@@ -391,6 +484,7 @@ Docs mismatch / consistency：
 - [ ] 定期核对文档不再把 `ShotPlan.target_duration` 写成长期设计。
 - [ ] 定期核对文档不再把 marker 写成正文渲染路径。
 - [ ] 定期核对文档不再把 `timeline.shots` 写成可由 text/marker 反推。
+- [ ] 定期核对文档术语与实现一致：四本账、pack、Realizer、约束机制；target_duration 移除后清理全部文档残留。
 
 Test / cleanup：
 
@@ -403,5 +497,5 @@ Test / cleanup：
 - [x] 删除或重写旧 flat fallback 测试。
 - [x] 删除或重写依赖 `ShotPlan.target_duration` 的测试。
 - [x] 重写 marker-as-segment 的 renderer 测试为 marker-as-shot-cue。
-- [ ] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物。
-- [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确。
+- [ ] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物（并入 A4）。
+- [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确（并入 A1）。

@@ -44,6 +44,47 @@ Markdown source
 - Renderer 执行计划并产出真实时间线。
 - Assembler 不重新规划，只按 timeline 把素材对齐到最终视频。
 
+## 总体模型
+
+整个系统只有三类角色：**提案者**（用户 / LLM / 内置模板，平等无特权）、**裁判**（约束校验与解析）、**执行者**（确定性 tools）。四本账规定每个决定只住一个地方；四道闸门保证执行层交付合法。
+
+### 四本账
+
+- `plan`：内容与编排意图。不含时间，不含风格取值。
+- `pack`（设计包）：风格与节奏的单一事实源。用户直接改包（Hugo/Hexo 模板模型），不存在多来源自动合并。
+- 账本（`execution-assets.json` + `timeline.json`）：事实。素材、时长、时间线，谁产出谁发现，只进账本、不回流 plan。
+- 裁决：时长等歧义只允许唯一纯函数裁决（音频事实 > 显式 hold cue > pack 节奏默认）。
+
+### 四道闸门
+
+执行层的约束体系，也是未来任何新渲染后端的验收标准：
+
+1. layout 约束：几何合法（安全区、不重叠、最小尺寸）。
+2. style 校验：token 合法。
+3. 时间不变量：时序合法（shots 覆盖、有序、不重叠、cue 归属）。
+4. 渲染契约：交付合法（字段、文件存在；分辨率由 manim.cfg 声明，禁止质量旗标覆盖）。
+
+### 三条贯穿机制
+
+- 降级链：preferred_provider > 配置优先级表 > 降级并记 warning；显式本地素材缺失 fail fast。
+- 缓存合同：工具输出携带 cache_key，内容寻址缓存。
+- warnings 全程收集：降级、缺失、时长差异进 result.json，供检查页与未来 harness 展示。
+
+## 覆盖地图
+
+每条设计原则自带「已有实现（证据）」与「待补」，防止文档把未实现写成已完成。
+
+| 原则 | 已有实现（证据） | 待补 |
+|---|---|---|
+| 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实 | plan 去 target_duration；素材 duration 合同；跨 shot 有序/不重叠校验；时长估算器（仅容错决策与展示） |
+| 提案→裁判→交付（layout） | ComputedLayout 属性校验（安全区/不重叠）；注册表重复注册 fail-fast；mapping.py 双消费端共享 | regions 直接提案入口；结构化报错；子构图（左侧堆叠列）region 化；约束可注册追加 |
+| 风格声明化（style/pack） | 无——唯一从零开始的子系统 | ThemeTokens schema；每引擎 Realizer；reference pack（像素 smoke 逐帧不变验收）；母题=可换可无槽位 |
+| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key | duration 上报义务；渲染后端=tool（plan 切片、局部 timeline）；stock_video 幽灵配置清理 |
+| 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
+| plan 收敛 | scene 级 visual/layout 决策已在 | SegmentPlan 副本字段收拢（去 denormalize） |
+| 演进纪律 | segment_ids→shot 迁移 validator；破坏性变更一次切换先例 | plan 去时间按同模式执行 |
+| 质量策略 | 纯函数 helper 层（renderer 可无 manim 测试）；mock 外部服务；env-gated 像素 smoke | viewer 黄金文件测试 |
+
 ## 核心数据模型
 
 - `Segment`：内容原子，通常是一句话或一个标题。Markdown marker 可以作为 source event 被识别，但进入 renderer contract 前应 lower 到 shot cue/metadata。
@@ -57,7 +98,7 @@ Manifest 是 Planner、Tool、Renderer、Assembler 之间唯一的数据流。�
 Runtime contract 定义 planner、tools、renderer 和 assembler 对 Manifest 与 runtime artifacts 的共同理解。简言之：`plan.segments` 是内容字典，`scene.shots[].segment_ids` 决定执行顺序，segment/layout/render template 决定 duration 预算，renderer 输出的 `timeline.json` 是最终时间事实。
 
 - `Segment` 是内容原子，不自动等于显示单元、朗读单元和时间单元三合一。一个 segment 可以产生 audio cue、visual cue 或 animation cue，但这些 cue 不必拥有相同生命周期。
-- `Segment.target_duration` 是计划预算，不是最终事实。Shot 不拥有长期 duration budget；shot duration 应由内部 segment/cue 的实际执行结果聚合得出。
+- `Segment.target_duration` 是计划预算，不是最终事实；该字段为**待移除过渡态**（见「时长」）。Shot 不拥有长期 duration budget；shot duration 应由内部 segment/cue 的实际执行结果聚合得出。
 - `Shot` 是最小连续视觉单元，持有一组有序 `segment_ids`，并携带 marker / media / visual event cue metadata。
 - `Scene` 是共享视觉策略、素材策略和 layout/template 决策的 shot 组。scene 可以持有 `visual_type`、`layout_type` 和 `layout_params`，但不决定 segment 顺序。
 - Renderer 必须按 `plan.scenes -> scene.shots -> shot.segment_ids` 遍历。`PlanManifest.segments` 只作为按 id 查找的内容字典，不决定渲染顺序。
@@ -106,20 +147,26 @@ JSON input -> execution -> JSON output + artifact files
 
 Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可以建议 `preferred_provider`，但用户配置和工具优先级是兜底依据。
 
+工具的合同义务：
+
+- 产出会占用时间轴的素材，输出必须携带 duration（静态素材为 0）；输出必须携带 cache_key。
+- 时长归属唯一：音频=TTS、shot=渲染器、视频素材=素材工具 probe；其他模块不许断言时长。
+
+渲染后端是特殊的 tool：消费 plan 与 execution-assets，输出视频与同构 timeline。引擎与设计包正交（见 Style 与 Pack）；引擎声明自己支持的能力名（动效意图、母题 kind），不认识的槽位优雅降级 + warning。按 scene 混合多后端时，每个后端从 t=0 渲染自己的切片、产出局部 timeline，由管线做偏移合并后重过全局闸门。
+
 ## Visual 与 Layout
 
-项目应该拆开两个决定：
+项目拆开三个决定：
 
 - `visual_type`：用什么素材或工具，例如 text、stock image、local image、video；Manim 是 `render/manim` backend，不是 visual provider。
-- `layout_type`：这些素材、文字、字幕放在屏幕哪里。
+- `layout_type` / `layout_regions`：这些素材、文字、字幕放在屏幕哪里。
+- `theme`：长什么样、怎么动（见下一节 Style 与 Pack）。
 
-目标 layout 契约以 scene 决策和 renderer scheduling unit 携带为主；segment 不应该成为长期 layout 决策源。内置模板包括：
+**Layout 是约束机制，不是模板库。**提案者（内置模板 / LLM 直接提案 regions / 用户配置）地位平等，产出候选 region 集合，由同一套属性校验裁决：安全区包含、内容区不重叠、最小尺寸；设计包可注册追加约束。通过则 `ComputedLayout` 交付给 tools；拒绝则返回结构化错误（哪个 region、差多少、怎么改），供 LLM 自我修正。
 
-- `center_title_body`
-- `full_bleed_image_caption_bottom`
-- `image_top_text_bottom`
+子构图归 layout：例如小标题左侧堆叠的"列"由模板子 region 表达，渲染器只负责把内容装进 region；渲染器的自由度收敛为 region 内的动效（动效语义归 style）。
 
-Agent 只能从有限 layout template 和参数中选择，不应该自由摆像素。Layout 参数由模板自己的 Pydantic schema 校验；runtime 在执行 TTS、渲染和合成前先校验 `layout_type` / `layout_params`。
+当前内置提案器（`center_title_body` / `full_bleed_image_caption_bottom` / `image_top_text_bottom`）继续作为默认值与示例存在。Layout 参数由模板自己的 Pydantic schema 校验；runtime 在执行 TTS、渲染和合成前先完成 layout 解析与约束校验。
 
 Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费同一套 layout，两者对模板的理解来自同一组函数：
 
@@ -127,17 +174,39 @@ Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费�
 - Assembler 用 scene layout 的 `image` region 摆放 per-shot visual：Ken Burns cover 整个 region，静态 overlay contain 进 region；无 layout 契约的条目（如 Markdown marker 图片）保持 legacy 定位，因为 marker 时间区间可以跨 shot。
 - `timeline.json` 的 shots 条目记录 `layout_type`，供检查和未来 harness 使用。
 
+## Style 与 Pack
+
+风格是第四个声明维度，与引擎正交：
+
+- **pack 是纯数据宣言**：`ThemeTokens` = palette（底/字/次级/强调色）+ typography（字族 + 角色字号，归一化单位）+ motion（意图级动效 + 静默段节奏）+ motif（母题槽位：可换、可无、可自定义）。
+- **引擎自带 Realizer（翻译官）**：token → 引擎原生参数的唯一换算点。ManimRealizer 翻成 font/font_size/color/动画选择；未来 RemotionRealizer 翻成 CSS/React。宣言只有一份，翻译官每个引擎一个。
+- **能力按名字引用**：pack 写 `appear: typewriter`、`motif: orbit_dots` 这类名字；引擎声明自己支持哪些名字，不认识的槽位优雅降级 + warning。
+- **用户直接改包**（Hugo/Hexo 模板模型）：DIY 就是编辑包内容，无多来源合并问题。仓库自带一个 reference pack（现有 house style 抽取），结构上与社区包无特权差别。
+
+关键性质：`引擎代码量 = N 引擎 × (1 个 Realizer + K 个能力原语)`，不随模板和包的数量增长。加新 layout 模板或新 style 包都是纯数据注册，引擎零代码；只有引入全新能力（新母题 kind、新动效意图）时，想支持的引擎各补一个实现。
+
+边界：合成器 v0 不消费 style（底色字体烧在底片里）；Ken Burns 参数、音乐音量是 pipeline 配置，不进 pack。
+
 ## 渲染分辨率
 
 画面尺寸由 `md2video/tools/render/manim.cfg` 声明（竖屏 480x854 @30fps）。渲染 backend 不传 Manim 质量旗标：质量预设（如 `-ql`）会把分辨率覆盖成 16:9 横屏，破坏 layout 归一化坐标的前提。
 
 ## 时长
 
-目标契约是：计划时长属于 segment，shot 和 scene 时长是聚合值；最终事实属于 renderer timeline。
+目标契约：**plan 不含时间**。时间住在四个地方，plan 不在其中：
 
-- `Segment.target_duration` 是计划预算，不是最终事实。
+- 音频时长：TTS 工具发现，进 execution-assets（事实）。
+- shot 区间：渲染器发现，写 timeline（事实）。
+- 静默段节奏：来自设计包的 motion token（"这一类内容停几秒"是风格问题）。
+- 显式停顿：hold cue（创作意图的事件表达，未来入口）。
+
+判断标准：换个设计包它变不变？变 → 归 pack；不变且已发生 → 归事实；是创作决定 → 归 cue。
+
+`SegmentPlan.target_duration` 当前是**待移除的过渡态**：有声段实际由音频事实驱动，静默段实际由渲染器硬编码默认值驱动，该字段只剩回写缓存用途。移除按既定破坏性变更模式执行（迁移 validator + 一次切换）。
+
+裁决唯一：段时长 = 音频事实 > hold cue > pack 默认，全仓库只允许一处裁决函数。渲染前估算只服务容错决策与展示（配乐选择、总长告警），永不用于组合。
+
 - 有 `audio_request` 的 segment 由音频/voiceover 决定实际朗读时长，视觉显示可以跟随或覆盖，但不能截断语音。
-- 没有 `audio_request` 的 silent segment 仍需要 duration；它来自 segment target budget、layout/render template 默认值或显式动画预算。
 - marker 是 0 duration 时间点事件。
 - `timeline.json` 的 `shots[].start/end` 是 assembler 可信的最终时间事实。
 
