@@ -169,7 +169,7 @@ def test_load_manifests_does_not_fallback_to_result_json(tmp_path, monkeypatch):
 def test_title_layout_parts_main_only_is_centered():
     title = SegmentPlan(id="title", text="Title", segment_type="title_main")
 
-    parts = title_layout_parts(title, None)
+    parts = title_layout_parts(title, None, main_font_size=40, sub_font_size=30)
 
     assert len(parts) == 1
     assert parts[0].segment is title
@@ -180,7 +180,7 @@ def test_title_layout_parts_main_only_is_centered():
 def test_title_layout_parts_subtitle_only_is_centered():
     subtitle = SegmentPlan(id="subtitle", text="Subtitle", segment_type="title_sub")
 
-    parts = title_layout_parts(None, subtitle)
+    parts = title_layout_parts(None, subtitle, main_font_size=40, sub_font_size=30)
 
     assert len(parts) == 1
     assert parts[0].segment is subtitle
@@ -192,7 +192,7 @@ def test_title_layout_parts_main_and_subtitle_keep_stacked_layout():
     title = SegmentPlan(id="title", text="Title", segment_type="title_main")
     subtitle = SegmentPlan(id="subtitle", text="Subtitle", segment_type="title_sub")
 
-    parts = title_layout_parts(title, subtitle)
+    parts = title_layout_parts(title, subtitle, main_font_size=40, sub_font_size=30)
 
     assert [(part.segment.id, part.font_size, part.position) for part in parts] == [
         ("title", 40, (0.0, 1.0, 0.0)),

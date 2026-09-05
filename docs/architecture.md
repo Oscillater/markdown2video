@@ -76,10 +76,10 @@ Markdown source
 
 | 原则 | 已有实现（证据） | 待补 |
 |---|---|---|
-| 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实 | plan 去 target_duration；素材 duration 合同；跨 shot 有序/不重叠校验；时长估算器（仅容错决策与展示） |
+| 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警） | plan 去 target_duration；素材 duration 合同；时长估算器（仅容错决策与展示） |
 | 提案→裁判→交付（layout） | ComputedLayout 属性校验（安全区/不重叠）；注册表重复注册 fail-fast；mapping.py 双消费端共享 | regions 直接提案入口；结构化报错；子构图（左侧堆叠列）region 化；约束可注册追加 |
-| 风格声明化（style/pack） | 无——唯一从零开始的子系统 | ThemeTokens schema；每引擎 Realizer；reference pack（像素 smoke 逐帧不变验收）；母题=可换可无槽位 |
-| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key | duration 上报义务；渲染后端=tool（plan 切片、局部 timeline）；stock_video 幽灵配置清理 |
+| 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过） | 外部文件包加载落地（`register_pack` 接口已留） |
+| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5） | duration 上报义务；渲染后端=tool（plan 切片、局部 timeline） |
 | 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
 | plan 收敛 | scene 级 visual/layout 决策已在 | SegmentPlan 副本字段收拢（去 denormalize） |
 | 演进纪律 | segment_ids→shot 迁移 validator；破坏性变更一次切换先例 | plan 去时间按同模式执行 |
@@ -240,6 +240,8 @@ Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可�
 | 工具（契约、注册、缓存、TTS/图片/渲染实现） | `tools/protocol.py`、`tools/registry.py`、`tools/cache.py`、`tools/tts/`、`tools/image/`、`tools/render/manim_tool.py` | `test_tool_protocol.py`、`test_tool_registry.py`、`test_tool_cache.py`、`test_edge_tts.py`、`test_pexels_image_tool.py`、`test_local_image_tool.py`、`test_manim_tool.py` |
 | 编排（五步流水线、fail-fast、降级分发） | `core/pipeline.py` | `test_dispatch.py`、`test_pipeline_artifacts.py` |
 | 渲染（shot 级渲染、timeline 事实） | `tools/render/manim_renderer_inputs.py`（纯 helper）、`tools/render/manim_renderer.py`、`tools/render/timeline_builder.py`、`tools/render/manifest_loader.py`、`tools/render/cached_voice.py` | `test_manim_renderer_inputs.py`、`test_renderer_timeline_state.py`、`test_cached_voice.py` |
+| 时间不变量闸门（shots 覆盖/按序/不重叠、cue 归属、朗读差值告警） | `timeline/invariants.py` | `test_timeline_invariants.py` |
+| Style（ThemeTokens、pack 注册、ManimRealizer、母题注册表） | `style/schema.py`、`style/packs.py`、`style/manim_realizer.py`、`style/motifs.py` | `test_style_schema.py`、`test_style_manim_realizer.py`、`test_style_motifs.py` |
 | 合成（按时间事实混音、region 叠图） | `assembler/ffmpeg_assembler.py` | `test_ffmpeg_extractor.py`、`test_ken_burns.py` |
 | 配置（常量、.env 加载） | `config.py` | 随各层测试覆盖 |
 | 像素 smoke（端到端落位验证，默认跳过） | `tests/test_render_smoke.py` | `MD2VIDEO_RENDER_SMOKE=1` 触发 |

@@ -21,22 +21,18 @@ DEFAULT_VOICE = "zh-CN-YunxiNeural"
 DEFAULT_SPEED = 1.0
 
 # 布局常量
-RIGHT_X = 0.2
 DEFAULT_TEXT_POSITION = [0.2, 0, 0]
 IMAGE_TEXT_POSITION = [0.8, -0.75, 0]
 LEFT_X = -1.75
-DOTS_TRANSITION_TIME = 1.0
 MAX_CHARS_PER_LINE = 10
-DEFAULT_DOTS_OFFSET = [RIGHT_X, 0, 0]
-IMAGE_DOTS_OFFSET = [-0.5, 0, 0]
 
 SUBTITLE_START_Y = 1.0
 SCREEN_BOTTOM = -1.0
 SUBTITLE_SPACING = 0.1
 SUBTITLE_MAX_WIDTH = 3.0
 
-# 默认字体
-DEFAULT_FONT = "FZShuSong-Z01S"
+# 风格常量已退役：字族/字号/动效/母题迁入 md2video/style 的 ink_night 设计包，
+# 引擎换算只存在于 ManimRealizer（见 docs/architecture.md「Style 与 Pack」）。
 
 # 产物目录
 ARTIFACTS_DIR = Path("artifacts")

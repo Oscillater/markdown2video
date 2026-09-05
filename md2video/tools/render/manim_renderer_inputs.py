@@ -157,17 +157,24 @@ def title_layout_positions(
 def title_layout_parts(
     title_main: SegmentPlan | None,
     title_sub: SegmentPlan | None,
+    *,
+    main_font_size: int,
+    sub_font_size: int,
 ) -> list[TitleLayoutPart]:
-    """Return title card layout parts without importing Manim."""
+    """Return title card layout parts without importing Manim.
+
+    Font sizes come from the style pack via the caller's Realizer; this
+    helper only places the parts.
+    """
     if title_main and title_sub:
         return [
-            TitleLayoutPart(title_main, 40, (0.0, 1.0, 0.0)),
-            TitleLayoutPart(title_sub, 30, (0.0, -1.0, 0.0)),
+            TitleLayoutPart(title_main, main_font_size, (0.0, 1.0, 0.0)),
+            TitleLayoutPart(title_sub, sub_font_size, (0.0, -1.0, 0.0)),
         ]
     if title_main:
-        return [TitleLayoutPart(title_main, 40, (0.0, 0.0, 0.0))]
+        return [TitleLayoutPart(title_main, main_font_size, (0.0, 0.0, 0.0))]
     if title_sub:
-        return [TitleLayoutPart(title_sub, 30, (0.0, 0.0, 0.0))]
+        return [TitleLayoutPart(title_sub, sub_font_size, (0.0, 0.0, 0.0))]
     return []
 
 

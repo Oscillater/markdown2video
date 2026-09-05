@@ -329,30 +329,30 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 目标：把时间与配置的事实约束补成闸门。纯收紧，无 breaking。
 
-- [ ] 新增 `timeline/invariants.py` 纯函数检查器：shots 覆盖全部 plan shots、按序、两两不重叠、无负时长；text cue 落在所属 shot 区间；marker 落在所属 shot 边界；朗读段时长与音频事实差值告警。
-- [ ] 接入渲染后闸门（manim_tool 现有校验逻辑搬入，行为保持）。
-- [ ] 清理 `stock_video` 幽灵配置（`DEFAULT_TOOL_PRIORITY` 中已声明、无工具注册）。
-- [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确。
+- [x] 新增 `timeline/invariants.py` 纯函数检查器：shots 覆盖全部 plan shots、按序、两两不重叠、无负时长；text cue 落在所属 shot 区间；marker 落在所属 shot 边界；朗读段时长与音频事实差值告警。
+- [x] 接入渲染后闸门（manim_tool 现有校验逻辑搬入，行为保持）。
+- [x] 清理 `stock_video` 幽灵配置（`DEFAULT_TOOL_PRIORITY` 中已声明、无工具注册）。
+- [x] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确。
 
-验收：构造重叠/乱序/缺 cue 的 timeline 必须被拒且报错可定位；example 端到端不受影响。
+验收：构造重叠/乱序/缺 cue 的 timeline 必须被拒且报错可定位；example 端到端不受影响。✅（2026-09-06：闸门拒绝测试全绿；example 端到端两次运行 framemd5 逐帧全等）
 
 ### A2 Style Pack 机制
 
 目标：风格声明化——token 声明 + 每引擎一个 Realizer。与 B1 同一里程碑，互相验收。
 
-- [ ] `md2video/style/`：ThemeTokens schema（palette / typography 归一化字号 / motion 意图级 + 静默段节奏 / motif 槽位）。
-- [ ] pack 加载与 token 校验（v0 代码内置注册，外部文件加载留接口）。
-- [ ] ManimRealizer：token → 引擎参数的唯一换算点；动效意图映射；motif kind 注册表（orbit_dots 圆点代码从渲染器搬家至此）。
-- [ ] 渲染器切换为消费 token；风格常量退役（DEFAULT_FONT 等）。
-- [ ] 与 B1（reference pack）联合验收。
+- [x] `md2video/style/`：ThemeTokens schema（palette / typography 归一化字号 / motion 意图级 + 静默段节奏 / motif 槽位）。
+- [x] pack 加载与 token 校验（v0 代码内置注册，外部文件加载留接口）。
+- [x] ManimRealizer：token → 引擎参数的唯一换算点；动效意图映射；motif kind 注册表（orbit_dots 圆点代码从渲染器搬家至此）。
+- [x] 渲染器切换为消费 token；风格常量退役（DEFAULT_FONT 等）。
+- [x] 与 B1（reference pack）联合验收。
 
-验收：`MD2VIDEO_RENDER_SMOKE=1` 像素逐帧不变（抽取无损的硬标准）。
+验收：`MD2VIDEO_RENDER_SMOKE=1` 像素逐帧不变（抽取无损的硬标准）。✅（2026-09-06：smoke 计划前后渲染 framemd5 逐帧全等 + timeline 字节一致；example 端到端 framemd5 逐帧全等）
 
 ### A2.5 渲染后端去硬编码
 
-- [ ] render provider 从 plan/配置读取，替换 pipeline 中的 `"manim"` 硬编码与 provider 校验。
+- [x] render provider 从 plan/配置读取，替换 pipeline 中的 `"manim"` 硬编码与 provider 校验。
 
-验收：注册新后端后可整条切换，不改管线代码。
+验收：注册新后端后可整条切换，不改管线代码。✅（2026-09-06：`ToolConfig.render_backend` + `MD2VIDEO_RENDER_BACKEND`；切换测试全绿）
 
 ### A3 Plan Schema v2 + 时间合同
 
@@ -422,8 +422,8 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 ### B1 Reference Pack（与 A2 同一里程碑）
 
-- [ ] 现有 house style（黑底白字仿宋 + 圆点母题 + 现节奏常量）抽取为 `ink_night` pack。
-- [ ] 与 A2 联合验收：像素逐帧不变。
+- [x] 现有 house style（黑底白字仿宋 + 圆点母题 + 现节奏常量）抽取为 `ink_night` pack。
+- [x] 与 A2 联合验收：像素逐帧不变。✅（2026-09-06）
 
 ### B2 知识口播 Pack
 
@@ -498,4 +498,4 @@ Test / cleanup：
 - [x] 删除或重写依赖 `ShotPlan.target_duration` 的测试。
 - [x] 重写 marker-as-segment 的 renderer 测试为 marker-as-shot-cue。
 - [ ] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物（并入 A4）。
-- [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确（并入 A1）。
+- [x] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确（并入 A1）。
