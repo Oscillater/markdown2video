@@ -70,6 +70,7 @@ class Tool(Protocol):
                 "timeline_path": str,
                 "provider": str,
                 "render_dir": str,
+                "warnings": list[str],  # optional, timeline gate warnings
             }
         """
         ...

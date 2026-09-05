@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from md2video.manifest.schema import ExecutionAssets, PlanManifest
+from md2video.timeline.invariants import check_timeline
 from md2video.tools.render.manim_renderer_inputs import validate_renderer_inputs
 
 
@@ -104,7 +104,7 @@ class ManimRenderTool:
                 )
 
             print("  Render OK")
-            self._validate_timeline(timeline_path, render_start, plan_path)
+            warnings = self._validate_timeline(timeline_path, render_start, plan, assets)
 
             video_path = self._find_rendered_video(anim_dir)
             if not video_path:
@@ -115,6 +115,7 @@ class ManimRenderTool:
                 "timeline_path": str(timeline_path),
                 "provider": self.provider_name,
                 "render_dir": str(anim_dir),
+                "warnings": warnings,
             }
 
         finally:
@@ -135,7 +136,13 @@ class ManimRenderTool:
         return Path(cls._required_value(input_data, key))
 
     @staticmethod
-    def _validate_timeline(timeline_path: Path, render_start: float, plan_path: Path) -> None:
+    def _validate_timeline(
+        timeline_path: Path,
+        render_start: float,
+        plan: PlanManifest,
+        assets: ExecutionAssets,
+    ) -> list[str]:
+        """Run the timeline invariants gate; return collected warnings."""
         if not timeline_path.exists():
             raise FileNotFoundError(f"Timeline not generated: {timeline_path}")
         if timeline_path.stat().st_mtime < render_start - 1.0:
@@ -146,123 +153,15 @@ class ManimRenderTool:
         except Exception as exc:
             raise RuntimeError(f"Timeline is not valid JSON: {timeline_path}") from exc
 
-        required_keys = {"text", "markers", "shots"}
-        if not isinstance(data, dict) or not required_keys.issubset(data):
+        check = check_timeline(plan, assets, data)
+        if not check.ok:
             raise RuntimeError(
-                f"Timeline missing required keys {sorted(required_keys)}: {timeline_path}"
+                f"Timeline invariant violations in {timeline_path}: "
+                + " | ".join(check.errors)
             )
-
-        for key in required_keys:
-            if not isinstance(data[key], list):
-                raise RuntimeError(f"Timeline field must be a list: {key}")
-
-        plan = PlanManifest.model_validate_json(plan_path.read_text(encoding="utf-8"))
-        ManimRenderTool._validate_marker_timing(data["markers"], plan)
-
-        required_shots = {
-            shot.id: set(shot.segment_ids)
-            for scene in plan.scenes
-            for shot in scene.shots
-        }
-        if not required_shots:
-            return
-
-        timeline_shots: dict[str, set[str]] = {}
-        for item in data["shots"]:
-            if not isinstance(item, dict):
-                continue
-            shot_id = item.get("shot_id")
-            if not isinstance(shot_id, str) or not shot_id:
-                continue
-            segment_ids = item.get("segment_ids", [])
-            if not isinstance(segment_ids, list):
-                raise RuntimeError(
-                    f"Timeline shot field must be a list: segment_ids for {shot_id}"
-                )
-            if shot_id in required_shots:
-                ManimRenderTool._validate_shot_timing(item, shot_id)
-            timeline_shots.setdefault(shot_id, set()).update(
-                sid for sid in segment_ids if isinstance(sid, str)
-            )
-
-        missing_shots = sorted(set(required_shots) - set(timeline_shots))
-        if missing_shots:
-            raise RuntimeError(f"Timeline missing plan shots: {missing_shots}")
-
-        missing_segments = {
-            shot_id: sorted(required_segments - timeline_shots[shot_id])
-            for shot_id, required_segments in required_shots.items()
-            if required_segments - timeline_shots[shot_id]
-        }
-        if missing_segments:
-            details = "; ".join(
-                f"{shot_id}: {segment_ids}"
-                for shot_id, segment_ids in sorted(missing_segments.items())
-            )
-            raise RuntimeError(f"Timeline missing plan segments: {details}")
-
-    @staticmethod
-    def _validate_marker_timing(markers: list, plan: PlanManifest) -> None:
-        required_marker_ids = sorted(
-            str(cue.get("id", ""))
-            for scene in plan.scenes
-            for shot in scene.shots
-            for cue in shot.cues
-            if cue.get("cue_type") in ("marker_music", "marker_image")
-            and cue.get("id")
-        )
-        if not required_marker_ids:
-            return
-
-        markers_by_id: dict[str, dict] = {}
-        for marker in markers:
-            if not isinstance(marker, dict):
-                continue
-            marker_ids = (
-                marker.get("id"),
-                marker.get("segment_id"),
-            )
-            for marker_id in marker_ids:
-                if isinstance(marker_id, str) and marker_id in required_marker_ids:
-                    markers_by_id[marker_id] = marker
-
-        missing_markers = [
-            marker_id
-            for marker_id in required_marker_ids
-            if marker_id not in markers_by_id
-        ]
-        if missing_markers:
-            raise RuntimeError(f"Timeline missing marker entries: {missing_markers}")
-
-        invalid_times = []
-        for marker_id in required_marker_ids:
-            marker = markers_by_id[marker_id]
-            try:
-                marker_time = float(marker["time"])
-            except (KeyError, TypeError, ValueError):
-                invalid_times.append(marker_id)
-                continue
-            if not math.isfinite(marker_time):
-                invalid_times.append(marker_id)
-
-        if invalid_times:
-            raise RuntimeError(
-                f"Timeline marker time must be numeric and finite: {invalid_times}"
-            )
-
-    @staticmethod
-    def _validate_shot_timing(item: dict, shot_id: str) -> None:
-        if "start" not in item or "end" not in item:
-            raise RuntimeError(f"Timeline shot missing start/end: {shot_id}")
-        try:
-            start = float(item["start"])
-            end = float(item["end"])
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(f"Timeline shot start/end must be numeric: {shot_id}") from exc
-        if not math.isfinite(start) or not math.isfinite(end):
-            raise RuntimeError(f"Timeline shot start/end must be finite: {shot_id}")
-        if end < start:
-            raise RuntimeError(f"Timeline shot end before start: {shot_id}")
+        for warning in check.warnings:
+            print(f"  Timeline warning: {warning}")
+        return list(check.warnings)
 
     @staticmethod
     def _find_rendered_video(anim_dir: Path) -> Path | None:

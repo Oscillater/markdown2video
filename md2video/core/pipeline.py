@@ -181,6 +181,8 @@ class Pipeline:
             "timeout": 300,
         })
         video_path, timeline_path = self._validate_render_output(render_output, timeline_path)
+        render_warnings = render_output.get("warnings") or []
+        self._warnings.extend(str(warning) for warning in render_warnings)
         print(f"  Video: {video_path}")
 
         print("[4/5] Assembling final video...")
