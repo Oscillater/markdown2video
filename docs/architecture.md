@@ -119,7 +119,17 @@ Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可�
 - `full_bleed_image_caption_bottom`
 - `image_top_text_bottom`
 
-Agent 只能从有限 layout template 和参数中选择，不应该自由摆像素。Layout 参数由模板自己的 Pydantic schema 校验；runtime 在执行 TTS、渲染和合成前先校验 `layout_type` / `layout_params`。Phase 5.5 只保证 Manifest 契约、layout 计算和校验成立；Manim / FFmpeg 真正消费同一套 layout 是 Phase 6 的目标。
+Agent 只能从有限 layout template 和参数中选择，不应该自由摆像素。Layout 参数由模板自己的 Pydantic schema 校验；runtime 在执行 TTS、渲染和合成前先校验 `layout_type` / `layout_params`。
+
+Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费同一套 layout，两者对模板的理解来自同一组函数：
+
+- Renderer 用 `shot_layout_context` 把 shot 的模板解析成单位空间的 region 摆放：正文/字幕堆叠落在 body/text/caption region，标题卡片落在 title region，文本按 region 宽度约束缩放。
+- Assembler 用 scene layout 的 `image` region 摆放 per-shot visual：Ken Burns cover 整个 region，静态 overlay contain 进 region；无 layout 契约的条目（如 Markdown marker 图片）保持 legacy 定位，因为 marker 时间区间可以跨 shot。
+- `timeline.json` 的 shots 条目记录 `layout_type`，供检查和未来 harness 使用。
+
+## 渲染分辨率
+
+画面尺寸由 `md2video/tools/render/manim.cfg` 声明（竖屏 480x854 @30fps）。渲染 backend 不传 Manim 质量旗标：质量预设（如 `-ql`）会把分辨率覆盖成 16:9 横屏，破坏 layout 归一化坐标的前提。
 
 ## 时长
 
@@ -138,7 +148,7 @@ FFmpeg 是最终合成器。它消费 plan、execution assets 和 renderer timel
 - base video；
 - TTS audio；
 - background music；
-- per-shot visual overlay；
+- per-shot visual overlay（按 scene 的 LayoutTemplate image region 摆放，无 layout 契约的条目使用 legacy 定位）；
 - 支持后再处理 subtitles 或 markers。
 
 ## 底座与工作流

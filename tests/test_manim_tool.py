@@ -195,7 +195,6 @@ class TestManimRenderTool:
                     "execution_assets_path": str(assets_path),
                     "timeline_path": str(timeline_path),
                     "output_dir": str(output_dir),
-                    "quality": "ql",
                     "timeout": 123,
                 })
 
@@ -210,7 +209,9 @@ class TestManimRenderTool:
 
         cmd = run.call_args.args[0]
         assert cmd[:4] == [sys.executable, "-m", "manim", "render"]
-        assert "-ql" in cmd
+        # 分辨率来自 manim.cfg（竖屏 480x854），不允许质量旗标覆盖成 16:9
+        assert "-ql" not in cmd
+        assert "manifest_scene.py" in cmd
         assert run.call_args.kwargs["timeout"] == 123
 
         env = run.call_args.kwargs["env"]

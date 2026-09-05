@@ -33,12 +33,16 @@ class ManimRenderTool:
         return "manim"
 
     def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Run Manim with explicit manifest inputs and return rendered artifacts."""
+        """Run Manim with explicit manifest inputs and return rendered artifacts.
+
+        Frame dimensions and frame rate come from the copied manim.cfg
+        (portrait 480x854 @30fps); no quality flag is passed because quality
+        presets would override the declared resolution with a 16:9 canvas.
+        """
         plan_path = self._required_path(input_data, "plan_path")
         assets_path = self._required_path(input_data, "execution_assets_path")
         timeline_path = Path(self._required_value(input_data, "timeline_path"))
         output_dir = Path(input_data.get("output_dir", timeline_path.parent))
-        quality = str(input_data.get("quality", "ql"))
         timeout = int(input_data.get("timeout", 300))
 
         if not plan_path.exists():
@@ -63,10 +67,8 @@ class ManimRenderTool:
         shutil.copy2(self.manim_cfg_src, anim_cfg)
 
         try:
-            quality_flag = quality if quality.startswith("-") else f"-{quality}"
             cmd = [
                 sys.executable, "-m", "manim", "render",
-                quality_flag,
                 "manifest_scene.py", "ManifestDrivenScene",
             ]
             env = os.environ.copy()

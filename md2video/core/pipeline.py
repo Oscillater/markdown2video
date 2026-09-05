@@ -178,7 +178,6 @@ class Pipeline:
             "execution_assets_path": str(assets_path),
             "timeline_path": str(timeline_path),
             "output_dir": str(render_dir),
-            "quality": "ql",
             "timeout": 300,
         })
         video_path, timeline_path = self._validate_render_output(render_output, timeline_path)

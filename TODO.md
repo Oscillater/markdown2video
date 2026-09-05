@@ -56,8 +56,8 @@ future harness preview/review/partial rerun
 ## 当前状态
 
 - Phase 1-4 已完成。
-- 当前处在 Phase 6 进行中，6.1/6.2 已完成。
-- 最新验证：2026-08-21 运行 `python -m pytest -q`，结果是 `352 passed, 3 warnings`。
+- Phase 6 已完成：renderer contract cleanup 与 layout consumption 均已落地，像素级 smoke 验证通过。
+- 最新验证：2026-09-05 运行 `python -m pytest -q`，结果是 `374 passed, 1 skipped, 4 warnings`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的真实渲染像素 smoke（`tests/test_render_smoke.py`）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
 - 旧流程可以用 Markdown 显式图片标记 `[image_start]` / `[image_end]` 生成图片 overlay。
 - Phase 5 no-key 图片链路已有测试闭环：`LocalImageTool -> execution-assets.visual_assets -> timeline -> FFmpeg overlay`。
@@ -238,11 +238,11 @@ Phase 5.5 review guardrails：
 - [x] 文档不得把未实现模板写成已完成范围；当前内置模板只有 `center_title_body`、`full_bleed_image_caption_bottom`、`image_top_text_bottom`。
 - [x] Layout 参数不能接受“看似有效但当前不生效”的字段；caption 样式类参数留到 Phase 6 renderer 真正消费时再引入。
 - [x] `LayoutRegistry` 重复注册同一个 template id 时必须 fail fast，避免未来扩展时静默覆盖。
-- [ ] Phase 6 接入 renderer/assembler 后补截图或像素级 smoke，验证视频画面确实按 layout 摆放。
+- [x] Phase 6 接入 renderer/assembler 后补像素级 smoke，验证视频画面确实按 layout 摆放（`tests/test_render_smoke.py`，`MD2VIDEO_RENDER_SMOKE=1` 触发真实渲染 + 合成 + 取帧断言）。
 
 ## Phase 6: Renderer Closure
 
-状态：进行中，6.1/6.2 和 renderer contract cleanup 已完成；layout backend consumption 仍未完成。
+状态：已完成。renderer contract cleanup 与 layout consumption 均已落地并通过像素级 smoke。
 
 目标：完成新的 renderer contract，让渲染器消费和其他环节一致的 Segment + Shot + Layout + ExecutionAssets 模型，并把 renderer 输出的 timeline 变成 assembler 可直接信任的时间事实。
 
@@ -267,12 +267,13 @@ timeline.json
 
 Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration` 迁移到 Segment；`ShotPlan.target_duration` 删除；marker 不再作为可渲染 segment，而是在 planning/render scheduling 阶段 lower 成 shot cue/metadata；有 scenes/shots 的 plan 必须完整覆盖可渲染 segments，不再保留 flat fallback。
 
-当前不匹配的地方：
+当前状态：
 
-- renderer 已经按 shot render unit 执行，并显式写出 `timeline.shots`；但 Manim 视觉实现还没有真正消费 `LayoutTemplate`，只是携带 scene layout contract。
-- silent segment 已经使用 `SegmentPlan.target_duration` 或 result/audio duration；但 layout/render template 还没有参与默认时长决策。
-- FFmpeg visual overlay 已信任 `timeline.shots`，音乐/图片 marker 已从 shot cue timeline 提取；但 FFmpeg 图片/视频布局还没有消费同一套 `LayoutTemplate`。
-- renderer 已经通过标准 `render/manim` Tool backend 调用，并且只接受显式 `plan.json` / `execution-assets.json` / `timeline.json` 输入路径；剩余 Phase 6 重点是让 Manim/FFmpeg 共享 layout/render backend 契约。
+- `layout/mapping.py` 是 Manim 与 FFmpeg 共用的坐标换算层：normalized region -> 单位空间（渲染器）/ 像素空间（合成器），两边对同一模板的理解来自同一组函数。
+- Renderer 按 shot 用 `shot_layout_context` 解析 region：正文/字幕堆叠落在 body/text/caption region，标题卡片落在 title region，文本按 region 宽度约束缩放；没有 image region 的布局保留 marker 图片出现时的 legacy 文本让位。
+- FFmpeg per-shot visual 用 scene layout 的 `image` region 摆放：Ken Burns cover 整个 region，静态 overlay contain 进 region；`timeline.json` 的 shots 条目现在记录 `layout_type`。
+- Markdown marker 图片 overlay 保留 legacy 定位：marker 时间区间可跨 shot，不强行套单个 scene 模板。
+- 渲染分辨率修复：ManimRenderTool 不再传 Manim 质量旗标（`-ql` 会把 manim.cfg 声明的 480x854 竖屏覆盖成 854x480 横屏），分辨率/帧率由 manim.cfg 决定。
 
 已完成的过渡工作：
 
@@ -309,9 +310,9 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 - [x] Duration：voiceover segment 以音频/voiceover 为主；silent segment 使用 `SegmentPlan.target_duration` 或 layout/render template 默认。
 - [x] Renderer timeline：renderer 显式 open/close shot，直接写出 `timeline.json.shots[].start/end`。
 - [x] Renderer timeline：`timeline.text` 只表示可见文本 cue；`timeline.markers` 只表示事件 cue，不参与反推 shot。
-- [ ] 让 Manim 消费 `LayoutTemplate`。
-- [ ] 让 FFmpeg 图片/视频布局也消费同一套 layout 契约。
-- [ ] 把可复用 Manim 模板重新定义为 layout/render backend，而不是零散视觉效果。
+- [x] 让 Manim 消费 `LayoutTemplate`：`shot_layout_context` / `title_layout_positions`，region 内摆放 + 宽度约束。
+- [x] 让 FFmpeg 图片布局消费同一套 layout 契约：`attach_image_layout_regions` + region overlay（cover/contain）。
+- [x] 坐标换算收敛到共享 `layout/mapping.py`，Manim 与 FFmpeg 不再各自解释模板。
 
 验收标准：
 
@@ -324,7 +325,7 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 ## Phase 7: Runtime Inspectability
 
-状态：计划中。
+状态：计划中。前置条件已满足（Phase 6 renderer contract 与 layout consumption 已完成）。
 
 目标：让 runtime 的中间结果对人和未来 harness 可检查。
 
@@ -394,6 +395,8 @@ Docs mismatch / consistency：
 Test / cleanup：
 
 - [x] README 不再写固定测试数量；测试基线只保留在 TODO 的最新验证记录中。
+- [x] 补像素级 smoke：`MD2VIDEO_RENDER_SMOKE=1` 触发真实 Manim 渲染 + FFmpeg 合成，断言文字/图片按 layout region 落位（`tests/test_render_smoke.py`）。
+- [x] 修复渲染分辨率 bug：`-ql` 质量旗标覆盖 manim.cfg 的竖屏声明导致横屏输出。
 - [ ] 调查当前 pytest warnings，来源主要是 mock async TTS 调用和部分第三方 deprecation。
 - [x] 补测试：音频按 `segment_id` 绑定，不依赖 segment 列表顺序。
 - [x] 补测试：render 成功但未生成新 `timeline.json` 时 hard fail，不复用旧 timeline。
