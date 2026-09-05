@@ -79,7 +79,6 @@ def _write_stock_image_plan(tmp_path: Path) -> tuple[Path, Path]:
                 id="seg_001",
                 text="Local image manifest test.",
                 segment_type="content",
-                target_duration=2.0,
                 audio_request=None,
             ),
         ],

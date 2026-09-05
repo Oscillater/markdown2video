@@ -1,7 +1,10 @@
 """Tests for md2video.core.planner.rule_planner (Phase 2A)."""
 from __future__ import annotations
 
-from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
+import pytest
+from pydantic import ValidationError
+
+from md2video.core.planner.rule_planner import RulePlanner
 from md2video.manifest.schema import SegmentPlan, ShotPlan
 
 
@@ -76,40 +79,31 @@ class TestRulePlanner:
         assert all_ids == ["s1", "s2", "s3", "s4", "s5"]
 
     def test_explicit_segment_breaks_scene(self):
+        """explicit segment 独立成 scene；v2 起 visual/layout 决策在 scene 级，
+        segment 不再携带这些字段，singleton scene 使用默认值。"""
         segments = [
             _seg("s1", "内容A", "content", section_context="S1"),
-            _seg("s2", "特殊", "content", explicit=True,
-                 visual_type="stock_image", visual_params={"query": "test"}),
+            _seg("s2", "特殊", "content", explicit=True),
             _seg("s3", "内容B", "content", section_context="S1"),
         ]
         scenes = RulePlanner().plan(segments)
         assert len(scenes) == 3
-        assert scenes[1].visual_type == "stock_image"
-        assert scenes[1].visual_params == {"query": "test"}
+        assert scenes[1].visual_type == "text_only"
+        assert scenes[1].visual_params == {}
         assert scenes[1].layout_type == "center_title_body"
         assert scenes[1].shots[0].segment_ids == ["s2"]
 
-    def test_explicit_not_overridden(self):
-        segments = [
-            _seg("s1", "特殊", "content", explicit=True,
-                 visual_type="custom", visual_params={"key": "val"}),
-        ]
-        scenes = RulePlanner().plan(segments)
-        assert len(scenes) == 1
-        assert scenes[0].visual_type == "custom"
-
-    def test_explicit_layout_preserved(self):
-        segments = [
-            _seg(
-                "s1", "special", "content", explicit=True,
-                layout_type="image_top_text_bottom",
-                layout_params={"split": "image_focus"},
-            ),
-        ]
-        scenes = RulePlanner().plan(segments)
-        assert len(scenes) == 1
-        assert scenes[0].layout_type == "image_top_text_bottom"
-        assert scenes[0].layout_params == {"split": "image_focus"}
+    def test_segment_no_longer_carries_visual_or_time_fields(self):
+        """v2 一次切换：segment 级 target_duration / visual / layout 字段被移除。"""
+        with pytest.raises(ValidationError):
+            SegmentPlan(id="s1", text="x", segment_type="content",
+                        target_duration=2.0)
+        with pytest.raises(ValidationError):
+            SegmentPlan(id="s1", text="x", segment_type="content",
+                        visual_type="stock_image")
+        with pytest.raises(ValidationError):
+            SegmentPlan(id="s1", text="x", segment_type="content",
+                        layout_type="image_top_text_bottom")
 
     def test_empty_input(self):
         assert RulePlanner().plan([]) == []
@@ -231,49 +225,3 @@ class TestRulePlanner:
         scenes = RulePlanner().plan(segments)
         shot_ids = [shot.id for sc in scenes for shot in sc.shots]
         assert shot_ids == ["shot_001", "shot_002"]
-
-
-class TestDenormalize:
-    def test_copies_visual_to_segments(self):
-        from md2video.manifest.schema import ScenePlan
-        segments = [_seg("s1", "内容"), _seg("s2", "更多")]
-        scenes = [ScenePlan(
-            id="scene_001",
-            visual_type="stock_image",
-            visual_params={"query": "test"},
-            shots=[ShotPlan(id="shot_001", segment_ids=["s1", "s2"])],
-        )]
-        denormalize_scenes_to_segments(segments, scenes)
-        assert segments[0].visual_type == "stock_image"
-        assert segments[0].visual_params == {"query": "test"}
-        assert segments[0].layout_type == "center_title_body"
-        assert segments[0].layout_params == {}
-        assert segments[1].visual_type == "stock_image"
-
-    def test_copies_layout_to_segments(self):
-        from md2video.manifest.schema import ScenePlan
-        segments = [_seg("s1", "content"), _seg("s2", "more")]
-        scenes = [ScenePlan(
-            id="scene_001",
-            layout_type="image_top_text_bottom",
-            layout_params={"split": "text_focus"},
-            shots=[ShotPlan(id="shot_001", segment_ids=["s1", "s2"])],
-        )]
-        denormalize_scenes_to_segments(segments, scenes)
-        assert segments[0].layout_type == "image_top_text_bottom"
-        assert segments[0].layout_params == {"split": "text_focus"}
-        assert segments[1].layout_type == "image_top_text_bottom"
-
-    def test_explicit_not_overridden(self):
-        from md2video.manifest.schema import ScenePlan
-        explicit = _seg("s1", "特殊", explicit=True,
-                        visual_type="custom", visual_params={"k": "v"})
-        segments = [explicit]
-        scenes = [ScenePlan(
-            id="scene_001",
-            visual_type="text_only",
-            shots=[ShotPlan(id="shot_001", segment_ids=["s1"])],
-        )]
-        denormalize_scenes_to_segments(segments, scenes)
-        assert segments[0].visual_type == "custom"
-        assert segments[0].layout_type == "center_title_body"

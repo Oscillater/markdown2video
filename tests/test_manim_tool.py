@@ -23,7 +23,6 @@ def _write_render_inputs(tmp_path: Path, plan_data=None) -> tuple[Path, Path, Pa
             "id": "seg_001",
             "text": "hello",
             "segment_type": "content",
-            "target_duration": 1.0,
         }],
         "scenes": [{
             "id": "scene_001",
@@ -572,7 +571,6 @@ class TestManimRenderTool:
                         "id": "seg_001",
                         "text": "Body",
                         "segment_type": "content",
-                        "target_duration": 1.0,
                     },
                 ],
                 "scenes": [{

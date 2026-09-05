@@ -15,14 +15,18 @@ class AudioRequest(BaseModel):
 
 
 class SegmentPlan(BaseModel):
+    """内容原子：只描述内容与朗读意图。
+
+    plan 不含时间（时长是事实，谁产出谁发现），也不含 visual/layout
+    取值——那些决策在 scene 级。v1 的 target_duration 与 visual/layout
+    副本字段已在 v2 迁移中移除（见 md2video/manifest/migration.py）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     text: str
     segment_type: str  # title_main, title_sub, section_header, content, appendix, marker_music, marker_image
-    target_duration: float = 0.0
-    visual_type: str = "text_only"
-    visual_params: Dict = Field(default_factory=dict)
-    layout_type: str = DEFAULT_LAYOUT_TYPE
-    layout_params: Dict = Field(default_factory=dict)
     audio_request: Optional[AudioRequest] = None
     explicit: bool = False
     # 上下文信息
@@ -64,7 +68,7 @@ class ScenePlan(BaseModel):
 
 
 class PlanManifest(BaseModel):
-    version: str = "1"
+    version: str = "2"
     segments: List[SegmentPlan] = Field(default_factory=list)
     scenes: List[ScenePlan] = Field(default_factory=list)
     media_declarations: Dict[str, Dict[str, str]] = Field(default_factory=dict)
@@ -156,6 +160,8 @@ class VisualAsset(BaseModel):
     provider: str = "none"
     cache_key: str = ""
     source_url: str = ""
+    # duration 合同：会占用时间轴的素材由素材工具 probe 上报（静态图片为 0）
+    duration: float = 0.0
 
 
 class ExecutionAssets(BaseModel):
@@ -231,7 +237,9 @@ def result_manifest_from_execution_assets(
                 if sid in audio_by_segment:
                     duration = audio_by_segment[sid].duration
                 else:
-                    duration = segment_by_id[sid].target_duration
+                    # plan 不含时间：无音频事实的段在 result 里 0 时长，
+                    # 实际静默时长由渲染器按 pack 节奏发现并写进 timeline。
+                    duration = 0.0
                 segment_results_for_shot.append(
                     _assign_segment(sid, segment_time, segment_time + duration)
                 )

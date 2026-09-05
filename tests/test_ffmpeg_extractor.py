@@ -16,6 +16,7 @@ from md2video.assembler.ffmpeg_assembler import (
 )
 from md2video.config import KenBurnsConfig
 from md2video.manifest.schema import (
+    AudioAsset,
     AudioResult,
     ExecutionAssets,
     PlanManifest,
@@ -220,7 +221,7 @@ class TestExtractShotVisualEntries:
 
     def test_execution_assets_visual_collected(self):
         plan = PlanManifest(
-            segments=[SegmentPlan(id="s1", text="x", segment_type="content", target_duration=2.0)],
+            segments=[SegmentPlan(id="s1", text="x", segment_type="content")],
             scenes=[
                 ScenePlan(
                     id="scene_001",
@@ -230,6 +231,9 @@ class TestExtractShotVisualEntries:
             ],
         )
         assets = ExecutionAssets(
+            audio_assets=[
+                AudioAsset(segment_id="s1", path="/tts/s1.wav", duration=2.0),
+            ],
             visual_assets=[
                 VisualAsset(
                     shot_id="shot_001",
@@ -253,7 +257,7 @@ class TestExtractShotVisualEntries:
 
     def test_execution_assets_visual_uses_timeline_shot_timing(self, tmp_path):
         plan = PlanManifest(
-            segments=[SegmentPlan(id="s1", text="x", segment_type="content", target_duration=2.0)],
+            segments=[SegmentPlan(id="s1", text="x", segment_type="content")],
             scenes=[
                 ScenePlan(
                     id="scene_001",

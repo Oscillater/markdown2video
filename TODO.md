@@ -18,7 +18,7 @@ Runtime artifact 分层约定：
 
 ```text
 plan.json
-= 意图和目标约束：segments / scenes / shots / visual_type / visual_params / layout / segment target_duration
+= 意图和目标约束：segments / scenes / shots / visual_type / visual_params / layout（不含时间）
 
 execution-assets.json
 = 素材事实：TTS 音频路径、音频时长、图片路径、图片尺寸、provider、cache key
@@ -57,9 +57,10 @@ future harness preview/review/partial rerun
 
 - Phase 1-6 已完成：渲染契约 + layout consumption 落地，像素级 smoke 验证通过。
 - 设计共识定稿（2026-09-05）：四本账、四道闸门、双 track 路线。设计定义见 `docs/architecture.md`（「总体模型」「覆盖地图」）。
-- 最新验证：2026-09-05 运行 `python -m pytest -q`，结果是 `374 passed, 1 skipped, 4 warnings`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的真实渲染像素 smoke（`tests/test_render_smoke.py`）。
+- Track A 首批已落地（2026-09-06）：A1 时间不变量闸门 + A2.5 渲染后端去硬编码 + A2/B1 Style Pack（`ink_night`，像素逐帧不变验收）+ A3 Plan Schema v2（plan 不含时间，一次切换完成）。
+- 最新验证：2026-09-06 运行 `python -m pytest -q`，结果是 `484 passed, 1 skipped`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的真实渲染像素 smoke（`tests/test_render_smoke.py`）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
-- 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）；`stock_video` 幽灵配置待清理（A1）。
+- 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
 - 后续施工按 Track A / Track B 推进；原 Phase 7 计划并入 A4。
 
 ## Phase 1: 基础架构 - 已完成
@@ -358,14 +359,14 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 目标：plan 不含时间。**Breaking：是**（唯一一次 schema 破坏性迁移）。
 
-- [ ] 删除 `SegmentPlan.target_duration`；段时长裁决统一为：音频事实 > hold cue > pack 节奏。
-- [ ] 删除 `pipeline._fill_target_durations` 回写。
-- [ ] SegmentPlan 的 visual/layout 副本字段收拢到 scene 级（去 denormalize，与去时间同一次迁移）。
-- [ ] Tool Protocol + VisualAsset 增加 duration 合同（视频素材 probe 上报）。
-- [ ] 时长估算器纯函数（音频事实 + pack 节奏 + 转场开销常数）——只服务容错决策与展示，永不用于组合。
-- [ ] schema 迁移 validator + 一次切换；受影响测试同步改写。
+- [x] 删除 `SegmentPlan.target_duration`；段时长裁决统一为：音频事实 > hold cue > pack 节奏（v1 = 音频事实 > pack 节奏，hold cue 留概念位）。
+- [x] 删除 `pipeline._fill_target_durations` 回写。
+- [x] SegmentPlan 的 visual/layout 副本字段收拢到 scene 级（去 denormalize，与去时间同一次迁移）。
+- [x] Tool Protocol + VisualAsset 增加 duration 合同（视频素材 probe 上报）。
+- [x] 时长估算器纯函数（音频事实 + pack 节奏 + 转场开销常数）——只服务容错决策与展示，永不用于组合。
+- [x] schema 迁移 validator + 一次切换；受影响测试同步改写。
 
-验收：plan.json 无时长字段；example 端到端输出不变；估算器有单测。
+验收：plan.json 无时长字段；example 端到端输出不变；估算器有单测。✅（2026-09-06：example 端到端 framemd5 逐帧全等；plan.json 无时长字段；`timeline/estimate.py` 有单测）
 
 ### A4 Runtime Inspectability（原 Phase 7 全部内容）
 
@@ -484,7 +485,7 @@ Docs mismatch / consistency：
 - [ ] 定期核对文档不再把 `ShotPlan.target_duration` 写成长期设计。
 - [ ] 定期核对文档不再把 marker 写成正文渲染路径。
 - [ ] 定期核对文档不再把 `timeline.shots` 写成可由 text/marker 反推。
-- [ ] 定期核对文档术语与实现一致：四本账、pack、Realizer、约束机制；target_duration 移除后清理全部文档残留。
+- [x] 定期核对文档术语与实现一致：四本账、pack、Realizer、约束机制；target_duration 移除后清理全部文档残留。
 
 Test / cleanup：
 

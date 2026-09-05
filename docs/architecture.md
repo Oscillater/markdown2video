@@ -32,7 +32,7 @@ Markdown
 ```text
 Markdown source
   -> Content IR: Segment
-  -> Plan IR: Scene / Shot / layout / segment target duration budget
+  -> Plan IR: Scene / Shot / layout intent（不含时间）
   -> Scheduled Render IR: renderer 内部执行单元和 cue
   -> Runtime Facts: execution-assets.json + timeline.json
   -> Delivery: result.json + MP4
@@ -76,13 +76,13 @@ Markdown source
 
 | 原则 | 已有实现（证据） | 待补 |
 |---|---|---|
-| 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警） | plan 去 target_duration；素材 duration 合同；时长估算器（仅容错决策与展示） |
+| 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警）；plan 已去 target_duration（v2 迁移）；素材 duration 合同（VisualAsset.duration）；时长估算器（`timeline/estimate.py`，仅容错决策与展示） | hold cue 入口（概念位已留）；估算器消费方（A4 viewer） |
 | 提案→裁判→交付（layout） | ComputedLayout 属性校验（安全区/不重叠）；注册表重复注册 fail-fast；mapping.py 双消费端共享 | regions 直接提案入口；结构化报错；子构图（左侧堆叠列）region 化；约束可注册追加 |
 | 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过） | 外部文件包加载落地（`register_pack` 接口已留） |
-| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5） | duration 上报义务；渲染后端=tool（plan 切片、局部 timeline） |
+| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地 | 渲染后端=tool（plan 切片、局部 timeline） |
 | 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
-| plan 收敛 | scene 级 visual/layout 决策已在 | SegmentPlan 副本字段收拢（去 denormalize） |
-| 演进纪律 | segment_ids→shot 迁移 validator；破坏性变更一次切换先例 | plan 去时间按同模式执行 |
+| plan 收敛 | scene 级 visual/layout 决策已在；SegmentPlan 副本字段已收拢（v2 去 denormalize） | —— |
+| 演进纪律 | segment_ids→shot 迁移 validator；破坏性变更一次切换先例；plan 去时间已按同模式执行（`manifest/migration.py` + 一次切换） | —— |
 | 质量策略 | 纯函数 helper 层（renderer 可无 manim 测试）；mock 外部服务；env-gated 像素 smoke | viewer 黄金文件测试 |
 
 ## 核心数据模型
@@ -95,17 +95,17 @@ Manifest 是 Planner、Tool、Renderer、Assembler 之间唯一的数据流。�
 
 ## Runtime Contract
 
-Runtime contract 定义 planner、tools、renderer 和 assembler 对 Manifest 与 runtime artifacts 的共同理解。简言之：`plan.segments` 是内容字典，`scene.shots[].segment_ids` 决定执行顺序，segment/layout/render template 决定 duration 预算，renderer 输出的 `timeline.json` 是最终时间事实。
+Runtime contract 定义 planner、tools、renderer 和 assembler 对 Manifest 与 runtime artifacts 的共同理解。简言之：`plan.segments` 是内容字典，`scene.shots[].segment_ids` 决定执行顺序，静默段时长由 pack 节奏与音频事实决定（plan 不含时间），renderer 输出的 `timeline.json` 是最终时间事实。
 
 - `Segment` 是内容原子，不自动等于显示单元、朗读单元和时间单元三合一。一个 segment 可以产生 audio cue、visual cue 或 animation cue，但这些 cue 不必拥有相同生命周期。
-- `Segment.target_duration` 是计划预算，不是最终事实；该字段为**待移除过渡态**（见「时长」）。Shot 不拥有长期 duration budget；shot duration 应由内部 segment/cue 的实际执行结果聚合得出。
+- plan 不含时间（v2）：segment 不携带任何时长字段。静默段的时长由渲染器按 pack 节奏发现；shot duration 由内部 segment/cue 的实际执行结果聚合得出。
 - `Shot` 是最小连续视觉单元，持有一组有序 `segment_ids`，并携带 marker / media / visual event cue metadata。
 - `Scene` 是共享视觉策略、素材策略和 layout/template 决策的 shot 组。scene 可以持有 `visual_type`、`layout_type` 和 `layout_params`，但不决定 segment 顺序。
 - Renderer 必须按 `plan.scenes -> scene.shots -> shot.segment_ids` 遍历。`PlanManifest.segments` 只作为按 id 查找的内容字典，不决定渲染顺序。
 - 显示和朗读是分开的。`audio_request` 表示文本是否需要朗读；visual/layout/template 逻辑决定画面显示什么、显示多久。
 - `section_context` 只是 metadata，用来记录 segment 属于哪个 section。它不是并行显示文本，也不是并行朗读内容。若需要持续显示 section title，应由 layout/render template 显式表达，而不是从 `section_context` 推断。
 - Markdown marker 可以先被 parser 识别为事件，但进入 renderer/scheduling 层前必须 lowering 成 shot 上的 marker cue/metadata。marker 不作为正文 segment 渲染、不朗读、不消费 duration。
-- duration 分配不是全局固定规则，而是由 segment type 加 layout/render template 共同决定。有声 content 通常跟随 audio duration；静默可见 content/header 使用自身 target budget；marker 默认是 0 duration 的时间点事件；animation duration 必须计入 segment/shot 预算。
+- duration 分配不是全局固定规则，而是由 segment type 加设计包节奏共同决定。有声 content 通常跟随 audio duration；静默可见 content/header 使用 pack 静默节奏；marker 默认是 0 duration 的时间点事件；animation duration 必须计入 segment/shot 预算。
 - `timeline.json` 是 renderer 输出的最终时间事实。`shots` 是主时间轴，必须由 renderer 显式写出 `start/end`；`text` 是可见文本 cue；`markers` 是时间点事件 cue。
 - assembler 以 `timeline.json` 为时间源，但消费前必须校验它覆盖当前 plan 的 shots、可见文本 cue 和 marker cue。缺失、过期或不一致的 timeline 必须 fail fast。
 
@@ -113,7 +113,7 @@ Runtime contract 定义 planner、tools、renderer 和 assembler 对 Manifest �
 
 每次执行会产生四类主要 artifact：
 
-- `plan.json`：计划和目标约束，描述 segments、scenes、shots、visual intent、layout intent 和 segment target duration budget。
+- `plan.json`：计划和目标约束，描述 segments、scenes、shots、visual intent 和 layout intent；不含时间。
 - `execution-assets.json`：素材事实，记录 TTS 音频路径/时长、图片路径/尺寸、provider 和 cache key。
 - `timeline.json`：renderer 实际输出的时间事实；shots/text 使用 `start/end`，marker cue 使用 `time`。
 - `result.json`：最终交付摘要，只在 assemble 完成后写出，记录 output MP4、used assets、warnings 和 artifact index。
@@ -202,7 +202,7 @@ Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费�
 
 判断标准：换个设计包它变不变？变 → 归 pack；不变且已发生 → 归事实；是创作决定 → 归 cue。
 
-`SegmentPlan.target_duration` 当前是**待移除的过渡态**：有声段实际由音频事实驱动，静默段实际由渲染器硬编码默认值驱动，该字段只剩回写缓存用途。移除按既定破坏性变更模式执行（迁移 validator + 一次切换）。
+`SegmentPlan.target_duration` 已在 plan schema v2 迁移中移除（`manifest/migration.py`，一次切换）：有声段由音频事实驱动，静默段由设计包 motion token（`silent` 节奏）驱动。
 
 裁决唯一：段时长 = 音频事实 > hold cue > pack 默认，全仓库只允许一处裁决函数。渲染前估算只服务容错决策与展示（配乐选择、总长告警），永不用于组合。
 
@@ -235,12 +235,14 @@ Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可�
 | 入口（md / --plan 双入口） | `md2video/cli.py`、`md2video/__main__.py` | `test_pipeline_artifacts.py` |
 | 内容解析（segments + 声明/标记） | `parser/md_parser.py`、`parser/segmenter.py` | `test_md_parser.py`、`test_segmenter.py` |
 | 数据模型（Segment/Shot/Scene、assets/result） | `manifest/schema.py` | `test_schema.py` |
+| plan v1→v2 迁移（去时间、去副本字段） | `manifest/migration.py` | `test_manifest_migration.py` |
 | 规划（scenes/shots/cues，rule + llm） | `core/planner/rule_planner.py`、`core/planner/llm_planner.py` | `test_rule_planner.py`、`test_llm_planner.py` |
 | Layout（模板、注册表、共享坐标换算） | `layout/schema.py`、`layout/templates.py`、`layout/registry.py`、`layout/mapping.py` | `test_layout.py`、`test_layout_mapping.py` |
 | 工具（契约、注册、缓存、TTS/图片/渲染实现） | `tools/protocol.py`、`tools/registry.py`、`tools/cache.py`、`tools/tts/`、`tools/image/`、`tools/render/manim_tool.py` | `test_tool_protocol.py`、`test_tool_registry.py`、`test_tool_cache.py`、`test_edge_tts.py`、`test_pexels_image_tool.py`、`test_local_image_tool.py`、`test_manim_tool.py` |
 | 编排（五步流水线、fail-fast、降级分发） | `core/pipeline.py` | `test_dispatch.py`、`test_pipeline_artifacts.py` |
 | 渲染（shot 级渲染、timeline 事实） | `tools/render/manim_renderer_inputs.py`（纯 helper）、`tools/render/manim_renderer.py`、`tools/render/timeline_builder.py`、`tools/render/manifest_loader.py`、`tools/render/cached_voice.py` | `test_manim_renderer_inputs.py`、`test_renderer_timeline_state.py`、`test_cached_voice.py` |
 | 时间不变量闸门（shots 覆盖/按序/不重叠、cue 归属、朗读差值告警） | `timeline/invariants.py` | `test_timeline_invariants.py` |
+| 时长估算（音频事实 + pack 节奏 + 转场开销常数，仅容错/展示） | `timeline/estimate.py` | `test_timeline_estimate.py` |
 | Style（ThemeTokens、pack 注册、ManimRealizer、母题注册表） | `style/schema.py`、`style/packs.py`、`style/manim_realizer.py`、`style/motifs.py` | `test_style_schema.py`、`test_style_manim_realizer.py`、`test_style_motifs.py` |
 | 合成（按时间事实混音、region 叠图） | `assembler/ffmpeg_assembler.py` | `test_ffmpeg_extractor.py`、`test_ken_burns.py` |
 | 配置（常量、.env 加载） | `config.py` | 随各层测试覆盖 |

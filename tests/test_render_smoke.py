@@ -5,7 +5,11 @@
     MD2VIDEO_RENDER_SMOKE=1 python -m pytest tests/test_render_smoke.py -q
 
 验证 layout region 端到端生效：正文文字落在模板正文区域、per-shot 图片按
-模板 image 区域摆放（Ken Burns cover 与静态 contain 两条路径）。
+模板 image 区域摆放（Ken Burns cover 路径）。
+
+A3 起计划不含时间：静默段时长来自 pack 节奏（ink_night silent.body=2.0s），
+所以两个图片 shot 都 >1s，走 Ken Burns；静态 contain 路径的 timing 断言
+在 tests/test_overlay_timing.py 用真实 FFmpeg 覆盖。
 """
 from __future__ import annotations
 
@@ -48,24 +52,11 @@ def _build_plan(image_a: Path, image_b: Path) -> PlanManifest:
     return PlanManifest(
         segments=[
             SegmentPlan(id="title_main_001", text="布局冒烟测试", segment_type="title_main"),
-            SegmentPlan(
-                id="content_001", text="文字应该落在正文区域",
-                segment_type="content", target_duration=1.0,
-            ),
-            SegmentPlan(
-                id="content_002", text="上图下文 ken burns",
-                segment_type="content", target_duration=1.5, explicit=True,
-                visual_type="stock_image",
-                visual_params={"preferred_provider": "local", "path": str(image_a)},
-                layout_type="image_top_text_bottom",
-            ),
-            SegmentPlan(
-                id="content_003", text="上图下文静态",
-                segment_type="content", target_duration=0.8, explicit=True,
-                visual_type="stock_image",
-                visual_params={"preferred_provider": "local", "path": str(image_b)},
-                layout_type="image_top_text_bottom",
-            ),
+            SegmentPlan(id="content_001", text="文字应该落在正文区域", segment_type="content"),
+            SegmentPlan(id="content_002", text="上图下文 ken burns",
+                        segment_type="content", explicit=True),
+            SegmentPlan(id="content_003", text="上图下文 ken burns 二",
+                        segment_type="content", explicit=True),
         ],
         scenes=[
             ScenePlan(id="scene_001", shots=[ShotPlan(id="shot_001", segment_ids=["title_main_001"])]),
@@ -161,9 +152,10 @@ def test_render_smoke_places_text_and_images_by_layout(tmp_path):
     assert shots["shot_003"]["layout_type"] == "image_top_text_bottom"
     assert shots["shot_003"]["end"] > shots["shot_003"]["start"]
 
-    # 真实 shot 时长决定 overlay 路径：>1s 走 Ken Burns，<=1s 走静态 contain
+    # plan 不含时间：静默 body 段时长来自 pack 节奏（ink_night 2.0s），
+    # 都 >1s，因此两个图片 shot 都走 Ken Burns cover 路径
     assert shots["shot_003"]["end"] - shots["shot_003"]["start"] > 1.0
-    assert shots["shot_004"]["end"] - shots["shot_004"]["start"] <= 1.0
+    assert shots["shot_004"]["end"] - shots["shot_004"]["start"] > 1.0
 
     out_path = tmp_path / "output.mp4"
     result = result_manifest_from_execution_assets(plan, assets)
@@ -196,11 +188,11 @@ def test_render_smoke_places_text_and_images_by_layout(tmp_path):
     assert _near(frame_kb.getpixel((region["left"] + 20, region["top"] + 20)), (255, 0, 0)), \
         "KB region corner not red"
 
-    # 静态路径：图片 contain 进 image region，region 内边缘露出黑底
-    frame_static = _extract_frame(out_path, _shot_mid(shots, "shot_004"), tmp_path / "static.png")
-    assert _near(frame_static.getpixel((center_x, center_y)), (0, 0, 255)), \
-        f"static region center not blue: {frame_static.getpixel((center_x, center_y))}"
-    assert sum(frame_static.getpixel((region["left"] + 5, center_y))) < 120, \
-        "static overlay should not cover the whole region (contain expected)"
-    r, g, b = frame_static.getpixel((WIDTH // 2, 632))
+    # 第二个 Ken Burns：蓝色图片同样 cover 整个 region
+    frame_kb2 = _extract_frame(out_path, _shot_mid(shots, "shot_004"), tmp_path / "kb2.png")
+    assert _near(frame_kb2.getpixel((center_x, center_y)), (0, 0, 255)), \
+        f"KB region center not blue: {frame_kb2.getpixel((center_x, center_y))}"
+
+    # 图片不得泄漏进 text region
+    r, g, b = frame_kb2.getpixel((WIDTH // 2, 632))
     assert not _near((r, g, b), (0, 0, 255)), "image leaked into the text region"

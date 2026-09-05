@@ -21,10 +21,10 @@ from md2video.config import (
 )
 from md2video.core.planner.rule_planner import (
     RulePlanner,
-    denormalize_scenes_to_segments,
     renderable_segments,
 )
 from md2video.layout import create_default_layout_registry
+from md2video.manifest.migration import load_plan_manifest_json
 from md2video.manifest.schema import (
     AudioAsset,
     ExecutionAssets,
@@ -127,13 +127,14 @@ class Pipeline:
         plan = parse_to_plan_manifest(str(md_path))
         scenes = self.planner.plan(plan.segments)
         plan.segments = renderable_segments(plan.segments)
-        denormalize_scenes_to_segments(plan.segments, scenes)
         plan.scenes = scenes
         print(f"  Plan: {len(plan.segments)} segments, {len(scenes)} scenes")
         return plan
 
     def _load_plan_from_json(self, plan_path: Path) -> PlanManifest:
-        plan = PlanManifest.model_validate_json(plan_path.read_text(encoding="utf-8"))
+        plan, warnings = load_plan_manifest_json(plan_path.read_text(encoding="utf-8"))
+        for warning in warnings:
+            print(f"  Plan migration: {warning}")
         print(f"  Plan: {len(plan.segments)} segments, {len(plan.scenes)} scenes")
         return plan
 
@@ -151,10 +152,6 @@ class Pipeline:
 
         print("[2/5] Preparing execution assets...")
         assets = self._prepare_execution_assets(plan)
-        result = result_manifest_from_execution_assets(plan, assets)
-
-        self._fill_target_durations(plan.segments, result.segments)
-        plan_path = self._write_plan_manifest(plan)
         result = result_manifest_from_execution_assets(plan, assets)
 
         self._dispatch_visual_tools(
@@ -478,10 +475,6 @@ class Pipeline:
                 "shot": {
                     "id": shot_plan.id,
                     "segment_ids": shot_plan.segment_ids,
-                    "target_duration": sum(
-                        (seg_map[sid].target_duration if sid in seg_map else 0.0)
-                        for sid in shot_plan.segment_ids
-                    ),
                     "cues": shot_plan.cues,
                 },
                 "segments": segments_data,
@@ -532,24 +525,13 @@ class Pipeline:
             provider=visual_data.get("source", visual_data.get("provider", "none")),
             cache_key=visual_data.get("cache_key", ""),
             source_url=visual_data.get("source_url", ""),
+            duration=float(visual_data.get("duration", 0.0) or 0.0),
         )
         execution_assets.visual_assets = [
             existing for existing in execution_assets.visual_assets
             if existing.shot_id != shot_plan_id
         ]
         execution_assets.visual_assets.append(asset)
-
-    def _fill_target_durations(self, segment_plans, segment_results):
-        seg_map = {segment.id: segment for segment in segment_results}
-        for segment in segment_plans:
-            result = seg_map.get(segment.id)
-            if result is None:
-                continue
-            duration = result.end - result.start
-            if duration <= 0 and result.audio:
-                duration = result.audio.duration
-            if duration > 0 or segment.target_duration <= 0:
-                segment.target_duration = duration
 
     def _build_scene_results(self, scene_plans, segment_results):
         result_map = {segment.id: segment for segment in segment_results}

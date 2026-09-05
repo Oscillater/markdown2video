@@ -136,17 +136,14 @@ class RulePlanner:
             char_count = 0
 
         for seg in renderable_segments(segments):
-            # R6: explicit segments 独立成 scene
+            # R6: explicit segments 独立成 scene（visual/layout 决策在 scene 级，
+            # v2 起 segment 不再携带 visual/layout 字段，走默认值）
             if seg.explicit:
                 flush()
                 counter += 1
                 shot_counter += 1
                 scenes.append(ScenePlan(
                     id=f"scene_{counter:03d}",
-                    visual_type=seg.visual_type,
-                    visual_params=seg.visual_params,
-                    layout_type=seg.layout_type,
-                    layout_params=seg.layout_params,
                     section_context=seg.section_context,
                     shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[seg.id])],
                 ))
@@ -177,24 +174,3 @@ class RulePlanner:
 
         flush()
         return attach_marker_cues_to_shots(segments, scenes)
-
-
-def denormalize_scenes_to_segments(
-    segments: List[SegmentPlan], scenes: List[ScenePlan]
-) -> None:
-    """将 scene 的 visual_type/visual_params 复制到其包含的 non-explicit segments 上。"""
-    scene_map: dict[str, ScenePlan] = {}
-    for scene in scenes:
-        for shot in scene.shots:
-            for seg_id in shot.segment_ids:
-                scene_map[seg_id] = scene
-
-    for seg in segments:
-        if seg.explicit:
-            continue
-        scene = scene_map.get(seg.id)
-        if scene:
-            seg.visual_type = scene.visual_type
-            seg.visual_params = scene.visual_params
-            seg.layout_type = scene.layout_type
-            seg.layout_params = scene.layout_params

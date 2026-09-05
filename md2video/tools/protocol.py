@@ -29,9 +29,7 @@ class Tool(Protocol):
                 "scene": {"id": str, "visual_type": str, "visual_params": dict,
                           "layout_type": str, "layout_params": dict,
                           "section_context": str},
-                "shot":  {"id": str, "segment_ids": list[str],
-                           "target_duration": float,  # derived from segments
-                           "cues": list[dict]},
+                "shot":  {"id": str, "segment_ids": list[str], "cues": list[dict]},
                 "segments": [{"id": str, "text": str, "segment_type": str,
                               "audio": {"path": str, "duration": float} | None}],
                 "output_dir": str,
@@ -42,8 +40,11 @@ class Tool(Protocol):
 
             {
                 "visuals": [{"shot_id": str, "path": str, "width": int,
-                             "height": int, "source": str}]
+                             "height": int, "source": str, "duration": float}]
             }
+
+        duration 合同：会占用时间轴的素材由素材工具 probe 上报时长
+        （静态图片为 0），管线原样写进 execution-assets 的 VisualAsset。
 
         TTS tool (tool_type='tts') 输入契约::
 

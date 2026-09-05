@@ -289,7 +289,7 @@ class ManifestDrivenScene(VoiceoverScene):
         stype = seg.segment_type
 
         if stype == "section_header":
-            self._render_section_header(seg, render_segment, shot_unit, layout_ctx)
+            self._render_section_header(seg, shot_unit, layout_ctx)
             return
 
         if stype in ("content", "appendix"):
@@ -307,13 +307,12 @@ class ManifestDrivenScene(VoiceoverScene):
             if segment_uses_voiceover(seg):
                 with self._voiceover_segment(seg, line) as tracker:
                     self._apply_reveal(motion.body_reveal, sentence)
-                    self._wait_for_voiceover(tracker, seg, render_segment)
+                    self._wait_for_voiceover(tracker, seg)
             else:
                 self._apply_reveal(motion.body_reveal, sentence)
                 self.wait(self._segment_duration(
                     seg,
                     default=self._realizer.silent_pace("body"),
-                    render_segment=render_segment,
                 ))
             self._apply_dismiss(motion.body_dismiss, sentence)
             self._close_timeline_entry(timeline_index)
@@ -350,12 +349,11 @@ class ManifestDrivenScene(VoiceoverScene):
             return IMAGE_TEXT_POSITION, None
         return list(layout_ctx.body.center), layout_ctx.body.max_width
 
-    def _segment_duration(self, seg, default: float = 2.0, render_segment=None) -> float:
-        item = render_segment or getattr(self, "_render_segment_by_segment_id", {}).get(seg.id)
+    def _segment_duration(self, seg, default: float) -> float:
         result = getattr(self, "_segment_result_by_id", {}).get(seg.id)
-        return segment_render_duration(seg, result, item, default=default)
+        return segment_render_duration(seg, result, default=default)
 
-    def _voiceover_duration(self, tracker, seg, render_segment=None) -> float:
+    def _voiceover_duration(self, tracker, seg) -> float:
         tracker_duration = getattr(tracker, "duration", None)
         if tracker_duration is not None:
             try:
@@ -364,14 +362,14 @@ class ManifestDrivenScene(VoiceoverScene):
                 duration = 0.0
             if duration > 0:
                 return duration
-        return self._segment_duration(seg, default=0.0, render_segment=render_segment)
+        return self._segment_duration(seg, default=0.0)
 
-    def _wait_for_voiceover(self, tracker, seg, render_segment=None) -> None:
-        duration = self._voiceover_duration(tracker, seg, render_segment)
+    def _wait_for_voiceover(self, tracker, seg) -> None:
+        duration = self._voiceover_duration(tracker, seg)
         if duration > 0:
             self.wait(duration)
 
-    def _render_section_header(self, seg, render_segment=None, shot_unit=None, layout_ctx=None):
+    def _render_section_header(self, seg, shot_unit=None, layout_ctx=None):
         """渲染 section header（左侧字幕堆叠，约束在 body region 内）。"""
         timeline = self.timeline
         current_subtitles = self.current_subtitles
@@ -400,13 +398,12 @@ class ManifestDrivenScene(VoiceoverScene):
         if segment_uses_voiceover(seg):
             with self._voiceover_segment(seg, subtitle_text) as tracker:
                 self._apply_reveal(motion.section_reveal, subtitle)
-                self._wait_for_voiceover(tracker, seg, render_segment)
+                self._wait_for_voiceover(tracker, seg)
         else:
             self._apply_reveal(motion.section_reveal, subtitle)
             self.wait(self._segment_duration(
                 seg,
                 default=self._realizer.silent_pace("section_header"),
-                render_segment=render_segment,
             ))
         timeline_index = self._append_timeline_entry(
             seg,

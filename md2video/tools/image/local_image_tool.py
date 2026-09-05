@@ -40,6 +40,7 @@ class LocalImageTool:
                 "width": width,
                 "height": height,
                 "source": "local",
+                "duration": 0.0,
             }]
         }
 

@@ -101,13 +101,17 @@ def _make_base_video(path: Path) -> None:
     )
 
 
-def _extract_pixel(video: Path, t: float, out: Path) -> tuple[int, int, int]:
+def _extract_frame(video: Path, t: float, out: Path) -> Image.Image:
     subprocess.run(
         ["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video),
          "-frames:v", "1", str(out)],
         check=True, capture_output=True,
     )
-    return Image.open(out).convert("RGB").getpixel(CENTER)
+    return Image.open(out).convert("RGB")
+
+
+def _extract_pixel(video: Path, t: float, out: Path) -> tuple[int, int, int]:
+    return _extract_frame(video, t, out).getpixel(CENTER)
 
 
 def _is_red(pixel) -> bool:
@@ -163,3 +167,41 @@ def test_overlay_appears_only_inside_non_zero_window(tmp_path, kb_enabled):
 
     assert out_path.is_file()
     _assert_overlay_window(out_path, tmp_path, f"kb_{kb_enabled}")
+
+
+def test_static_contain_letterboxes_inside_region(tmp_path):
+    """静态 contain：竖版图 contain 进方形 region，左右露出黑底（letterbox）。"""
+    base_path = tmp_path / "base.mp4"
+    _make_base_video(base_path)
+    tall_image = tmp_path / "tall_red.png"
+    Image.new("RGB", (100, 200), (255, 0, 0)).save(tall_image)
+
+    entry = {
+        "name": "shot_003",
+        "src": str(tall_image),
+        "start": START,
+        "end": END,
+        "region_px": dict(REGION),
+    }
+
+    out_path = tmp_path / "out.mp4"
+    build_and_run_ffmpeg(
+        video_path=base_path,
+        music_segments=[],
+        image_segments=[entry],
+        base_has_audio=True,
+        out_path=out_path,
+        video_duration=3.5,
+        video_width=WIDTH,
+        video_height=HEIGHT,
+        ken_burns_config=KenBurnsConfig(enabled=False),
+    )
+
+    frame = _extract_frame(out_path, (START + END) / 2, tmp_path / "inside.png")
+    # 红图 contain 后宽 100，横向占据 x 150..250：(200, 400) 在图内
+    center = frame.getpixel((REGION["left"] + REGION["width"] // 2,
+                             REGION["top"] + REGION["height"] // 2))
+    assert _is_red(center), f"contain overlay missing at region center: {center}"
+    # (120, 400) 在 region 内但图片外，应为黑底 letterbox
+    edge = frame.getpixel((120, 400))
+    assert _is_black(edge), f"contain overlay should letterbox: {edge}"

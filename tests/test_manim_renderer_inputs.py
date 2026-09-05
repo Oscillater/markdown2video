@@ -378,7 +378,7 @@ def test_iter_shot_render_units_skips_title_but_keeps_same_shot_content():
     plan = PlanManifest(
         segments=[
             SegmentPlan(id="title", text="Title", segment_type="title_main"),
-            SegmentPlan(id="body", text="Body", segment_type="content", target_duration=3.0),
+            SegmentPlan(id="body", text="Body", segment_type="content"),
         ],
         scenes=[
             ScenePlan(
@@ -398,7 +398,7 @@ def test_iter_shot_render_units_skips_title_but_keeps_same_shot_content():
     assert [unit.segment_ids for unit in units] == [["body"]]
     assert units[0].scene_id == "scene_001"
     assert units[0].shot_id == "shot_001"
-    assert units[0].segments[0].target_duration == 3.0
+    assert units[0].segments[0].segment.id == "body"
 
 
 def test_iter_shot_render_units_carries_marker_cues_without_audio():
@@ -433,82 +433,30 @@ def test_iter_shot_render_units_carries_marker_cues_without_audio():
     validate_renderer_inputs(plan, ExecutionAssets())
 
 
-def test_segment_render_duration_uses_result_duration_before_shot_target():
-    segment = SegmentPlan(
-        id="seg_001",
-        text="silent",
-        segment_type="content",
-        target_duration=9.0,
-    )
-    plan = PlanManifest(
-        segments=[segment],
-        scenes=[
-            ScenePlan(
-                id="scene_001",
-                shots=[
-                    ShotPlan(id="shot_001", segment_ids=["seg_001"]),
-                ],
-            ),
-        ],
-    )
-    unit = next(iter(iter_shot_render_units(plan)))
+def test_segment_render_duration_uses_result_fact_before_default():
+    segment = SegmentPlan(id="seg_001", text="silent", segment_type="content")
     result = SegmentResult(id="seg_001", start=2.0, end=3.25)
 
-    assert segment_render_duration(segment, result, unit.segments[0], default=2.0) == 1.25
+    # 渲染执行事实优先于 pack 默认节奏
+    assert segment_render_duration(segment, result, default=2.0) == 1.25
 
 
-def test_segment_render_duration_uses_silent_header_and_content_targets():
-    header = SegmentPlan(
-        id="header",
-        text="Header",
-        segment_type="section_header",
-        target_duration=2.0,
-    )
-    content = SegmentPlan(
-        id="content",
-        text="Content",
-        segment_type="content",
-        target_duration=4.0,
-    )
-    plan = PlanManifest(
-        segments=[header, content],
-        scenes=[
-            ScenePlan(
-                id="scene_001",
-                shots=[
-                    ShotPlan(id="shot_001", segment_ids=["header", "content"]),
-                ],
-            ),
-        ],
-    )
-    units = list(iter_shot_render_units(plan))
+def test_segment_render_duration_falls_back_to_pack_pace_default():
+    header = SegmentPlan(id="header", text="Header", segment_type="section_header")
+    content = SegmentPlan(id="content", text="Content", segment_type="content")
 
-    assert [
-        segment_render_duration(item.segment, None, item, default=2.0)
-        for item in units[0].segments
-    ] == [2.0, 4.0]
+    # plan 不含时间：无事实时长时统一回落到调用方传入的 pack 节奏
+    assert segment_render_duration(header, None, default=0.5) == 0.5
+    assert segment_render_duration(content, None, default=2.0) == 2.0
 
 
-def test_segment_render_duration_keeps_voiceover_on_audio_result_not_shot_target():
+def test_segment_render_duration_keeps_voiceover_on_audio_fact():
     segment = SegmentPlan(
         id="seg_001",
         text="voiced",
         segment_type="content",
-        target_duration=9.0,
         audio_request=AudioRequest(),
     )
-    plan = PlanManifest(
-        segments=[segment],
-        scenes=[
-            ScenePlan(
-                id="scene_001",
-                shots=[
-                    ShotPlan(id="shot_001", segment_ids=["seg_001"]),
-                ],
-            ),
-        ],
-    )
-    unit = next(iter(iter_shot_render_units(plan)))
     result = SegmentResult(
         id="seg_001",
         audio=AudioResult(path="voice.wav", duration=1.5),
@@ -516,8 +464,8 @@ def test_segment_render_duration_keeps_voiceover_on_audio_result_not_shot_target
         end=1.5,
     )
 
-    assert segment_render_duration(segment, result, unit.segments[0], default=2.0) == 1.5
-    assert segment_render_duration(segment, None, unit.segments[0], default=0.0) == 0.0
+    assert segment_render_duration(segment, result, default=2.0) == 1.5
+    assert segment_render_duration(segment, None, default=0.0) == 0.0
 
 
 def test_iter_shot_render_units_carries_scene_layout_contract():

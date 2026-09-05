@@ -385,17 +385,14 @@ class LlmPlanner:
             if non_exp_ids:
                 scene_groups[mapping.scene_id].append(non_exp_ids)
 
-        # 3. 先输出 explicit singleton scenes（按原始顺序）
+        # 3. 先输出 explicit singleton scenes（按原始顺序）；
+        #    v2 起 segment 不携带 visual/layout 字段，singleton scene 用默认值
         explicit_order = {sid: i for i, (sid, _) in enumerate(explicit_entries)}
         for eid, eseg in sorted(explicit_entries, key=lambda x: explicit_order[x[0]]):
             scene_counter += 1
             shot_counter += 1
             scenes.append(ScenePlan(
                 id=f"scene_{scene_counter:03d}",
-                visual_type=eseg.visual_type,
-                visual_params=eseg.visual_params,
-                layout_type=eseg.layout_type,
-                layout_params=eseg.layout_params,
                 section_context=eseg.section_context,
                 shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[eid])],
             ))

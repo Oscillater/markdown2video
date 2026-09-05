@@ -71,6 +71,7 @@ class PexelsImageTool:
                 "source": "pexels",
                 "source_url": meta.get("source_url", ""),
                 "cache_key": cache_key,
+                "duration": 0.0,
             }
 
         # API search
@@ -112,4 +113,5 @@ class PexelsImageTool:
             "source": "pexels",
             "source_url": source_url,
             "cache_key": cache_key,
+            "duration": 0.0,
         }

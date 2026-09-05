@@ -10,7 +10,7 @@ class Planner(Protocol):
     def plan(self, segments: List[SegmentPlan]) -> List[ScenePlan]: ...
 
 
-from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
+from md2video.core.planner.rule_planner import RulePlanner
 
 # lazy import for LlmPlanner (requires pydantic-ai)
 def __getattr__(name):
@@ -26,6 +26,6 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
-    "Planner", "RulePlanner", "denormalize_scenes_to_segments",
+    "Planner", "RulePlanner",
     "LlmPlanner", "SceneTemplate", "BlueprintOutput", "ChunkMappingOutput",
 ]

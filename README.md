@@ -101,7 +101,7 @@ Markdown → Parser/Planner → Plan Manifest → Execution Assets → Manim Ren
 
 核心概念：
 
-- **Segment**：内容原子，通常是一句话或一个标题；持有朗读、显示、动画和 `target_duration` 等计划意图
+- **Segment**：内容原子，通常是一句话或一个标题；持有朗读与上下文意图，不含时长（plan 不含时间）
 - **Shot**：最小连续视觉执行单元，由有序 Segment 和 marker/media/visual cue 组成，并保持一段连续视觉状态
 - **Scene**：视觉策略组，共享素材策略、layout/template 和风格决策
 

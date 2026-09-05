@@ -71,7 +71,7 @@ class TestPexelsImageToolExecute:
             tool.execute({
                 "scene": {"id": "s1", "visual_type": "stock_image",
                           "visual_params": {"query": "nature"}, "section_context": ""},
-                "shot": {"id": "sh1", "segment_ids": [], "target_duration": 5.0},
+                "shot": {"id": "sh1", "segment_ids": []},
                 "segments": [],
                 "output_dir": str(tmp_path),
             })
@@ -82,7 +82,7 @@ class TestPexelsImageToolExecute:
         output = pexels_tool.execute({
             "scene": {"id": "s1", "visual_type": "stock_image",
                       "visual_params": {"query": "mountain"}, "section_context": "intro"},
-            "shot": {"id": "sh1", "segment_ids": ["seg_1"], "target_duration": 5.0},
+            "shot": {"id": "sh1", "segment_ids": ["seg_1"]},
             "segments": [{"id": "seg_1", "text": "A mountain", "segment_type": "content", "audio": None}],
             "output_dir": str(pexels_tool.cache_dir),
         })
@@ -107,7 +107,7 @@ class TestPexelsImageToolExecute:
             "scene": {"id": "s1", "visual_type": "stock_image",
                       "visual_params": {"query": "ocean", "orientation": "portrait"},
                       "section_context": ""},
-            "shot": {"id": "sh1", "segment_ids": [], "target_duration": 3.0},
+            "shot": {"id": "sh1", "segment_ids": []},
             "segments": [],
             "output_dir": str(pexels_tool.cache_dir),
         }
@@ -151,7 +151,7 @@ class TestPexelsImageToolExecute:
         pexels_tool.execute({
             "scene": {"id": "s1", "visual_type": "stock_image",
                       "visual_params": {"query": "city night"}, "section_context": ""},
-            "shot": {"id": "sh1", "segment_ids": [], "target_duration": 3.0},
+            "shot": {"id": "sh1", "segment_ids": []},
             "segments": [],
             "output_dir": str(pexels_tool.cache_dir),
         })
@@ -166,7 +166,7 @@ class TestPexelsImageToolExecute:
         pexels_tool.execute({
             "scene": {"id": "s1", "visual_type": "stock_image",
                       "visual_params": {"query": "forest"}, "section_context": ""},
-            "shot": {"id": "sh1", "segment_ids": [], "target_duration": 3.0},
+            "shot": {"id": "sh1", "segment_ids": []},
             "segments": [],
             "output_dir": str(pexels_tool.cache_dir),
         })
@@ -181,7 +181,7 @@ class TestPexelsImageToolExecute:
             "scene": {"id": "s1", "visual_type": "stock_image",
                       "visual_params": {"query": "sunset", "orientation": "landscape"},
                       "section_context": ""},
-            "shot": {"id": "sh1", "segment_ids": [], "target_duration": 3.0},
+            "shot": {"id": "sh1", "segment_ids": []},
             "segments": [],
             "output_dir": str(pexels_tool.cache_dir),
         })
@@ -203,7 +203,7 @@ class TestPexelsImageToolCache:
         pexels_tool.execute({
             "scene": {"id": "s1", "visual_type": "stock_image",
                       "visual_params": {"query": "cat"}, "section_context": ""},
-            "shot": {"id": "sh1", "segment_ids": [], "target_duration": 3.0},
+            "shot": {"id": "sh1", "segment_ids": []},
             "segments": [],
             "output_dir": str(pexels_tool.cache_dir),
         })

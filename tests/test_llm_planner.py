@@ -152,13 +152,11 @@ class TestReconcile:
         assert scenes[1].shots[0].id == "shot_003"
 
     def test_reconcile_explicit_preserved(self):
-        """explicit segment 被拆为 singleton scene，保留原 visual。"""
+        """explicit segment 被拆为 singleton scene；v2 起 segment 不携带
+        visual/layout 字段，singleton scene 使用默认值。"""
         segments = [
             _seg("s1", "普通", section="第一节"),
-            _seg("s2", "显式", section="第一节",
-                 explicit=True, visual_type="stock_image", visual_params={"query": "logo"},
-                 layout_type="full_bleed_image_caption_bottom",
-                 layout_params={"caption_size": "compact"}),
+            _seg("s2", "显式", section="第一节", explicit=True),
             _seg("s3", "普通2", section="第一节"),
         ]
         mappings = [
@@ -173,10 +171,9 @@ class TestReconcile:
             sid == "s2" for shot in sc.shots for sid in shot.segment_ids
         )]
         assert len(explicit) == 1
-        assert explicit[0].visual_type == "stock_image"
-        assert explicit[0].visual_params == {"query": "logo"}
-        assert explicit[0].layout_type == "full_bleed_image_caption_bottom"
-        assert explicit[0].layout_params == {"caption_size": "compact"}
+        assert explicit[0].visual_type == "text_only"
+        assert explicit[0].visual_params == {}
+        assert explicit[0].layout_type == "center_title_body"
 
     def test_reconcile_unknown_scene_raises(self):
         """scene_id 不在 registry 中时报错。"""

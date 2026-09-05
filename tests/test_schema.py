@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from pydantic import ValidationError
+
 from md2video.manifest.schema import (
     AudioAsset,
     AudioRequest,
@@ -46,32 +49,26 @@ class TestAudioRequest:
 class TestSegmentPlan:
     def test_defaults(self):
         seg = SegmentPlan(id="s1", text="x", segment_type="content")
-        assert seg.visual_type == "text_only"
-        assert seg.visual_params == {}
-        assert seg.layout_type == "center_title_body"
-        assert seg.layout_params == {}
-        assert seg.target_duration == 0.0
         assert seg.audio_request is None
         assert seg.explicit is False
         assert seg.section_context == ""
         assert seg.marker_data is None
 
-    def test_explicit_preserves_visual_type(self):
-        seg = SegmentPlan(
-            id="s1", text="x", segment_type="content",
-            explicit=True, visual_type="custom",
-        )
+    def test_explicit_flag(self):
+        seg = SegmentPlan(id="s1", text="x", segment_type="content", explicit=True)
         assert seg.explicit is True
-        assert seg.visual_type == "custom"
 
-    def test_custom_layout(self):
-        seg = SegmentPlan(
-            id="s1", text="x", segment_type="content",
-            layout_type="image_top_text_bottom",
-            layout_params={"split": "image_focus"},
-        )
-        assert seg.layout_type == "image_top_text_bottom"
-        assert seg.layout_params == {"split": "image_focus"}
+    def test_rejects_removed_v1_fields(self):
+        """v2 一次切换：plan 不含时间，visual/layout 决策收拢到 scene 级。"""
+        with pytest.raises(ValidationError):
+            SegmentPlan(id="s1", text="x", segment_type="content",
+                        target_duration=2.5)
+        with pytest.raises(ValidationError):
+            SegmentPlan(id="s1", text="x", segment_type="content",
+                        visual_type="custom")
+        with pytest.raises(ValidationError):
+            SegmentPlan(id="s1", text="x", segment_type="content",
+                        layout_type="image_top_text_bottom")
 
     def test_marker_data(self):
         seg = SegmentPlan(
@@ -79,10 +76,6 @@ class TestSegmentPlan:
             marker_data={"kind": "start", "name": "bgm"},
         )
         assert seg.marker_data == {"kind": "start", "name": "bgm"}
-
-    def test_target_duration(self):
-        seg = SegmentPlan(id="s1", text="x", segment_type="content", target_duration=2.5)
-        assert seg.target_duration == 2.5
 
     def test_any_segment_type_string_accepted(self):
         seg = SegmentPlan(id="s1", text="x", segment_type="invalid_type")
@@ -95,7 +88,7 @@ class TestSegmentPlan:
 class TestPlanManifest:
     def test_defaults(self):
         m = PlanManifest()
-        assert m.version == "1"
+        assert m.version == "2"
         assert m.segments == []
         assert m.media_declarations == {}
 
@@ -519,15 +512,12 @@ class TestExecutionAssets:
         assert result.scenes[0].shots[0].visual.path == "img.jpg"
         assert result.scenes[0].shots[0].visual.source == "local"
 
-    def test_result_manifest_adapter_uses_segment_target_duration_without_audio(self):
+    def test_result_manifest_adapter_gives_silent_segments_zero_duration(self):
+        """plan 不含时间：无音频事实的段在 result 里 0 时长，静默时长
+        由渲染器按 pack 节奏发现并写进 timeline。"""
         plan = PlanManifest(
             segments=[
-                SegmentPlan(
-                    id="seg_001",
-                    text="x",
-                    segment_type="content",
-                    target_duration=2.0,
-                )
+                SegmentPlan(id="seg_001", text="x", segment_type="content")
             ],
             scenes=[
                 ScenePlan(
@@ -540,19 +530,14 @@ class TestExecutionAssets:
 
         result = result_manifest_from_execution_assets(plan, ExecutionAssets())
         assert result.segments[0].start == 0.0
-        assert result.segments[0].end == 2.0
+        assert result.segments[0].end == 0.0
         assert result.scenes[0].shots[0].start == 0.0
-        assert result.scenes[0].shots[0].end == 2.0
+        assert result.scenes[0].shots[0].end == 0.0
 
     def test_result_manifest_adapter_keeps_silent_then_voiced_shots_monotonic(self):
         plan = PlanManifest(
             segments=[
-                SegmentPlan(
-                    id="seg_001",
-                    text="silent",
-                    segment_type="content",
-                    target_duration=2.0,
-                ),
+                SegmentPlan(id="seg_001", text="silent", segment_type="content"),
                 SegmentPlan(id="seg_002", text="voiced", segment_type="content"),
             ],
             scenes=[
@@ -576,14 +561,14 @@ class TestExecutionAssets:
 
         by_segment = {segment.id: segment for segment in result.segments}
         assert by_segment["seg_001"].start == 0.0
-        assert by_segment["seg_001"].end == 2.0
-        assert by_segment["seg_002"].start == 2.0
-        assert by_segment["seg_002"].end == 3.0
+        assert by_segment["seg_001"].end == 0.0
+        assert by_segment["seg_002"].start == 0.0
+        assert by_segment["seg_002"].end == 1.0
 
         assert result.scenes[0].shots[0].start == 0.0
-        assert result.scenes[0].shots[0].end == 2.0
-        assert result.scenes[1].shots[0].start == 2.0
-        assert result.scenes[1].shots[0].end == 3.0
+        assert result.scenes[0].shots[0].end == 0.0
+        assert result.scenes[1].shots[0].start == 0.0
+        assert result.scenes[1].shots[0].end == 1.0
 
 
 class TestFinalResultManifest:

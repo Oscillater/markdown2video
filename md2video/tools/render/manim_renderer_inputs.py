@@ -36,7 +36,6 @@ class TitleLayoutPart(NamedTuple):
 
 class RenderSegment(NamedTuple):
     segment: SegmentPlan
-    target_duration: float
 
 
 class ShotRenderUnit(NamedTuple):
@@ -215,7 +214,7 @@ def iter_shot_render_units(
                     )
                 if not include_title_segments and segment.segment_type in TITLE_SEGMENT_TYPES:
                     continue
-                render_segments.append(RenderSegment(segment, segment.target_duration))
+                render_segments.append(RenderSegment(segment))
 
             if not render_segments and not shot.cues:
                 continue
@@ -239,15 +238,13 @@ def iter_scene_render_segments(plan: PlanManifest) -> Iterable[SegmentPlan]:
 def segment_render_duration(
     segment: SegmentPlan,
     result: SegmentResult | None,
-    render_segment: RenderSegment | None = None,
     *,
     default: float,
 ) -> float:
     """Choose the visible duration for a rendered segment.
 
-    Renderer-produced or asset-derived timing wins. Silent timed segments can then
-    consume the segment target duration. Voiceover segments are driven by
-    manim-voiceover/audio playback instead of target budgets.
+    时间裁决 v1：音频事实优先（result 内的执行事实），否则调用方传入
+    的 pack 静默节奏 default。plan 不再携带时间。
     """
     if result is not None:
         result_duration = result.end - result.start
@@ -255,18 +252,6 @@ def segment_render_duration(
             return result_duration
         if result.audio and result.audio.duration > 0:
             return result.audio.duration
-
-    target_duration = (
-        render_segment.target_duration
-        if render_segment is not None
-        else segment.target_duration
-    )
-    if (
-        not segment_uses_voiceover(segment)
-        and segment_consumes_timeline_duration(segment)
-        and target_duration > 0
-    ):
-        return target_duration
 
     return default
 
@@ -290,20 +275,16 @@ def segment_uses_voiceover(segment: SegmentPlan) -> bool:
 
 
 def validate_renderer_visual_types(plan: PlanManifest) -> None:
-    """Reject visual_type values that name render backends, not visual providers."""
+    """Reject visual_type values that name render backends, not visual providers.
+
+    v2 起 visual_type 只在 scene 级声明。
+    """
     for scene in plan.scenes:
         if scene.visual_type in RENDER_BACKEND_ONLY_VISUAL_TYPES:
             raise ValueError(
                 "Unsupported visual_type for scene "
                 f"{scene.id}: {scene.visual_type}. "
                 f"{scene.visual_type} is a render backend, not a visual provider."
-            )
-    for segment in plan.segments:
-        if segment.visual_type in RENDER_BACKEND_ONLY_VISUAL_TYPES:
-            raise ValueError(
-                "Unsupported visual_type for segment "
-                f"{segment.id}: {segment.visual_type}. "
-                f"{segment.visual_type} is a render backend, not a visual provider."
             )
 
 

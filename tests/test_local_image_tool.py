@@ -22,7 +22,7 @@ def _make_input(visual_params, base_dir: Path):
             "visual_params": visual_params,
             "section_context": "demo",
         },
-        "shot": {"id": "shot_001", "segment_ids": ["seg_001"], "target_duration": 2.0},
+        "shot": {"id": "shot_001", "segment_ids": ["seg_001"]},
         "segments": [],
         "output_dir": str(base_dir),
         "base_dir": str(base_dir),
