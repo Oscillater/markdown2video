@@ -156,3 +156,21 @@ FFmpeg 是最终合成器。它消费 plan、execution assets 和 renderer timel
 Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可检查中间产物。
 
 未来 agent 工作流层可以在这个底座之上加入 Codex skill、预览/审核、局部重生成、eval、人工验收等能力。这一层不应该混进近期 runtime 任务。
+
+## 代码索引
+
+本文件讲契约与设计（why/what）；本节是从概念层到代码的索引（where）。改动模块布局时同步更新本表。
+
+| 概念层 | 实现 | 守着它的测试 |
+|---|---|---|
+| 入口（md / --plan 双入口） | `md2video/cli.py`、`md2video/__main__.py` | `test_pipeline_artifacts.py` |
+| 内容解析（segments + 声明/标记） | `parser/md_parser.py`、`parser/segmenter.py` | `test_md_parser.py`、`test_segmenter.py` |
+| 数据模型（Segment/Shot/Scene、assets/result） | `manifest/schema.py` | `test_schema.py` |
+| 规划（scenes/shots/cues，rule + llm） | `core/planner/rule_planner.py`、`core/planner/llm_planner.py` | `test_rule_planner.py`、`test_llm_planner.py` |
+| Layout（模板、注册表、共享坐标换算） | `layout/schema.py`、`layout/templates.py`、`layout/registry.py`、`layout/mapping.py` | `test_layout.py`、`test_layout_mapping.py` |
+| 工具（契约、注册、缓存、TTS/图片/渲染实现） | `tools/protocol.py`、`tools/registry.py`、`tools/cache.py`、`tools/tts/`、`tools/image/`、`tools/render/manim_tool.py` | `test_tool_protocol.py`、`test_tool_registry.py`、`test_tool_cache.py`、`test_edge_tts.py`、`test_pexels_image_tool.py`、`test_local_image_tool.py`、`test_manim_tool.py` |
+| 编排（五步流水线、fail-fast、降级分发） | `core/pipeline.py` | `test_dispatch.py`、`test_pipeline_artifacts.py` |
+| 渲染（shot 级渲染、timeline 事实） | `tools/render/manim_renderer_inputs.py`（纯 helper）、`tools/render/manim_renderer.py`、`tools/render/timeline_builder.py`、`tools/render/manifest_loader.py`、`tools/render/cached_voice.py` | `test_manim_renderer_inputs.py`、`test_renderer_timeline_state.py`、`test_cached_voice.py` |
+| 合成（按时间事实混音、region 叠图） | `assembler/ffmpeg_assembler.py` | `test_ffmpeg_extractor.py`、`test_ken_burns.py` |
+| 配置（常量、.env 加载） | `config.py` | 随各层测试覆盖 |
+| 像素 smoke（端到端落位验证，默认跳过） | `tests/test_render_smoke.py` | `MD2VIDEO_RENDER_SMOKE=1` 触发 |
