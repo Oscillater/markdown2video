@@ -23,10 +23,87 @@ from md2video.tools.render.manim_renderer_inputs import (
     iter_scene_render_segments,
     segment_render_duration,
     segment_uses_voiceover,
+    shot_layout_context,
     title_layout_parts,
+    title_layout_positions,
     validate_renderer_inputs,
     voiceover_segment_ids,
 )
+
+
+def _unit(layout_type: str, layout_params=None):
+    from md2video.tools.render.manim_renderer_inputs import ShotRenderUnit
+
+    return ShotRenderUnit(
+        scene_id="scene_001",
+        shot_id="shot_001",
+        segments=(),
+        cues=(),
+        layout_type=layout_type,
+        layout_params=dict(layout_params or {}),
+    )
+
+
+
+def test_shot_layout_context_center_title_body_places_body_region():
+    ctx = shot_layout_context(_unit("center_title_body"), 4.5, 8.0)
+
+    assert ctx.body is not None
+    assert ctx.body.name == "body"
+    assert ctx.body.center == pytest.approx((0.0, -0.96, 0.0))
+    assert ctx.body.max_width == pytest.approx(3.78)
+    assert ctx.has_image_region is False
+
+
+def test_shot_layout_context_image_top_text_bottom_uses_text_region():
+    ctx = shot_layout_context(
+        _unit("image_top_text_bottom", {"split": "balanced", "gap": "normal"}),
+        4.5,
+        8.0,
+    )
+
+    assert ctx.body is not None
+    assert ctx.body.name == "text"
+    # text box: y 0.54..0.94 -> center y units (0.5 - 0.74) * 8
+    assert ctx.body.center == pytest.approx((0.0, -1.92, 0.0))
+    assert ctx.body.max_height == pytest.approx(3.2)
+    assert ctx.has_image_region is True
+
+
+def test_shot_layout_context_full_bleed_uses_caption_region():
+    ctx = shot_layout_context(_unit("full_bleed_image_caption_bottom"), 4.5, 8.0)
+
+    assert ctx.body is not None
+    assert ctx.body.name == "caption"
+    assert ctx.has_image_region is True
+
+
+def test_shot_layout_context_unknown_layout_fails_fast():
+    with pytest.raises(ValueError, match="Unknown layout_type"):
+        shot_layout_context(_unit("does_not_exist"), 4.5, 8.0)
+
+
+def test_title_layout_positions_stack_inside_title_region():
+    positions = title_layout_positions(
+        create_default_layout_registry().compute("center_title_body", {}, 480, 854),
+        4.5,
+        8.0,
+    )
+
+    assert positions is not None
+    # title box: y 0.06..0.26 -> center y units 2.72, height 1.6
+    assert positions["main"] == pytest.approx((0.0, 3.12, 0.0))
+    assert positions["sub"] == pytest.approx((0.0, 2.32, 0.0))
+
+
+def test_title_layout_positions_none_without_title_region():
+    positions = title_layout_positions(
+        create_default_layout_registry().compute("full_bleed_image_caption_bottom", {}, 480, 854),
+        4.5,
+        8.0,
+    )
+
+    assert positions is None
 
 
 def test_load_manifests_from_explicit_env(tmp_path, monkeypatch):

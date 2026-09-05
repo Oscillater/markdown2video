@@ -22,10 +22,14 @@ from md2video.tools.render.timeline_builder import ShotTimelineWriter, TimelineW
 from md2video.tools.render.cached_voice import CachedVoiceService
 from md2video.tools.render.manim_renderer_inputs import (
     TITLE_SEGMENT_TYPES,
+    TitleLayoutPart,
+    compute_shot_layout,
     iter_shot_render_units,
     segment_render_duration,
     segment_uses_voiceover,
+    shot_layout_context,
     title_layout_parts,
+    title_layout_positions,
     voiceover_segment_ids,
 )
 from md2video.config import (
@@ -216,6 +220,7 @@ class ManifestDrivenScene(VoiceoverScene):
             "shot_id": shot_unit.shot_id,
             "scene_id": shot_unit.scene_id,
             "segment_ids": full_unit.segment_ids,
+            "layout_type": full_unit.layout_type,
             "start": start,
             "end": end,
         })
@@ -223,11 +228,12 @@ class ManifestDrivenScene(VoiceoverScene):
     def _render_shot_unit(self, shot_unit, dots_offset_tracker):
         """Render one continuous shot execution unit."""
         shot_start = self._shot_start_by_shot_id.pop(shot_unit.shot_id, self.time)
+        layout_ctx = shot_layout_context(shot_unit, config.frame_width, config.frame_height)
         self._process_cues(shot_unit, "start", dots_offset_tracker)
         for render_segment in shot_unit.segments:
             segment_id = render_segment.segment.id
             self._process_cues(shot_unit, "before", dots_offset_tracker, segment_id)
-            self._render_segment(render_segment, shot_unit, dots_offset_tracker)
+            self._render_segment(render_segment, shot_unit, dots_offset_tracker, layout_ctx)
             self._process_cues(shot_unit, "after", dots_offset_tracker, segment_id)
         self._process_cues(shot_unit, "end", dots_offset_tracker)
         self._append_shot_timeline_entry(shot_unit, shot_start, self.time)
@@ -270,13 +276,13 @@ class ManifestDrivenScene(VoiceoverScene):
         if cue_type == "marker_music":
             self.marker_timeline.append(self._marker_entry(cue, shot_unit))
 
-    def _render_segment(self, render_segment, shot_unit, dots_offset_tracker):
+    def _render_segment(self, render_segment, shot_unit, dots_offset_tracker, layout_ctx=None):
         """Render a single visible segment inside a shot."""
         seg = render_segment.segment
         stype = seg.segment_type
 
         if stype == "section_header":
-            self._render_section_header(seg, dots_offset_tracker, render_segment, shot_unit)
+            self._render_section_header(seg, dots_offset_tracker, render_segment, shot_unit, layout_ctx)
             return
 
         if stype in ("content", "appendix"):
@@ -285,8 +291,10 @@ class ManifestDrivenScene(VoiceoverScene):
                 [line[i:i + MAX_CHARS_PER_LINE] for i in range(0, len(line), MAX_CHARS_PER_LINE)]
             )
             start_t = self.time
-            text_position = IMAGE_TEXT_POSITION if self.is_image_active else DEFAULT_TEXT_POSITION
+            text_position, max_text_width = self._content_text_placement(layout_ctx)
             sentence = textWithFont(wrapped_line, font_size=15).move_to(text_position)
+            if max_text_width is not None and sentence.width > max_text_width:
+                sentence.scale(max_text_width / sentence.width)
             timeline_index = self._append_timeline_entry(seg, start_t, text=line, shot_unit=shot_unit)
             if segment_uses_voiceover(seg):
                 with self._voiceover_segment(seg, line) as tracker:
@@ -297,6 +305,22 @@ class ManifestDrivenScene(VoiceoverScene):
                 self.wait(self._segment_duration(seg, default=2.0, render_segment=render_segment))
             self.remove(sentence)
             self._close_timeline_entry(timeline_index)
+
+    def _content_text_placement(self, layout_ctx):
+        """Choose position and max width for a body sentence.
+
+        Text lives in the layout's body/text/caption region. Layouts without an
+        image region keep the legacy marker-image text shift; layouts that own
+        an image region keep text inside its region because the overlay stays
+        in the image region.
+        """
+        if layout_ctx is None or layout_ctx.body is None:
+            return (
+                IMAGE_TEXT_POSITION if self.is_image_active else DEFAULT_TEXT_POSITION
+            ), None
+        if self.is_image_active and not layout_ctx.has_image_region:
+            return IMAGE_TEXT_POSITION, None
+        return list(layout_ctx.body.center), layout_ctx.body.max_width
 
     def _segment_duration(self, seg, default: float = 2.0, render_segment=None) -> float:
         item = render_segment or getattr(self, "_render_segment_by_segment_id", {}).get(seg.id)
@@ -319,19 +343,31 @@ class ManifestDrivenScene(VoiceoverScene):
         if duration > 0:
             self.wait(duration)
 
-    def _render_section_header(self, seg, dots_offset_tracker, render_segment=None, shot_unit=None):
-        """渲染 section header（左侧字幕堆叠）。"""
+    def _render_section_header(self, seg, dots_offset_tracker, render_segment=None, shot_unit=None, layout_ctx=None):
+        """渲染 section header（左侧字幕堆叠，约束在 body region 内）。"""
         timeline = self.timeline
         current_subtitles = self.current_subtitles
         subtitle_heights = self.subtitle_heights
         spacing = SUBTITLE_SPACING
 
+        region = layout_ctx.body if layout_ctx is not None else None
+        if region is not None:
+            max_subtitle_width = min(SUBTITLE_MAX_WIDTH, region.max_width)
+            region_left = region.center[0] - region.max_width / 2
+            region_top = region.center[1] + region.max_height / 2
+            region_bottom = region.center[1] - region.max_height / 2
+        else:
+            max_subtitle_width = SUBTITLE_MAX_WIDTH
+            region_left = LEFT_X
+            region_top = SUBTITLE_START_Y
+            region_bottom = SCREEN_BOTTOM
+
         subtitle_text = seg.text
         start_t = self.time
-        subtitle = textWithFont(subtitle_text, font_size=20).move_to(DEFAULT_TEXT_POSITION)
-        if subtitle.width > SUBTITLE_MAX_WIDTH:
-            subtitle.scale(SUBTITLE_MAX_WIDTH / subtitle.width)
-
+        subtitle = textWithFont(subtitle_text, font_size=20)
+        if subtitle.width > max_subtitle_width:
+            subtitle.scale(max_subtitle_width / subtitle.width)
+        subtitle.move_to(region.center if region is not None else DEFAULT_TEXT_POSITION)
         if segment_uses_voiceover(seg):
             with self._voiceover_segment(seg, subtitle_text) as tracker:
                 self.play(Write(subtitle))
@@ -352,6 +388,8 @@ class ManifestDrivenScene(VoiceoverScene):
                 [subtitle_text[i:i + 5] for i in range(0, len(subtitle_text), 5)]
             )
             wrapped_subtitle = textWithFont(wrapped_text, font_size=12, line_spacing=0.5)
+            if wrapped_subtitle.width > max_subtitle_width:
+                wrapped_subtitle.scale(max_subtitle_width / wrapped_subtitle.width)
             wrapped_subtitle._md2video_timeline_index = timeline_index
             self.play(FadeOut(subtitle))
             subtitle = wrapped_subtitle
@@ -363,7 +401,7 @@ class ManifestDrivenScene(VoiceoverScene):
             last_bottom = last_subtitle.get_bottom()[1]
             new_y = last_bottom - subtitle_height - spacing
             new_bottom = new_y - subtitle_height / 2
-            if new_bottom < SCREEN_BOTTOM:
+            if new_bottom < region_bottom:
                 need_to_remove = True
 
         if need_to_remove and current_subtitles:
@@ -374,9 +412,9 @@ class ManifestDrivenScene(VoiceoverScene):
             if rem_timeline_index is not None:
                 self._close_timeline_entry(rem_timeline_index)
             animations = []
-            current_y = SUBTITLE_START_Y
+            current_y = region_top - current_subtitles[0].height / 2
             for s in current_subtitles:
-                animations.append(s.animate.move_to([LEFT_X, current_y, 0]))
+                animations.append(s.animate.move_to([region_left + s.width / 2, current_y, 0]))
                 current_y -= s.height + spacing
             if animations:
                 self.play(*animations, run_time=0.5)
@@ -385,15 +423,15 @@ class ManifestDrivenScene(VoiceoverScene):
             last_subtitle = current_subtitles[-1]
             new_y = last_subtitle.get_bottom()[1] - subtitle.height / 2 - spacing
         else:
-            new_y = SUBTITLE_START_Y
+            new_y = region_top - subtitle.height / 2
 
-        self.play(subtitle.animate.move_to([LEFT_X, new_y, 0]), run_time=1)
+        self.play(subtitle.animate.move_to([region_left + subtitle.width / 2, new_y, 0]), run_time=1)
         current_subtitles.append(subtitle)
         subtitle_heights.append(subtitle_height)
 
     def _render_title(self, title_seg, subtitle_seg, shot_unit=None):
         """渲染标题卡片。"""
-        title_parts = title_layout_parts(title_seg, subtitle_seg)
+        title_parts = self._title_parts_for_unit(title_seg, subtitle_seg, shot_unit)
 
         if not title_parts:
             self._title_mobjects = []
@@ -420,6 +458,22 @@ class ManifestDrivenScene(VoiceoverScene):
         self.play(*animations)
         self.wait(1)
         self._title_mobjects = title_mobjects
+
+    def _title_parts_for_unit(self, title_seg, subtitle_seg, shot_unit):
+        """Title card parts, placed inside the layout title region when present."""
+        if title_seg is None and subtitle_seg is None:
+            return []
+        if shot_unit is not None:
+            computed = compute_shot_layout(shot_unit)
+            positions = title_layout_positions(computed, config.frame_width, config.frame_height)
+            if positions is not None:
+                parts = []
+                if title_seg is not None:
+                    parts.append(TitleLayoutPart(title_seg, 40, positions["main"]))
+                if subtitle_seg is not None:
+                    parts.append(TitleLayoutPart(subtitle_seg, 30, positions["sub"]))
+                return parts
+        return title_layout_parts(title_seg, subtitle_seg)
 
     def _setup_dot_animation(self, title_main_seg, title_sub_seg):
         """设置点动画并返回 (dots_offset_tracker, dot1, dot2, t_tracker)。"""

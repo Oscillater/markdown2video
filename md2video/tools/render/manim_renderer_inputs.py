@@ -3,8 +3,15 @@ from __future__ import annotations
 
 from typing import Any, Iterable, NamedTuple
 
-from md2video.config import RENDER_BACKEND_ONLY_VISUAL_TYPES
+from md2video.config import (
+    MANIM_HEIGHT,
+    MANIM_WIDTH,
+    RENDER_BACKEND_ONLY_VISUAL_TYPES,
+)
 from md2video.core.planner.rule_planner import MARKER_SEGMENT_TYPES
+from md2video.layout.mapping import box_center_units, box_size_units
+from md2video.layout.registry import LayoutRegistry, create_default_layout_registry
+from md2video.layout.schema import ComputedLayout
 from md2video.manifest.schema import (
     ExecutionAssets,
     PlanManifest,
@@ -15,6 +22,10 @@ from md2video.manifest.schema import (
 
 TITLE_SEGMENT_TYPES = {"title_main", "title_sub"}
 TIMED_SEGMENT_TYPES = {"section_header", "content", "appendix"}
+
+# Renderer-side mapping from content kinds to ComputedLayout region names.
+TITLE_REGION_PREFERENCE = ("title", "body", "text", "caption")
+BODY_REGION_PREFERENCE = ("body", "text", "caption")
 
 
 class TitleLayoutPart(NamedTuple):
@@ -39,6 +50,108 @@ class ShotRenderUnit(NamedTuple):
     @property
     def segment_ids(self) -> list[str]:
         return [item.segment.id for item in self.segments]
+
+
+class RegionPlacement(NamedTuple):
+    """A layout region resolved into center-origin, y-up unit space."""
+
+    name: str
+    center: tuple[float, float, float]
+    max_width: float
+    max_height: float
+
+
+class ShotLayoutContext(NamedTuple):
+    """Renderer-facing view of one shot's layout contract."""
+
+    body: RegionPlacement | None
+    has_image_region: bool
+
+
+def compute_shot_layout(
+    unit: ShotRenderUnit,
+    frame_width_px: int = MANIM_WIDTH,
+    frame_height_px: int = MANIM_HEIGHT,
+    registry: LayoutRegistry | None = None,
+) -> ComputedLayout:
+    """Compute the shot's layout regions; unknown layouts fail fast.
+
+    The ComputedLayout records template metadata in reference pixels; region
+    boxes stay normalized and are mapped to unit space by the callers.
+    """
+    active_registry = registry or create_default_layout_registry()
+    return active_registry.compute(unit.layout_type, unit.layout_params, frame_width_px, frame_height_px)
+
+
+def resolve_region_name(computed_layout: ComputedLayout, preference: Iterable[str]) -> str | None:
+    """Return the first region name from the preference that the layout defines."""
+    for name in preference:
+        if name in computed_layout.regions:
+            return name
+    return None
+
+
+def region_placement(
+    computed_layout: ComputedLayout,
+    name: str,
+    frame_width: float,
+    frame_height: float,
+) -> RegionPlacement:
+    box = computed_layout.region(name)
+    center_x, center_y = box_center_units(box, frame_width, frame_height)
+    width, height = box_size_units(box, frame_width, frame_height)
+    return RegionPlacement(
+        name=name,
+        center=(center_x, center_y, 0.0),
+        max_width=width,
+        max_height=height,
+    )
+
+
+def body_region_placement(
+    computed_layout: ComputedLayout,
+    frame_width: float,
+    frame_height: float,
+) -> RegionPlacement | None:
+    name = resolve_region_name(computed_layout, BODY_REGION_PREFERENCE)
+    if name is None:
+        return None
+    return region_placement(computed_layout, name, frame_width, frame_height)
+
+
+def shot_layout_context(
+    unit: ShotRenderUnit,
+    frame_width: float,
+    frame_height: float,
+    registry: LayoutRegistry | None = None,
+) -> ShotLayoutContext:
+    computed = compute_shot_layout(unit, registry=registry)
+    return ShotLayoutContext(
+        body=body_region_placement(computed, frame_width, frame_height),
+        has_image_region="image" in computed.regions,
+    )
+
+
+def title_layout_positions(
+    computed_layout: ComputedLayout,
+    frame_width: float,
+    frame_height: float,
+) -> dict[str, tuple[float, float, float]] | None:
+    """Positions for the title card derived from the layout's title region.
+
+    Returns None when the layout has no title region, so callers can fall back
+    to the legacy title card positions. With both title parts present they are
+    stacked inside the region; a single part is centered in the region.
+    """
+    if "title" not in computed_layout.regions:
+        return None
+    box = computed_layout.region("title")
+    center_x, center_y = box_center_units(box, frame_width, frame_height)
+    _, height = box_size_units(box, frame_width, frame_height)
+    return {
+        "main": (center_x, center_y + height / 4, 0.0),
+        "sub": (center_x, center_y - height / 4, 0.0),
+    }
 
 
 def title_layout_parts(
