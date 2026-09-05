@@ -60,7 +60,6 @@ class Tool(Protocol):
                 "execution_assets_path": str,
                 "timeline_path": str,
                 "output_dir": str,
-                "quality": str,   # e.g. "ql"
                 "timeout": int,
             }
 
