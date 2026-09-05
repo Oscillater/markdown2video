@@ -83,10 +83,16 @@ RENDER_BACKEND_ONLY_VISUAL_TYPES = {"manim"}
 
 @dataclass
 class ToolConfig:
-    """工具注册与优先级配置。"""
+    """工具注册与优先级配置。
+
+    render_backend 是渲染后端（tool_type='render'）的 provider 名：
+    管线按它查找渲染工具并校验返回的 provider。新后端注册进 registry
+    后改这一项即可整条切换，管线代码不变。
+    """
     priority: dict[str, list[str]] = field(
         default_factory=lambda: dict(DEFAULT_TOOL_PRIORITY)
     )
+    render_backend: str = "manim"
 
     def get_priority(self, visual_type: str) -> list[str]:
         return self.priority.get(visual_type, ["_text_only"])
@@ -96,8 +102,10 @@ class ToolConfig:
 
 
 def load_tool_config() -> ToolConfig:
-    """加载工具配置（未来可从 config.yaml 读取）。"""
-    return ToolConfig()
+    """加载工具配置（优先级未来可从 config.yaml 读取）。"""
+    return ToolConfig(
+        render_backend=os.environ.get("MD2VIDEO_RENDER_BACKEND", "manim"),
+    )
 
 
 # ==================== Pexels 配置 ====================

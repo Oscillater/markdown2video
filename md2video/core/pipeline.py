@@ -169,9 +169,12 @@ class Pipeline:
         result = result_manifest_from_execution_assets(plan, assets)
 
         print("[3/5] Rendering video...")
-        render_tool = self.registry.get_tool("render", "manim")
+        render_backend = self.tool_config.render_backend
+        render_tool = self.registry.get_tool("render", render_backend)
         if not render_tool:
-            raise ValueError("Render tool not registered: render/manim")
+            raise ValueError(
+                f"Render tool not registered: render/{render_backend}"
+            )
         timeline_path = render_dir / "timeline.json"
         render_output = render_tool.execute({
             "plan_path": str(plan_path),
@@ -180,7 +183,9 @@ class Pipeline:
             "output_dir": str(render_dir),
             "timeout": 300,
         })
-        video_path, timeline_path = self._validate_render_output(render_output, timeline_path)
+        video_path, timeline_path = self._validate_render_output(
+            render_output, timeline_path, expected_provider=render_backend,
+        )
         render_warnings = render_output.get("warnings") or []
         self._warnings.extend(str(warning) for warning in render_warnings)
         print(f"  Video: {video_path}")
@@ -211,7 +216,11 @@ class Pipeline:
         return output_path
 
     @staticmethod
-    def _validate_render_output(render_output, expected_timeline_path: Path) -> tuple[Path, Path]:
+    def _validate_render_output(
+        render_output,
+        expected_timeline_path: Path,
+        expected_provider: str,
+    ) -> tuple[Path, Path]:
         if not isinstance(render_output, dict):
             raise RuntimeError("Render backend returned invalid output: expected dict")
 
@@ -227,9 +236,10 @@ class Pipeline:
             )
 
         provider = str(render_output["provider"])
-        if provider != "manim":
+        if provider != expected_provider:
             raise RuntimeError(
-                f"Render backend returned unexpected provider: expected manim, got {provider}"
+                "Render backend returned unexpected provider: "
+                f"expected {expected_provider}, got {provider}"
             )
 
         video_path = Path(str(render_output["video_path"]))
