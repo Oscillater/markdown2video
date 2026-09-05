@@ -21,7 +21,6 @@ from md2video.manifest.schema import (
 
 
 TITLE_SEGMENT_TYPES = {"title_main", "title_sub"}
-TIMED_SEGMENT_TYPES = {"section_header", "content", "appendix"}
 
 # Renderer-side mapping from content kinds to ComputedLayout region names.
 TITLE_REGION_PREFERENCE = ("title", "body", "text", "caption")
@@ -175,11 +174,6 @@ def title_layout_parts(
     if title_sub:
         return [TitleLayoutPart(title_sub, sub_font_size, (0.0, 0.0, 0.0))]
     return []
-
-
-def segment_consumes_timeline_duration(segment: SegmentPlan) -> bool:
-    """Return whether a segment should consume shot time in the body pass."""
-    return segment.segment_type in TIMED_SEGMENT_TYPES
 
 
 def iter_shot_render_units(
