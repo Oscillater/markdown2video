@@ -33,76 +33,96 @@ def _make_result(segment_results):
     return ResultManifest(segments=segment_results)
 
 
+def _cue(cue_id, cue_type, kind, name):
+    return {
+        "id": cue_id,
+        "cue_type": cue_type,
+        "kind": kind,
+        "name": name,
+    }
+
+
+def _plan_with_cues(cues, media_declarations=None):
+    return PlanManifest(
+        segments=[],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[ShotPlan(id="shot_001", cues=cues)],
+            ),
+        ],
+        media_declarations=media_declarations or {},
+    )
+
+
+def _write_marker_timeline(tmp_path, markers):
+    path = tmp_path / "timeline.json"
+    path.write_text(
+        json.dumps({"text": [], "markers": markers, "shots": []}),
+        encoding="utf-8",
+    )
+    return path
+
+
 class TestExtractMusicEntries:
-    def test_basic_start_end(self):
-        plan = _make_plan(
-            segments=[
-                SegmentPlan(id="s1", text="[music_start bgm]", segment_type="marker_music",
-                            marker_data={"kind": "start", "name": "bgm"}),
-                SegmentPlan(id="s2", text="内容。", segment_type="content"),
-                SegmentPlan(id="s3", text="[music_end bgm]", segment_type="marker_music",
-                            marker_data={"kind": "end", "name": "bgm"}),
+    def test_basic_start_end(self, tmp_path):
+        plan = _plan_with_cues(
+            [
+                _cue("m1", "marker_music", "start", "bgm"),
+                _cue("m2", "marker_music", "end", "bgm"),
             ],
             media_declarations={"music": {"bgm": "./music.mp3"}},
         )
-        result = _make_result([
-            SegmentResult(id="s1", start=4.0, end=4.0),
-            SegmentResult(id="s2", start=4.0, end=6.0),
-            SegmentResult(id="s3", start=6.0, end=6.0),
-        ])
-        entries = extract_music_entries(plan, result)
+        timeline_path = _write_marker_timeline(
+            tmp_path,
+            [{"id": "m1", "time": 4.0}, {"id": "m2", "time": 6.0}],
+        )
+        entries = extract_music_entries(plan, _make_result([]), timeline_path)
         assert len(entries) == 1
         assert entries[0]["name"] == "bgm"
         assert entries[0]["src"] == "./music.mp3"
         assert entries[0]["start"] == 4.0
         assert entries[0]["end"] == 6.0
 
-    def test_missing_src(self):
-        plan = _make_plan(
-            segments=[
-                SegmentPlan(id="s1", text="[music_start unknown]", segment_type="marker_music",
-                            marker_data={"kind": "start", "name": "unknown"}),
-            ],
-        )
-        result = _make_result([SegmentResult(id="s1", start=0.0, end=0.0)])
-        entries = extract_music_entries(plan, result)
+    def test_missing_src(self, tmp_path):
+        plan = _plan_with_cues([_cue("m1", "marker_music", "start", "unknown")])
+        timeline_path = _write_marker_timeline(tmp_path, [{"id": "m1", "time": 0.0}])
+        entries = extract_music_entries(plan, _make_result([]), timeline_path)
         assert len(entries) == 1
         assert entries[0]["src"] is None
 
-    def test_no_result_timing(self):
-        plan = _make_plan(
-            segments=[
-                SegmentPlan(id="s1", text="[music_start bgm]", segment_type="marker_music",
-                            marker_data={"kind": "start", "name": "bgm"}),
-            ],
+    def test_missing_timeline_marker_fails_fast(self):
+        plan = _plan_with_cues(
+            [_cue("m1", "marker_music", "start", "bgm")],
             media_declarations={"music": {"bgm": "./music.mp3"}},
         )
-        result = _make_result([])
-        entries = extract_music_entries(plan, result)
-        assert len(entries) == 1
-        assert entries[0]["start"] == 0.0
+        try:
+            extract_music_entries(plan, _make_result([]))
+        except ValueError as exc:
+            assert "m1" in str(exc)
+        else:
+            raise AssertionError("missing marker timeline should fail fast")
 
-    def test_multiple_pairs(self):
-        plan = _make_plan(
-            segments=[
-                SegmentPlan(id="s1", text="[music_start a]", segment_type="marker_music",
-                            marker_data={"kind": "start", "name": "a"}),
-                SegmentPlan(id="s2", text="[music_end a]", segment_type="marker_music",
-                            marker_data={"kind": "end", "name": "a"}),
-                SegmentPlan(id="s3", text="[music_start b]", segment_type="marker_music",
-                            marker_data={"kind": "start", "name": "b"}),
-                SegmentPlan(id="s4", text="[music_end b]", segment_type="marker_music",
-                            marker_data={"kind": "end", "name": "b"}),
+    def test_multiple_pairs(self, tmp_path):
+        plan = _plan_with_cues(
+            [
+                _cue("m1", "marker_music", "start", "a"),
+                _cue("m2", "marker_music", "end", "a"),
+                _cue("m3", "marker_music", "start", "b"),
+                _cue("m4", "marker_music", "end", "b"),
             ],
             media_declarations={"music": {"a": "a.mp3", "b": "b.mp3"}},
         )
-        result = _make_result([
-            SegmentResult(id="s1", start=1.0, end=1.0),
-            SegmentResult(id="s2", start=5.0, end=5.0),
-            SegmentResult(id="s3", start=6.0, end=6.0),
-            SegmentResult(id="s4", start=10.0, end=10.0),
-        ])
-        entries = extract_music_entries(plan, result)
+        timeline_path = _write_marker_timeline(
+            tmp_path,
+            [
+                {"id": "m1", "time": 1.0},
+                {"id": "m2", "time": 5.0},
+                {"id": "m3", "time": 6.0},
+                {"id": "m4", "time": 10.0},
+            ],
+        )
+        entries = extract_music_entries(plan, _make_result([]), timeline_path)
         assert len(entries) == 2
         assert entries[0]["name"] == "a"
         assert entries[1]["name"] == "b"
@@ -120,64 +140,59 @@ class TestExtractMusicEntries:
         ])
         assert extract_music_entries(plan, result) == []
 
-    def test_end_without_start(self):
-        plan = _make_plan(
-            segments=[
-                SegmentPlan(id="s1", text="[music_end bgm]", segment_type="marker_music",
-                            marker_data={"kind": "end", "name": "bgm"}),
-            ],
+    def test_end_without_start(self, tmp_path):
+        plan = _plan_with_cues(
+            [_cue("m1", "marker_music", "end", "bgm")],
             media_declarations={"music": {"bgm": "./music.mp3"}},
         )
-        result = _make_result([SegmentResult(id="s1", start=5.0, end=5.0)])
-        entries = extract_music_entries(plan, result)
+        entries = extract_music_entries(
+            plan,
+            _make_result([]),
+            _write_marker_timeline(tmp_path, [{"id": "m1", "time": 5.0}]),
+        )
         assert entries == []
 
 
 class TestExtractImageEntries:
-    def test_basic_start_end(self):
-        plan = _make_plan(
-            segments=[
-                SegmentPlan(id="s1", text="[image_start logo]", segment_type="marker_image",
-                            marker_data={"kind": "start", "name": "logo"}),
-                SegmentPlan(id="s2", text="内容", segment_type="content"),
-                SegmentPlan(id="s3", text="[image_end logo]", segment_type="marker_image",
-                            marker_data={"kind": "end", "name": "logo"}),
+    def test_basic_start_end(self, tmp_path):
+        plan = _plan_with_cues(
+            [
+                _cue("i1", "marker_image", "start", "logo"),
+                _cue("i2", "marker_image", "end", "logo"),
             ],
             media_declarations={"images": {"logo": "./logo.png"}},
         )
-        result = _make_result([
-            SegmentResult(id="s1", start=2.0, end=2.0),
-            SegmentResult(id="s2", start=2.0, end=4.0),
-            SegmentResult(id="s3", start=4.0, end=4.0),
-        ])
-        entries = extract_image_entries(plan, result)
+        timeline_path = _write_marker_timeline(
+            tmp_path,
+            [{"id": "i1", "time": 2.0}, {"id": "i2", "time": 4.0}],
+        )
+        entries = extract_image_entries(plan, _make_result([]), timeline_path)
         assert len(entries) == 1
         assert entries[0]["name"] == "logo"
         assert entries[0]["src"] == "./logo.png"
         assert entries[0]["start"] == 2.0
         assert entries[0]["end"] == 4.0
 
-    def test_multiple_overlays(self):
-        plan = _make_plan(
-            segments=[
-                SegmentPlan(id="s1", text="[image_start a]", segment_type="marker_image",
-                            marker_data={"kind": "start", "name": "a"}),
-                SegmentPlan(id="s2", text="[image_end a]", segment_type="marker_image",
-                            marker_data={"kind": "end", "name": "a"}),
-                SegmentPlan(id="s3", text="[image_start b]", segment_type="marker_image",
-                            marker_data={"kind": "start", "name": "b"}),
-                SegmentPlan(id="s4", text="[image_end b]", segment_type="marker_image",
-                            marker_data={"kind": "end", "name": "b"}),
+    def test_multiple_overlays(self, tmp_path):
+        plan = _plan_with_cues(
+            [
+                _cue("i1", "marker_image", "start", "a"),
+                _cue("i2", "marker_image", "end", "a"),
+                _cue("i3", "marker_image", "start", "b"),
+                _cue("i4", "marker_image", "end", "b"),
             ],
             media_declarations={"images": {"a": "a.png", "b": "b.png"}},
         )
-        result = _make_result([
-            SegmentResult(id="s1", start=0.0, end=0.0),
-            SegmentResult(id="s2", start=5.0, end=5.0),
-            SegmentResult(id="s3", start=6.0, end=6.0),
-            SegmentResult(id="s4", start=10.0, end=10.0),
-        ])
-        entries = extract_image_entries(plan, result)
+        timeline_path = _write_marker_timeline(
+            tmp_path,
+            [
+                {"id": "i1", "time": 0.0},
+                {"id": "i2", "time": 5.0},
+                {"id": "i3", "time": 6.0},
+                {"id": "i4", "time": 10.0},
+            ],
+        )
+        entries = extract_image_entries(plan, _make_result([]), timeline_path)
         assert len(entries) == 2
 
     def test_non_image_segments_ignored(self):
@@ -199,12 +214,12 @@ class TestExtractShotVisualEntries:
 
     def test_execution_assets_visual_collected(self):
         plan = PlanManifest(
-            segments=[SegmentPlan(id="s1", text="x", segment_type="content")],
+            segments=[SegmentPlan(id="s1", text="x", segment_type="content", target_duration=2.0)],
             scenes=[
                 ScenePlan(
                     id="scene_001",
                     visual_type="stock_image",
-                    shots=[ShotPlan(id="shot_001", segment_ids=["s1"], target_duration=2.0)],
+                    shots=[ShotPlan(id="shot_001", segment_ids=["s1"])],
                 ),
             ],
         )
@@ -230,12 +245,12 @@ class TestExtractShotVisualEntries:
 
     def test_execution_assets_visual_uses_timeline_shot_timing(self, tmp_path):
         plan = PlanManifest(
-            segments=[SegmentPlan(id="s1", text="x", segment_type="content")],
+            segments=[SegmentPlan(id="s1", text="x", segment_type="content", target_duration=2.0)],
             scenes=[
                 ScenePlan(
                     id="scene_001",
                     visual_type="stock_image",
-                    shots=[ShotPlan(id="shot_001", segment_ids=["s1"], target_duration=2.0)],
+                    shots=[ShotPlan(id="shot_001", segment_ids=["s1"])],
                 ),
             ],
         )

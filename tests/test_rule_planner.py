@@ -33,12 +33,17 @@ class TestRulePlanner:
             _seg("s3", "更多", "content", section_context="S1"),
         ]
         scenes = RulePlanner().plan(segments)
-        assert len(scenes) == 3
-        # marker is singleton
-        assert scenes[1].shots[0].segment_ids == ["s2"]
-        # content scenes on both sides
-        assert scenes[0].shots[0].segment_ids == ["s1"]
-        assert scenes[2].shots[0].segment_ids == ["s3"]
+        assert len(scenes) == 1
+        assert scenes[0].shots[0].segment_ids == ["s1", "s3"]
+        assert scenes[0].shots[0].cues == [{
+            "id": "s2",
+            "cue_type": "marker_music",
+            "kind": "start",
+            "name": "bgm",
+            "position": "after",
+            "anchor_segment_id": "s1",
+            "section_context": "",
+        }]
 
     def test_section_boundary(self):
         segments = [
@@ -117,9 +122,9 @@ class TestRulePlanner:
                  marker_data={"kind": "end", "name": "bgm"}),
         ]
         scenes = RulePlanner().plan(segments)
-        assert len(scenes) == 2
-        assert all(len(sc.shots) == 1 for sc in scenes)
-        assert all(len(sc.shots[0].segment_ids) == 1 for sc in scenes)
+        assert len(scenes) == 1
+        assert scenes[0].shots[0].segment_ids == []
+        assert [cue["id"] for cue in scenes[0].shots[0].cues] == ["s1", "s2"]
 
     def test_section_context_preserved(self):
         segments = [
@@ -139,13 +144,16 @@ class TestRulePlanner:
                  marker_data={"kind": "end", "name": "logo"}),
         ]
         scenes = RulePlanner().plan(segments)
-        assert len(scenes) == 4
-        # image markers are singletons
-        assert scenes[1].shots[0].segment_ids == ["s2"]
-        assert scenes[3].shots[0].segment_ids == ["s4"]
+        assert len(scenes) == 1
+        assert scenes[0].shots[0].segment_ids == ["s1", "s3"]
+        assert [cue["id"] for cue in scenes[0].shots[0].cues] == ["s2", "s4"]
+        assert [cue["cue_type"] for cue in scenes[0].shots[0].cues] == [
+            "marker_image",
+            "marker_image",
+        ]
 
     def test_all_segments_covered(self):
-        """Every segment appears in exactly one scene."""
+        """Every renderable segment appears in exactly one scene."""
         segments = [
             _seg("s1", "大标题", "title_main"),
             _seg("s2", "副标题", "title_sub"),
@@ -157,10 +165,12 @@ class TestRulePlanner:
         ]
         scenes = RulePlanner().plan(segments)
         all_ids = [sid for sc in scenes for shot in sc.shots for sid in shot.segment_ids]
-        assert len(all_ids) == len(segments)
-        assert set(all_ids) == {s.id for s in segments}
+        assert len(all_ids) == len(segments) - 1
+        assert set(all_ids) == {"s1", "s2", "s3", "s4", "s6"}
         # No duplicates
         assert len(all_ids) == len(set(all_ids))
+        cues = [cue for sc in scenes for shot in sc.shots for cue in shot.cues]
+        assert [cue["id"] for cue in cues] == ["s5"]
 
     def test_backward_compat_all_text_only(self):
         """Typical input produces all text_only scenes."""

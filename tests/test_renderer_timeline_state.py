@@ -1,7 +1,7 @@
 """Timeline state helpers for renderers."""
 from __future__ import annotations
 
-from md2video.tools.render.timeline_builder import TimelineWriter, build_shot_timeline
+from md2video.tools.render.timeline_builder import ShotTimelineWriter, TimelineWriter
 
 
 def test_timeline_writer_closes_duplicate_text_by_handle():
@@ -52,30 +52,29 @@ def test_timeline_writer_keeps_header_and_content_with_same_text_separate():
     assert writer.entry(content)["end"] is None
 
 
-def test_build_shot_timeline_uses_only_closed_entries():
-    writer = TimelineWriter()
-    closed = writer.append({
-        "segment_id": "seg_closed",
-        "scene_id": "scene_001",
-        "shot_id": "shot_closed",
-        "start": 0.0,
-        "end": None,
-    })
-    writer.append({
-        "segment_id": "seg_open",
-        "scene_id": "scene_001",
-        "shot_id": "shot_open",
-        "start": 1.0,
-        "end": None,
-    })
-    writer.close(closed, 2.0)
+def test_shot_timeline_writer_merges_split_rendering_for_same_shot():
+    entries = []
+    writer = ShotTimelineWriter(entries)
 
-    shots = build_shot_timeline(writer.entries, [])
-
-    assert shots == [{
-        "shot_id": "shot_closed",
+    writer.upsert({
+        "shot_id": "shot_001",
         "scene_id": "scene_001",
-        "segment_ids": ["seg_closed"],
+        "segment_ids": ["title"],
         "start": 0.0,
         "end": 2.0,
+    })
+    writer.upsert({
+        "shot_id": "shot_001",
+        "scene_id": "scene_001",
+        "segment_ids": ["title", "body"],
+        "start": 2.0,
+        "end": 5.0,
+    })
+
+    assert entries == [{
+        "shot_id": "shot_001",
+        "scene_id": "scene_001",
+        "segment_ids": ["title", "body"],
+        "start": 0.0,
+        "end": 5.0,
     }]

@@ -161,7 +161,6 @@ class ManimRenderTool:
             shot.id: set(shot.segment_ids)
             for scene in plan.scenes
             for shot in scene.shots
-            if shot.segment_ids
         }
         if not required_shots:
             return
@@ -203,43 +202,46 @@ class ManimRenderTool:
     @staticmethod
     def _validate_marker_timing(markers: list, plan: PlanManifest) -> None:
         required_marker_ids = sorted(
-            seg.id
-            for seg in plan.segments
-            if seg.segment_type in ("marker_music", "marker_image")
+            str(cue.get("id", ""))
+            for scene in plan.scenes
+            for shot in scene.shots
+            for cue in shot.cues
+            if cue.get("cue_type") in ("marker_music", "marker_image")
+            and cue.get("id")
         )
         if not required_marker_ids:
             return
 
-        markers_by_segment_id: dict[str, dict] = {}
+        markers_by_id: dict[str, dict] = {}
         for marker in markers:
             if not isinstance(marker, dict):
                 continue
             marker_ids = (
-                marker.get("segment_id"),
                 marker.get("id"),
+                marker.get("segment_id"),
             )
             for marker_id in marker_ids:
                 if isinstance(marker_id, str) and marker_id in required_marker_ids:
-                    markers_by_segment_id[marker_id] = marker
+                    markers_by_id[marker_id] = marker
 
         missing_markers = [
-            segment_id
-            for segment_id in required_marker_ids
-            if segment_id not in markers_by_segment_id
+            marker_id
+            for marker_id in required_marker_ids
+            if marker_id not in markers_by_id
         ]
         if missing_markers:
             raise RuntimeError(f"Timeline missing marker entries: {missing_markers}")
 
         invalid_times = []
-        for segment_id in required_marker_ids:
-            marker = markers_by_segment_id[segment_id]
+        for marker_id in required_marker_ids:
+            marker = markers_by_id[marker_id]
             try:
                 marker_time = float(marker["time"])
             except (KeyError, TypeError, ValueError):
-                invalid_times.append(segment_id)
+                invalid_times.append(marker_id)
                 continue
             if not math.isfinite(marker_time):
-                invalid_times.append(segment_id)
+                invalid_times.append(marker_id)
 
         if invalid_times:
             raise RuntimeError(

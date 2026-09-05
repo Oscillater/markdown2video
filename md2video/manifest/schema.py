@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, List
-from pydantic import BaseModel, Field, model_validator
+from typing import Any, Optional, Dict, List
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from md2video.layout.schema import DEFAULT_LAYOUT_TYPE
 
@@ -18,6 +18,7 @@ class SegmentPlan(BaseModel):
     id: str
     text: str
     segment_type: str  # title_main, title_sub, section_header, content, appendix, marker_music, marker_image
+    target_duration: float = 0.0
     visual_type: str = "text_only"
     visual_params: Dict = Field(default_factory=dict)
     layout_type: str = DEFAULT_LAYOUT_TYPE
@@ -30,9 +31,11 @@ class SegmentPlan(BaseModel):
 
 
 class ShotPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     segment_ids: List[str] = Field(default_factory=list)
-    target_duration: float = 0.0  # TTS 时长，视觉工具必须适配此时长
+    cues: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ScenePlan(BaseModel):
@@ -220,35 +223,23 @@ def result_manifest_from_execution_assets(
             if not shot_segment_ids:
                 continue
 
-            audio_duration = sum(
-                audio_by_segment[sid].duration
-                for sid in shot_segment_ids
-                if sid in audio_by_segment
-            )
             shot_start = current_time
             segment_results_for_shot: List[SegmentResult] = []
 
-            if audio_duration > 0:
-                segment_time = current_time
-                for sid in shot_segment_ids:
-                    duration = audio_by_segment[sid].duration if sid in audio_by_segment else 0.0
-                    segment_results_for_shot.append(
-                        _assign_segment(sid, segment_time, segment_time + duration)
-                    )
-                    segment_time += duration
-                current_time = segment_time
-            elif shot.target_duration > 0:
-                per_segment_duration = shot.target_duration / len(shot_segment_ids)
-                segment_time = current_time
-                for sid in shot_segment_ids:
-                    segment_results_for_shot.append(
-                        _assign_segment(sid, segment_time, segment_time + per_segment_duration)
-                    )
-                    segment_time += per_segment_duration
-                current_time = segment_time
-            else:
-                for sid in shot_segment_ids:
-                    segment_results_for_shot.append(_assign_segment(sid, current_time, current_time))
+            segment_time = current_time
+            for sid in shot_segment_ids:
+                if sid in audio_by_segment:
+                    duration = audio_by_segment[sid].duration
+                else:
+                    duration = segment_by_id[sid].target_duration
+                segment_results_for_shot.append(
+                    _assign_segment(sid, segment_time, segment_time + duration)
+                )
+                segment_time += duration
+            current_time = segment_time
+
+            if not shot_segment_ids and not shot.cues:
+                continue
 
             visual_asset = visual_by_shot.get(shot.id)
             visual = VisualResult()

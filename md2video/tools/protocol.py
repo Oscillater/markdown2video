@@ -29,7 +29,9 @@ class Tool(Protocol):
                 "scene": {"id": str, "visual_type": str, "visual_params": dict,
                           "layout_type": str, "layout_params": dict,
                           "section_context": str},
-                "shot":  {"id": str, "segment_ids": list[str], "target_duration": float},
+                "shot":  {"id": str, "segment_ids": list[str],
+                           "target_duration": float,  # derived from segments
+                           "cues": list[dict]},
                 "segments": [{"id": str, "text": str, "segment_type": str,
                               "audio": {"path": str, "duration": float} | None}],
                 "output_dir": str,

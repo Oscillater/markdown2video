@@ -7,21 +7,26 @@ import pytest
 
 from md2video.manifest.schema import (
     AudioAsset,
+    AudioResult,
     AudioRequest,
     ExecutionAssets,
     PlanManifest,
     ScenePlan,
     SegmentPlan,
+    SegmentResult,
     ShotPlan,
 )
+from md2video.layout import create_default_layout_registry
 from md2video.tools.render.manifest_loader import load_manifests_from_env
 from md2video.tools.render.manim_renderer_inputs import (
+    iter_shot_render_units,
     iter_scene_render_segments,
+    segment_render_duration,
     segment_uses_voiceover,
     title_layout_parts,
     validate_renderer_inputs,
+    voiceover_segment_ids,
 )
-from md2video.tools.render.timeline_builder import build_shot_timeline
 
 
 def test_load_manifests_from_explicit_env(tmp_path, monkeypatch):
@@ -82,41 +87,6 @@ def test_load_manifests_does_not_fallback_to_result_json(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError, match="MD2VIDEO_EXECUTION_ASSETS_PATH is required"):
         load_manifests_from_env()
-
-
-def test_build_shot_timeline_includes_marker_only_shots():
-    shots = build_shot_timeline(
-        text_timeline=[{
-            "segment_id": "seg_001",
-            "scene_id": "scene_001",
-            "shot_id": "shot_001",
-            "start": 0.0,
-            "end": 2.0,
-        }],
-        marker_timeline=[{
-            "segment_id": "marker_001",
-            "scene_id": "scene_002",
-            "shot_id": "shot_002",
-            "time": 2.0,
-        }],
-    )
-
-    assert shots == [
-        {
-            "shot_id": "shot_001",
-            "scene_id": "scene_001",
-            "segment_ids": ["seg_001"],
-            "start": 0.0,
-            "end": 2.0,
-        },
-        {
-            "shot_id": "shot_002",
-            "scene_id": "scene_002",
-            "segment_ids": ["marker_001"],
-            "start": 2.0,
-            "end": 2.0,
-        },
-    ]
 
 
 def test_title_layout_parts_main_only_is_centered():
@@ -254,6 +224,292 @@ def test_iter_scene_render_segments_preserves_scene_shot_segment_order():
     ]
 
 
+def test_iter_shot_render_units_uses_shot_order_not_plan_segment_order():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(id="seg_a", text="A", segment_type="content"),
+            SegmentPlan(id="seg_b", text="B", segment_type="content"),
+            SegmentPlan(id="seg_c", text="C", segment_type="content"),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["seg_c", "seg_a"]),
+                    ShotPlan(id="shot_002", segment_ids=["seg_b"]),
+                ],
+            ),
+        ],
+    )
+
+    units = list(iter_shot_render_units(plan))
+
+    assert [unit.segment_ids for unit in units] == [["seg_c", "seg_a"], ["seg_b"]]
+    assert [(unit.scene_id, unit.shot_id) for unit in units] == [
+        ("scene_001", "shot_001"),
+        ("scene_001", "shot_002"),
+    ]
+
+
+def test_iter_shot_render_units_preserves_segment_order_across_multiple_shots():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(id="seg_001", text="one", segment_type="content"),
+            SegmentPlan(id="seg_002", text="two", segment_type="content"),
+            SegmentPlan(id="seg_003", text="three", segment_type="content"),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["seg_002", "seg_001"]),
+                    ShotPlan(id="shot_002", segment_ids=["seg_003"]),
+                ],
+            ),
+        ],
+    )
+
+    assert [
+        (unit.shot_id, unit.segment_ids)
+        for unit in iter_shot_render_units(plan)
+    ] == [
+        ("shot_001", ["seg_002", "seg_001"]),
+        ("shot_002", ["seg_003"]),
+    ]
+
+
+def test_iter_shot_render_units_fails_on_unknown_segment_id():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(id="body", text="Body", segment_type="content"),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["body", "missing_segment"]),
+                ],
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="scene_001.*shot_001.*missing_segment"):
+        list(iter_shot_render_units(plan))
+
+
+def test_iter_shot_render_units_skips_title_but_keeps_same_shot_content():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(id="title", text="Title", segment_type="title_main"),
+            SegmentPlan(id="body", text="Body", segment_type="content", target_duration=3.0),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(
+                        id="shot_001",
+                        segment_ids=["title", "body"],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    units = list(iter_shot_render_units(plan))
+
+    assert [unit.segment_ids for unit in units] == [["body"]]
+    assert units[0].scene_id == "scene_001"
+    assert units[0].shot_id == "shot_001"
+    assert units[0].segments[0].target_duration == 3.0
+
+
+def test_iter_shot_render_units_carries_marker_cues_without_audio():
+    body = SegmentPlan(id="body", text="Body", segment_type="content")
+    plan = PlanManifest(
+        segments=[body],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(
+                        id="shot_001",
+                        segment_ids=["body"],
+                        cues=[{
+                            "id": "marker",
+                            "cue_type": "marker_image",
+                            "kind": "start",
+                            "name": "hero",
+                            "position": "before",
+                            "anchor_segment_id": "body",
+                        }],
+                    ),
+                ],
+            ),
+        ],
+    )
+
+    units = list(iter_shot_render_units(plan))
+
+    assert [unit.segment_ids for unit in units] == [["body"]]
+    assert units[0].cues[0]["id"] == "marker"
+    validate_renderer_inputs(plan, ExecutionAssets())
+
+
+def test_segment_render_duration_uses_result_duration_before_shot_target():
+    segment = SegmentPlan(
+        id="seg_001",
+        text="silent",
+        segment_type="content",
+        target_duration=9.0,
+    )
+    plan = PlanManifest(
+        segments=[segment],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["seg_001"]),
+                ],
+            ),
+        ],
+    )
+    unit = next(iter(iter_shot_render_units(plan)))
+    result = SegmentResult(id="seg_001", start=2.0, end=3.25)
+
+    assert segment_render_duration(segment, result, unit.segments[0], default=2.0) == 1.25
+
+
+def test_segment_render_duration_uses_silent_header_and_content_targets():
+    header = SegmentPlan(
+        id="header",
+        text="Header",
+        segment_type="section_header",
+        target_duration=2.0,
+    )
+    content = SegmentPlan(
+        id="content",
+        text="Content",
+        segment_type="content",
+        target_duration=4.0,
+    )
+    plan = PlanManifest(
+        segments=[header, content],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["header", "content"]),
+                ],
+            ),
+        ],
+    )
+    units = list(iter_shot_render_units(plan))
+
+    assert [
+        segment_render_duration(item.segment, None, item, default=2.0)
+        for item in units[0].segments
+    ] == [2.0, 4.0]
+
+
+def test_segment_render_duration_keeps_voiceover_on_audio_result_not_shot_target():
+    segment = SegmentPlan(
+        id="seg_001",
+        text="voiced",
+        segment_type="content",
+        target_duration=9.0,
+        audio_request=AudioRequest(),
+    )
+    plan = PlanManifest(
+        segments=[segment],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["seg_001"]),
+                ],
+            ),
+        ],
+    )
+    unit = next(iter(iter_shot_render_units(plan)))
+    result = SegmentResult(
+        id="seg_001",
+        audio=AudioResult(path="voice.wav", duration=1.5),
+        start=0.0,
+        end=1.5,
+    )
+
+    assert segment_render_duration(segment, result, unit.segments[0], default=2.0) == 1.5
+    assert segment_render_duration(segment, None, unit.segments[0], default=0.0) == 0.0
+
+
+def test_iter_shot_render_units_carries_scene_layout_contract():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(id="seg_001", text="Body", segment_type="content"),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                layout_type="image_top_text_bottom",
+                layout_params={"split": "text_focus", "gap": "wide"},
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["seg_001"]),
+                ],
+            ),
+        ],
+    )
+
+    unit = next(iter(iter_shot_render_units(plan)))
+
+    assert unit.layout_type == "image_top_text_bottom"
+    assert unit.layout_params == {"split": "text_focus", "gap": "wide"}
+
+
+def test_renderer_input_helper_carries_invalid_layout_for_registry_to_reject():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(id="seg_001", text="Body", segment_type="content"),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                layout_type="missing_layout",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["seg_001"]),
+                ],
+            ),
+        ],
+    )
+
+    unit = next(iter(iter_shot_render_units(plan)))
+
+    assert unit.layout_type == "missing_layout"
+    validate_renderer_inputs(plan, ExecutionAssets())
+    with pytest.raises(ValueError, match="Unknown layout_type"):
+        create_default_layout_registry().compute(unit.layout_type, unit.layout_params)
+
+
+def test_validate_renderer_inputs_allows_silent_plan_without_audio_assets():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(id="header", text="Header", segment_type="section_header"),
+            SegmentPlan(id="content", text="Content", segment_type="content"),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[
+                    ShotPlan(id="shot_001", segment_ids=["header", "content"]),
+                ],
+            ),
+        ],
+    )
+
+    validate_renderer_inputs(plan, ExecutionAssets())
+    assert voiceover_segment_ids(plan) == set()
+
+
 def test_segment_uses_voiceover_only_for_voiced_body_segments():
     assert segment_uses_voiceover(
         SegmentPlan(
@@ -344,7 +600,7 @@ def test_validate_renderer_inputs_requires_audio_assets_for_voiced_segments():
     )
 
 
-def test_validate_renderer_inputs_does_not_require_audio_for_title_or_marker():
+def test_validate_renderer_inputs_does_not_require_audio_for_title_or_marker_cue():
     plan = PlanManifest(
         segments=[
             SegmentPlan(
@@ -353,24 +609,48 @@ def test_validate_renderer_inputs_does_not_require_audio_for_title_or_marker():
                 segment_type="title_main",
                 audio_request=AudioRequest(),
             ),
-            SegmentPlan(
-                id="marker",
-                text="[music_start bgm]",
-                segment_type="marker_music",
-                audio_request=AudioRequest(),
-            ),
         ],
         scenes=[
             ScenePlan(
                 id="scene_001",
                 shots=[
-                    ShotPlan(id="shot_001", segment_ids=["title", "marker"]),
+                    ShotPlan(
+                        id="shot_001",
+                        segment_ids=["title"],
+                        cues=[{
+                            "id": "marker",
+                            "cue_type": "marker_music",
+                            "kind": "start",
+                            "name": "bgm",
+                        }],
+                    ),
                 ],
             ),
         ],
     )
 
     validate_renderer_inputs(plan, ExecutionAssets())
+
+
+def test_validate_renderer_inputs_rejects_marker_segments():
+    plan = PlanManifest(
+        segments=[
+            SegmentPlan(
+                id="marker",
+                text="[music_start bgm]",
+                segment_type="marker_music",
+            ),
+        ],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                shots=[ShotPlan(id="shot_001", cues=[{"id": "marker", "cue_type": "marker_music"}])],
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="marker segments.*marker"):
+        validate_renderer_inputs(plan, ExecutionAssets())
 
 
 def test_validate_renderer_inputs_rejects_manim_visual_type():

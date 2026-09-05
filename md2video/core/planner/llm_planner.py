@@ -10,7 +10,11 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from md2video.manifest.schema import ScenePlan, SegmentPlan, ShotPlan
-from md2video.core.planner.rule_planner import RulePlanner
+from md2video.core.planner.rule_planner import (
+    RulePlanner,
+    attach_marker_cues_to_shots,
+    renderable_segments,
+)
 from md2video.config import RENDER_BACKEND_ONLY_VISUAL_TYPES
 from md2video.layout import create_default_layout_registry
 from md2video.layout.schema import DEFAULT_LAYOUT_TYPE
@@ -263,12 +267,16 @@ class LlmPlanner:
 
     def _plan_two_pass(self, segments: List[SegmentPlan]) -> List[ScenePlan]:
         """两阶段方案：全局定调 → 分块 → 局部分镜 → 重组校验。"""
+        renderable = renderable_segments(segments)
+        if not renderable:
+            return attach_marker_cues_to_shots(segments, [])
+
         # 第一阶段：全局定调
-        registry = self._global_blueprint(segments)
+        registry = self._global_blueprint(renderable)
         print(f"  [LLM Planner] Blueprint: {len(registry)} scene templates")
 
         # 分块
-        chunks = self._split_chunks(segments)
+        chunks = self._split_chunks(renderable)
         print(f"  [LLM Planner] Split into {len(chunks)} chunks")
 
         # 第二阶段：逐块局部分镜
@@ -279,7 +287,8 @@ class LlmPlanner:
             all_mappings.append(mapping)
 
         # 第三阶段：框架重组校验
-        return self._reconcile(all_mappings, segments, registry)
+        scenes = self._reconcile(all_mappings, renderable, registry)
+        return attach_marker_cues_to_shots(segments, scenes)
 
     def _global_blueprint(self, segments: List[SegmentPlan]) -> List[SceneTemplate]:
         """第一阶段：输入完整 Markdown 原文，产出 Scene Registry。"""

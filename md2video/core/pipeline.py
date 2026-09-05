@@ -19,7 +19,11 @@ from md2video.config import (
     load_planner_config,
     load_tool_config,
 )
-from md2video.core.planner.rule_planner import RulePlanner, denormalize_scenes_to_segments
+from md2video.core.planner.rule_planner import (
+    RulePlanner,
+    denormalize_scenes_to_segments,
+    renderable_segments,
+)
 from md2video.layout import create_default_layout_registry
 from md2video.manifest.schema import (
     AudioAsset,
@@ -122,6 +126,7 @@ class Pipeline:
     def _load_or_build_plan_from_markdown(self, md_path: Path) -> PlanManifest:
         plan = parse_to_plan_manifest(str(md_path))
         scenes = self.planner.plan(plan.segments)
+        plan.segments = renderable_segments(plan.segments)
         denormalize_scenes_to_segments(plan.segments, scenes)
         plan.scenes = scenes
         print(f"  Plan: {len(plan.segments)} segments, {len(scenes)} scenes")
@@ -148,7 +153,7 @@ class Pipeline:
         assets = self._prepare_execution_assets(plan)
         result = result_manifest_from_execution_assets(plan, assets)
 
-        self._fill_target_durations(plan.scenes, result.segments)
+        self._fill_target_durations(plan.segments, result.segments)
         plan_path = self._write_plan_manifest(plan)
         result = result_manifest_from_execution_assets(plan, assets)
 
@@ -462,7 +467,11 @@ class Pipeline:
                 "shot": {
                     "id": shot_plan.id,
                     "segment_ids": shot_plan.segment_ids,
-                    "target_duration": shot_plan.target_duration,
+                    "target_duration": sum(
+                        (seg_map[sid].target_duration if sid in seg_map else 0.0)
+                        for sid in shot_plan.segment_ids
+                    ),
+                    "cues": shot_plan.cues,
                 },
                 "segments": segments_data,
                 "output_dir": str(output_dir),
@@ -519,17 +528,17 @@ class Pipeline:
         ]
         execution_assets.visual_assets.append(asset)
 
-    def _fill_target_durations(self, scene_plans, segment_results):
+    def _fill_target_durations(self, segment_plans, segment_results):
         seg_map = {segment.id: segment for segment in segment_results}
-        for scene_plan in scene_plans:
-            for shot in scene_plan.shots:
-                starts = [seg_map[sid].start for sid in shot.segment_ids if sid in seg_map]
-                ends = [seg_map[sid].end for sid in shot.segment_ids if sid in seg_map]
-                if not starts or not ends:
-                    continue
-                duration = max(ends) - min(starts)
-                if duration > 0 or shot.target_duration <= 0:
-                    shot.target_duration = duration
+        for segment in segment_plans:
+            result = seg_map.get(segment.id)
+            if result is None:
+                continue
+            duration = result.end - result.start
+            if duration <= 0 and result.audio:
+                duration = result.audio.duration
+            if duration > 0 or segment.target_duration <= 0:
+                segment.target_duration = duration
 
     def _build_scene_results(self, scene_plans, segment_results):
         result_map = {segment.id: segment for segment in segment_results}

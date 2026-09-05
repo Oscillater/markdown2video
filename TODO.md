@@ -18,13 +18,13 @@ Runtime artifact 分层约定：
 
 ```text
 plan.json
-= 意图和目标约束：segments / scenes / shots / visual_type / visual_params / layout / target_duration
+= 意图和目标约束：segments / scenes / shots / visual_type / visual_params / layout / segment target_duration
 
 execution-assets.json
 = 素材事实：TTS 音频路径、音频时长、图片路径、图片尺寸、provider、cache key
 
 timeline.json
-= 时间事实：renderer 实际输出；text/shot 使用 `start/end`，marker 使用 `time`
+= 时间事实：renderer 实际输出；shots/text 使用 `start/end`，marker cue 使用 `time`
 
 result.json
 = 最终交付：output MP4、used assets、warnings、artifact index
@@ -57,7 +57,7 @@ future harness preview/review/partial rerun
 
 - Phase 1-4 已完成。
 - 当前处在 Phase 6 进行中，6.1/6.2 已完成。
-- 最新验证：2026-08-20 运行 `python -m pytest -q`，结果是 `339 passed, 4 warnings`。
+- 最新验证：2026-08-21 运行 `python -m pytest -q`，结果是 `352 passed, 3 warnings`。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
 - 旧流程可以用 Markdown 显式图片标记 `[image_start]` / `[image_end]` 生成图片 overlay。
 - Phase 5 no-key 图片链路已有测试闭环：`LocalImageTool -> execution-assets.visual_assets -> timeline -> FFmpeg overlay`。
@@ -197,7 +197,7 @@ output_mp4 + used_assets + warnings
 - 图片事实落在 execution-assets，而不是半成品 result。
 - 时间事实落在 timeline，per-shot visual overlay 优先使用 renderer 真实 shot 时间。
 - 最终 `result.json` 只在 assemble 完成后生成。
-- 单元测试保持通过：当前基线是 `339 passed, 4 warnings`。
+- 单元测试保持通过：当前基线是 `352 passed, 3 warnings`。
 - 真实 Pexels 只是可选验证，不是唯一验证方式。
 
 ## Phase 5.5: Runtime Layout Template
@@ -242,16 +242,44 @@ Phase 5.5 review guardrails：
 
 ## Phase 6: Renderer Closure
 
-状态：进行中，6.1/6.2 已完成。
+状态：进行中，6.1/6.2 和 renderer contract cleanup 已完成；layout backend consumption 仍未完成。
 
-目标：让渲染器消费和其他环节一致的 Shot + Layout + ExecutionAssets 模型。
+目标：完成新的 renderer contract，让渲染器消费和其他环节一致的 Segment + Shot + Layout + ExecutionAssets 模型，并把 renderer 输出的 timeline 变成 assembler 可直接信任的时间事实。
+
+Phase 6 的收敛方向：
+
+```text
+plan.segments
+= 内容字典；Segment 是内容原子，目标语义上持有 duration budget
+
+scene.shots[].segment_ids
+= 执行顺序；Shot 是连续视觉执行单元
+
+scene.shots[].cues
+= marker / media / visual event metadata；不显示、不朗读、不消费 duration
+
+renderer scheduling helpers
+= 把 segment / marker / layout / target budget lower 成 render units 和 cues
+
+timeline.json
+= renderer 运行后的时间事实；shots 是主时间轴，text/markers 是 shot 内 cue
+```
+
+Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration` 迁移到 Segment；`ShotPlan.target_duration` 删除；marker 不再作为可渲染 segment，而是在 planning/render scheduling 阶段 lower 成 shot cue/metadata；有 scenes/shots 的 plan 必须完整覆盖可渲染 segments，不再保留 flat fallback。
 
 当前不匹配的地方：
 
-- `manim_renderer.py` 仍然主要按 segment 循环渲染。
-- 仍有 `self.wait(2)` 这类硬编码等待。
-- `target_duration` 已经算出来，但 Manim 还没有真正消费它。
-- renderer 已经通过标准 `render/manim` Tool backend 调用，并且只接受显式 `plan.json` / `execution-assets.json` / `timeline.json` 输入路径；但渲染逻辑仍未真正按 Shot + Layout 消费。
+- renderer 已经按 shot render unit 执行，并显式写出 `timeline.shots`；但 Manim 视觉实现还没有真正消费 `LayoutTemplate`，只是携带 scene layout contract。
+- silent segment 已经使用 `SegmentPlan.target_duration` 或 result/audio duration；但 layout/render template 还没有参与默认时长决策。
+- FFmpeg visual overlay 已信任 `timeline.shots`，音乐/图片 marker 已从 shot cue timeline 提取；但 FFmpeg 图片/视频布局还没有消费同一套 `LayoutTemplate`。
+- renderer 已经通过标准 `render/manim` Tool backend 调用，并且只接受显式 `plan.json` / `execution-assets.json` / `timeline.json` 输入路径；剩余 Phase 6 重点是让 Manim/FFmpeg 共享 layout/render backend 契约。
+
+已完成的过渡工作：
+
+- [x] renderer helper 已验证 shot 顺序、unknown segment、title skip、silent path、layout 信息携带。
+- [x] render tool 已能清理 stale timeline，并校验 timeline 覆盖当前 plan。
+- [x] renderer 音频播放已从“按列表顺序消费”改为“按 `segment_id` 查找 audio asset”。
+- [x] 上述 helper/test 已按新 schema / shot cue marker contract 调整。
 
 计划任务：
 
@@ -266,20 +294,31 @@ Phase 5.5 review guardrails：
 - [x] Renderer manifest/env loader 已从 Manim 场景模块中抽出为轻量 helper，避免纯输入测试依赖 Manim。
 - [x] Renderer 输入契约已有纯 helper 测试，覆盖标题正文遍历、未知 segment 引用、音频 asset 绑定和 `visual_type` 边界。
 - [x] Timeline 写入已改为按 handle 关闭，并有重复文本/同文本 header-content 的回归测试。
-- [ ] 按 Shot 渲染，而不是松散的 segment 循环。
-- [ ] 传递并消费 `target_duration`。
-- [ ] 用时长感知渲染替代硬编码 wait。
-- [ ] 支持无音频或静音 demo。
+- [x] 补 renderer helper contract 测试：shot 顺序是主遍历顺序、unknown segment fail fast、title 不进正文、marker 进入 timeline 路径、layout 决策进入 render unit。
+- [x] 补 duration helper 测试：silent content/header 可从 result duration 或 shot target 推导时长，voiceover 仍以音频/voiceover 为主。
+- [x] 支持无音频或静音 demo 的输入校验：没有 audio assets 且 segment 没有 `audio_request` 时不报错；silent path 不初始化 `CachedVoiceService`。
+- [x] Schema cleanup：新增 `SegmentPlan.target_duration`，删除 `ShotPlan.target_duration`。
+- [x] Schema cleanup：给 `ShotPlan` 增加 cue/metadata 字段，用于 marker / media / visual event。
+- [x] Schema cleanup：删除或拒绝旧 marker-as-rendered-segment 语义。
+- [x] Parser/Planner lowering：Markdown marker 仍可被识别，但最终 Plan 里 marker 应进入 shot cue/metadata。
+- [x] Parser/Planner validation：planner 必须保证所有可渲染 segment 都被某个 shot 引用。
+- [x] Runtime validation：有 scenes/shots 时 orphan segment fail fast；删除无 scenes 的 flat fallback。
+- [x] Renderer scheduling helper：生成 shot render unit，而不是 segment render unit。
+- [x] Shot render unit 必须包含 scene contract、layout contract、ordered segments、segment durations、marker cues。
+- [x] Duration：按 segment 计算预算和实际等待；shot duration 是内部 segment/cue 聚合结果。
+- [x] Duration：voiceover segment 以音频/voiceover 为主；silent segment 使用 `SegmentPlan.target_duration` 或 layout/render template 默认。
+- [x] Renderer timeline：renderer 显式 open/close shot，直接写出 `timeline.json.shots[].start/end`。
+- [x] Renderer timeline：`timeline.text` 只表示可见文本 cue；`timeline.markers` 只表示事件 cue，不参与反推 shot。
 - [ ] 让 Manim 消费 `LayoutTemplate`。
 - [ ] 让 FFmpeg 图片/视频布局也消费同一套 layout 契约。
 - [ ] 把可复用 Manim 模板重新定义为 layout/render backend，而不是零散视觉效果。
-- [x] 把 renderer 音频播放从“按列表顺序消费”改为“按 `segment_id` 查找 audio asset”，避免自定义 manifest 顺序变化时配错音频。
-- [ ] 补 renderer contract 测试：shot 顺序是主遍历顺序、`target_duration` 会影响静音时长、layout 决策会进入 renderer。
 
 验收标准：
 
 - text-only 视频仍正常。
-- Shot 时长跟随 TTS 时间。
+- 有声 segment 的朗读时长跟随音频/voiceover，silent segment 也有明确时长。
+- Shot timeline 是 renderer 显式输出的主时间轴。
+- marker 是 shot cue/metadata，不作为正文显示或朗读。
 - Manim 和 FFmpeg 对 layout 的理解一致。
 - renderer 不依赖旧的 stale manifest/result 文件。
 
@@ -289,15 +328,15 @@ Phase 5.5 review guardrails：
 
 目标：让 runtime 的中间结果对人和未来 harness 可检查。
 
-这还不是完整 preview/review harness，只是输出可读、可追踪、可诊断的中间结果。
+这还不是完整 preview/review harness，只是输出可读、可追踪、可诊断的中间结果。Phase 7 必须依赖 Phase 6 的新 renderer contract 稳定后再做，不能为旧 artifact 结构补 UI。
 
 计划任务：
 
 - [ ] 输出 artifact index，记录本次生成的 plan、execution-assets、timeline、result、音频、图片、视频路径。
 - [ ] 输出一份紧凑、可读的静态查看页面，例如 `plan.html` 或 `manifest_viewer.html`。
-- [ ] 展示 plan：segments、scenes、shots、visual intent、layout intent。
+- [ ] 展示 plan：segments with target duration、shots with cues、scenes with visual/layout intent。
 - [ ] 展示 execution-assets：audio assets、visual assets、provider、cache key、尺寸、路径。
-- [ ] 展示 timeline：renderer 实际字幕、marker、shot 或 segment 时间。
+- [ ] 展示 timeline：shot 主时间轴、text cue、marker cue、实际 duration。
 - [ ] 展示 result：最终 MP4、used assets、warnings、artifact index。
 - [ ] 展示 warning：provider 缺失、降级到文字、时长差异、layout 风险等。
 
@@ -309,7 +348,7 @@ Phase 5.5 review guardrails：
 
 已知技术债：
 
-- [ ] 定义 run-dir 生命周期策略：`manim_render_*` 临时子目录可以保留用于 debug，但需要被 artifact index 索引或按策略清理。
+- [ ] 定义 run-dir 生命周期策略：`manim_render_*` 临时子目录可以保留用于 debug，但需要被 artifact index 索引或按策略清理；该策略应基于新 timeline/contract。
 - [x] final `result.json` 索引 base render MP4、render dir、render provider、plan、execution-assets 和 timeline。
 - [ ] 新 run 开始时显式标记 run id/status，或清理/失效旧 `result.json`，避免失败路径留下“新 plan/assets + 旧 result”的混合 artifacts。
 
@@ -319,8 +358,8 @@ Phase 5.5 review guardrails：
 
 - `md2video` Codex/Raft skill。
 - 视频任务上下文打包。
-- Agent 生成或编辑 `PlanManifest`。
-- Agent 选图、写 query、提出 layout 建议。
+- Agent 生成或编辑 `PlanManifest`，包括 `SegmentPlan.target_duration`、shot grouping、scene layout 和 shot cues。
+- Agent 选图、写 query、提出 layout 建议，但不能写自由像素坐标，也不能绕过 `LayoutTemplate`。
 - Preview/review UI。
 - 人工替换图片、调整 layout、确认或驳回 shot。
 - 局部 shot 重生成。
@@ -332,10 +371,10 @@ Phase 5.5 review guardrails：
 
 这些先保留为想法，等 runtime 稳定后再判断优先级。
 
-- Remotion backend。
-- AI image provider 插件。
-- AI video provider adapter：Runway / Kling / Sora 等。
-- AI 作曲或环境音效生成。
+- Remotion backend：必须实现同一 renderer contract，并输出同结构 timeline。
+- AI image provider 插件：只能产出 execution-assets，不直接改 timeline。
+- AI video provider adapter：Runway / Kling / Sora 等，只能作为 visual assets/provider 接入。
+- AI 作曲或环境音效生成：放在 runtime contract 稳定之后。
 - 世界模型驱动视频。
 
 ## Maintenance
@@ -344,9 +383,13 @@ Docs mismatch / consistency：
 
 - [x] README 已补充直接依赖 `requests`。
 - [x] README / config 已收敛为 OpenAI-compatible LLM planner，不再把 Anthropic 写成当前支持项。
-- [x] TODO 测试基线已更新到 `339 passed, 4 warnings`。
+- [x] TODO 测试基线已更新到 `352 passed, 3 warnings`。
 - [x] TODO 已删除“是否需要 owner 授权真实短视频 demo”的 stale 项；demo 不作为当前 commit 的交付内容。
 - [ ] 定期核对 README、TODO、`docs/architecture.md` 对 runtime artifact 分层的描述，避免 `result.json` 再被写成中间执行状态。
+- [ ] 定期核对 README、TODO、`docs/architecture.md` 不再把 Segment 写成“最小时间单元”。
+- [ ] 定期核对文档不再把 `ShotPlan.target_duration` 写成长期设计。
+- [ ] 定期核对文档不再把 marker 写成正文渲染路径。
+- [ ] 定期核对文档不再把 `timeline.shots` 写成可由 text/marker 反推。
 
 Test / cleanup：
 
@@ -354,5 +397,8 @@ Test / cleanup：
 - [ ] 调查当前 pytest warnings，来源主要是 mock async TTS 调用和部分第三方 deprecation。
 - [x] 补测试：音频按 `segment_id` 绑定，不依赖 segment 列表顺序。
 - [x] 补测试：render 成功但未生成新 `timeline.json` 时 hard fail，不复用旧 timeline。
+- [x] 删除或重写旧 flat fallback 测试。
+- [x] 删除或重写依赖 `ShotPlan.target_duration` 的测试。
+- [x] 重写 marker-as-segment 的 renderer 测试为 marker-as-shot-cue。
 - [ ] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物。
 - [ ] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确。

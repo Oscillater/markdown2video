@@ -50,6 +50,7 @@ class TestSegmentPlan:
         assert seg.visual_params == {}
         assert seg.layout_type == "center_title_body"
         assert seg.layout_params == {}
+        assert seg.target_duration == 0.0
         assert seg.audio_request is None
         assert seg.explicit is False
         assert seg.section_context == ""
@@ -78,6 +79,10 @@ class TestSegmentPlan:
             marker_data={"kind": "start", "name": "bgm"},
         )
         assert seg.marker_data == {"kind": "start", "name": "bgm"}
+
+    def test_target_duration(self):
+        seg = SegmentPlan(id="s1", text="x", segment_type="content", target_duration=2.5)
+        assert seg.target_duration == 2.5
 
     def test_any_segment_type_string_accepted(self):
         seg = SegmentPlan(id="s1", text="x", segment_type="invalid_type")
@@ -201,29 +206,42 @@ class TestShotPlan:
     def test_defaults(self):
         sp = ShotPlan(id="shot_001")
         assert sp.segment_ids == []
-        assert sp.target_duration == 0.0
+        assert sp.cues == []
 
     def test_with_segments(self):
         sp = ShotPlan(id="shot_001", segment_ids=["seg_001", "seg_002"])
         assert sp.segment_ids == ["seg_001", "seg_002"]
 
-    def test_target_duration(self):
-        sp = ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=5.5)
-        assert sp.target_duration == 5.5
+    def test_cues(self):
+        cue = {
+            "id": "marker_001",
+            "cue_type": "marker_music",
+            "kind": "start",
+            "name": "bgm",
+        }
+        sp = ShotPlan(id="shot_001", segment_ids=["seg_001"], cues=[cue])
+        assert sp.cues == [cue]
 
     def test_json_round_trip(self):
-        original = ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=3.0)
+        original = ShotPlan(
+            id="shot_001",
+            segment_ids=["seg_001"],
+            cues=[{"id": "marker_001", "cue_type": "marker_music"}],
+        )
         json_str = original.model_dump_json()
         restored = ShotPlan.model_validate_json(json_str)
         assert restored.id == "shot_001"
         assert restored.segment_ids == ["seg_001"]
-        assert restored.target_duration == 3.0
+        assert restored.cues == [{"id": "marker_001", "cue_type": "marker_music"}]
 
-    def test_backward_compat_no_target_duration(self):
-        """旧 JSON 无 target_duration 字段应正常解析。"""
-        json_str = '{"id":"shot_001","segment_ids":["seg_001"]}'
-        sp = ShotPlan.model_validate_json(json_str)
-        assert sp.target_duration == 0.0
+    def test_rejects_old_target_duration_field(self):
+        json_str = '{"id":"shot_001","segment_ids":["seg_001"],"target_duration":3.0}'
+        try:
+            ShotPlan.model_validate_json(json_str)
+        except Exception as exc:
+            assert "target_duration" in str(exc)
+        else:
+            raise AssertionError("ShotPlan.target_duration should be rejected")
 
 
 # ========== ShotResult ==========
@@ -501,14 +519,21 @@ class TestExecutionAssets:
         assert result.scenes[0].shots[0].visual.path == "img.jpg"
         assert result.scenes[0].shots[0].visual.source == "local"
 
-    def test_result_manifest_adapter_uses_target_duration_without_audio(self):
+    def test_result_manifest_adapter_uses_segment_target_duration_without_audio(self):
         plan = PlanManifest(
-            segments=[SegmentPlan(id="seg_001", text="x", segment_type="content")],
+            segments=[
+                SegmentPlan(
+                    id="seg_001",
+                    text="x",
+                    segment_type="content",
+                    target_duration=2.0,
+                )
+            ],
             scenes=[
                 ScenePlan(
                     id="scene_001",
                     visual_type="stock_image",
-                    shots=[ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=2.0)],
+                    shots=[ShotPlan(id="shot_001", segment_ids=["seg_001"])],
                 ),
             ],
         )
@@ -522,13 +547,18 @@ class TestExecutionAssets:
     def test_result_manifest_adapter_keeps_silent_then_voiced_shots_monotonic(self):
         plan = PlanManifest(
             segments=[
-                SegmentPlan(id="seg_001", text="silent", segment_type="content"),
+                SegmentPlan(
+                    id="seg_001",
+                    text="silent",
+                    segment_type="content",
+                    target_duration=2.0,
+                ),
                 SegmentPlan(id="seg_002", text="voiced", segment_type="content"),
             ],
             scenes=[
                 ScenePlan(
                     id="scene_001",
-                    shots=[ShotPlan(id="shot_001", segment_ids=["seg_001"], target_duration=2.0)],
+                    shots=[ShotPlan(id="shot_001", segment_ids=["seg_001"])],
                 ),
                 ScenePlan(
                     id="scene_002",

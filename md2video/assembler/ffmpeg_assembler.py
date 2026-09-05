@@ -136,6 +136,21 @@ def _load_marker_timeline(timeline_path: Path) -> Dict[str, float]:
     }
 
 
+def _iter_marker_cues(plan: PlanManifest, cue_type: str):
+    for scene in plan.scenes:
+        for shot in scene.shots:
+            for cue in shot.cues:
+                if cue.get("cue_type") == cue_type:
+                    yield cue
+
+
+def _marker_cue_time(cue: Dict[str, Any], marker_times: Dict[str, float]) -> float:
+    cue_id = cue.get("id")
+    if not cue_id or cue_id not in marker_times:
+        raise ValueError(f"Timeline missing marker cue time: {cue_id}")
+    return float(marker_times[cue_id])
+
+
 def _load_shot_timeline(timeline_path: Path) -> Dict[str, Tuple[float, float]]:
     """Load actual shot timing from renderer timeline.json."""
     if not timeline_path or not timeline_path.exists():
@@ -149,63 +164,34 @@ def _load_shot_timeline(timeline_path: Path) -> Dict[str, Tuple[float, float]]:
         if not shot_id or shot.get("end") is None:
             continue
         timing[shot_id] = (float(shot["start"]), float(shot["end"]))
-    if timing:
-        return timing
-
-    for item in data.get("text", []):
-        shot_id = item.get("shot_id")
-        if not shot_id or item.get("end") is None:
-            continue
-        start, end = float(item["start"]), float(item["end"])
-        if shot_id in timing:
-            old_start, old_end = timing[shot_id]
-            timing[shot_id] = (min(old_start, start), max(old_end, end))
-        else:
-            timing[shot_id] = (start, end)
     return timing
 
 
 def extract_music_entries(plan: PlanManifest, result: ResultManifest,
                            timeline_path: Path = None) -> List[Dict]:
     """从 Manifest 中提取音乐时间段。使用 timeline.json 中的实际视频时间。"""
-    result_map = {seg.id: seg for seg in result.segments}
     music_map = plan.media_declarations.get("music", {})
     marker_times = _load_marker_timeline(timeline_path)
     entries = []
 
-    for seg in plan.segments:
-        if seg.segment_type != "marker_music" or not seg.marker_data:
-            continue
-        kind = seg.marker_data["kind"]
-        name = seg.marker_data["name"]
+    for cue in _iter_marker_cues(plan, "marker_music"):
+        kind = cue.get("kind", "")
+        name = cue.get("name", "")
         src = music_map.get(name)
-
-        # 优先使用 timeline.json 中的实际视频时间
-        actual_time = marker_times.get(seg.id)
+        actual_time = _marker_cue_time(cue, marker_times)
 
         if kind == "start":
-            start_time = actual_time
-            if start_time is None:
-                if seg.id in result_map:
-                    start_time = result_map[seg.id].start
-                else:
-                    start_time = 0.0
-
             entries.append({
                 "name": name,
                 "src": src,
-                "start": float(start_time),
+                "start": float(actual_time),
                 "end": None,
             })
         elif kind == "end":
-            end_time = actual_time
-            if end_time is None:
-                if seg.id in result_map:
-                    end_time = result_map[seg.id].end
             # 回填 start
             for entry in reversed(entries):
                 if entry["name"] == name and entry["end"] is None:
-                    entry["end"] = float(end_time) if end_time is not None else entry["start"]
+                    entry["end"] = float(actual_time)
                     break
 
     return entries
@@ -214,37 +200,27 @@ def extract_music_entries(plan: PlanManifest, result: ResultManifest,
 def extract_image_entries(plan: PlanManifest, result: ResultManifest,
                            timeline_path: Path = None) -> List[Dict]:
     """从 Manifest 中提取图片时间段。使用 timeline.json 中的实际视频时间。"""
-    result_map = {seg.id: seg for seg in result.segments}
     image_map = plan.media_declarations.get("images", {})
     marker_times = _load_marker_timeline(timeline_path)
     entries = []
 
-    for seg in plan.segments:
-        if seg.segment_type != "marker_image" or not seg.marker_data:
-            continue
-        kind = seg.marker_data["kind"]
-        name = seg.marker_data["name"]
+    for cue in _iter_marker_cues(plan, "marker_image"):
+        kind = cue.get("kind", "")
+        name = cue.get("name", "")
         src = image_map.get(name)
-
-        actual_time = marker_times.get(seg.id)
+        actual_time = _marker_cue_time(cue, marker_times)
 
         if kind == "start":
-            start_time = actual_time
-            if start_time is None:
-                start_time = result_map[seg.id].start if seg.id in result_map else 0.0
             entries.append({
                 "name": name,
                 "src": src,
-                "start": float(start_time),
+                "start": float(actual_time),
                 "end": None,
             })
         elif kind == "end":
-            end_time = actual_time
-            if end_time is None:
-                end_time = result_map[seg.id].end if seg.id in result_map else None
             for entry in reversed(entries):
                 if entry["name"] == name and entry["end"] is None:
-                    entry["end"] = float(end_time) if end_time is not None else entry["start"]
+                    entry["end"] = float(actual_time)
                     break
 
     return entries

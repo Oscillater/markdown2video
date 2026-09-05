@@ -18,12 +18,15 @@ from md2video.manifest.schema import (
     ResultManifest,
 )
 from md2video.tools.render.manifest_loader import load_manifests_from_env, required_env_value
-from md2video.tools.render.timeline_builder import TimelineWriter, build_shot_timeline
+from md2video.tools.render.timeline_builder import ShotTimelineWriter, TimelineWriter
 from md2video.tools.render.cached_voice import CachedVoiceService
 from md2video.tools.render.manim_renderer_inputs import (
-    iter_scene_render_segments,
+    TITLE_SEGMENT_TYPES,
+    iter_shot_render_units,
+    segment_render_duration,
     segment_uses_voiceover,
     title_layout_parts,
+    voiceover_segment_ids,
 )
 from md2video.config import (
     RIGHT_X, DEFAULT_TEXT_POSITION, IMAGE_TEXT_POSITION, LEFT_X,
@@ -49,43 +52,66 @@ class ManifestDrivenScene(VoiceoverScene):
 
         # 设置语音服务为 CachedVoiceService
         project_root = Path.cwd().parent
-        voiced_ids = {seg.id for seg in plan.segments if segment_uses_voiceover(seg)}
-        speech_service = CachedVoiceService(
-            result,
-            project_root=project_root,
-            voiced_segment_ids=voiced_ids,
-        )
-        self._md2video_speech_service = speech_service
-        self.set_speech_service(speech_service)
+        voiced_ids = voiceover_segment_ids(plan)
+        if voiced_ids:
+            speech_service = CachedVoiceService(
+                result,
+                project_root=project_root,
+                voiced_segment_ids=voiced_ids,
+            )
+            self._md2video_speech_service = speech_service
+            self.set_speech_service(speech_service)
+        else:
+            self._md2video_speech_service = None
 
         # 跨 scene 持久状态
         self.timeline = []
         self._timeline_writer = TimelineWriter(self.timeline)
         self.marker_timeline = []
+        self.shot_timeline = []
+        self._shot_timeline_writer = ShotTimelineWriter(self.shot_timeline)
         self.current_subtitles = []
         self.subtitle_heights = []
         self.is_image_active = False
         self._segment_location_by_id = {}
 
         # 构建 segment -> scene/shot 映射
-        segment_to_scene = {}
-        for scene in plan.scenes:
-            for shot in scene.shots:
-                for seg_id in shot.segment_ids:
-                    segment_to_scene[seg_id] = scene
-                    self._segment_location_by_id[seg_id] = {
-                        "scene_id": scene.id,
-                        "shot_id": shot.id,
-                    }
+        self._all_render_units = list(iter_shot_render_units(plan, include_title_segments=True))
+        self._body_render_units = list(iter_shot_render_units(plan))
+        self._render_segment_by_segment_id = {}
+        self._render_unit_by_segment_id = {}
+        self._render_unit_by_shot_id = {}
+        self._shot_start_by_shot_id = {}
+        for unit in self._all_render_units:
+            self._render_unit_by_shot_id.setdefault(unit.shot_id, unit)
+            for render_segment in unit.segments:
+                self._render_segment_by_segment_id.setdefault(
+                    render_segment.segment.id,
+                    render_segment,
+                )
+                self._render_unit_by_segment_id.setdefault(render_segment.segment.id, unit)
+                self._segment_location_by_id.setdefault(render_segment.segment.id, {
+                    "scene_id": unit.scene_id,
+                    "shot_id": unit.shot_id,
+                })
 
-        # Fallback: 如果没有 scenes（Phase 1 旧数据），用扁平循环
-        if not plan.scenes:
-            self._construct_flat(plan, result)
+        self._construct_by_scenes(plan, result)
+
+    def _timeline_entry(
+        self,
+        seg,
+        start: float,
+        text: str | None = None,
+        end: float | None = None,
+        shot_unit=None,
+    ) -> dict:
+        if shot_unit is not None and (shot_unit.scene_id or shot_unit.shot_id):
+            location = {
+                "scene_id": shot_unit.scene_id,
+                "shot_id": shot_unit.shot_id,
+            }
         else:
-            self._construct_by_scenes(plan, result, segment_to_scene)
-
-    def _timeline_entry(self, seg, start: float, text: str | None = None, end: float | None = None) -> dict:
-        location = getattr(self, "_segment_location_by_id", {}).get(seg.id, {})
+            location = getattr(self, "_segment_location_by_id", {}).get(seg.id, {})
         entry = {
             "segment_id": seg.id,
             "segment_type": seg.segment_type,
@@ -96,15 +122,20 @@ class ManifestDrivenScene(VoiceoverScene):
         entry.update(location)
         return entry
 
-    def _marker_entry(self, seg) -> dict:
+    def _marker_entry(self, cue, shot_unit=None) -> dict:
+        location = {
+            "scene_id": shot_unit.scene_id if shot_unit is not None else "",
+            "shot_id": shot_unit.shot_id if shot_unit is not None else "",
+        }
+        cue_id = cue.get("id", "")
         entry = {
-            "segment_id": seg.id,
-            "segment_type": seg.segment_type,
-            "kind": seg.marker_data["kind"],
-            "name": seg.marker_data["name"],
+            "id": cue_id,
+            "cue_type": cue.get("cue_type", ""),
+            "kind": cue.get("kind", ""),
+            "name": cue.get("name", ""),
             "time": self.time,
         }
-        entry.update(getattr(self, "_segment_location_by_id", {}).get(seg.id, {}))
+        entry.update(location)
         return entry
 
     @contextmanager
@@ -122,159 +153,130 @@ class ManifestDrivenScene(VoiceoverScene):
             with self.voiceover(text=text) as tracker:
                 yield tracker
 
-    @staticmethod
-    def _find_title_segments(plan):
-        title_main = None
-        title_sub = None
-        for seg in plan.segments:
-            if seg.segment_type == "title_main" and title_main is None:
-                title_main = seg
-            elif seg.segment_type == "title_sub" and title_sub is None:
-                title_sub = seg
-            if title_main and title_sub:
-                break
-        return title_main, title_sub
+    def _find_title_unit(self):
+        for unit in self._all_render_units:
+            title_main = None
+            title_sub = None
+            for render_segment in unit.segments:
+                seg = render_segment.segment
+                if seg.segment_type == "title_main" and title_main is None:
+                    title_main = seg
+                elif seg.segment_type == "title_sub" and title_sub is None:
+                    title_sub = seg
+            if title_main or title_sub:
+                return unit, title_main, title_sub
+        return None, None, None
 
-    def _append_timeline_entry(self, seg, start: float, text: str | None = None) -> int:
+    def _append_timeline_entry(
+        self,
+        seg,
+        start: float,
+        text: str | None = None,
+        shot_unit=None,
+    ) -> int:
         return self._timeline_writer.append(
-            self._timeline_entry(seg, start, text=text)
+            self._timeline_entry(seg, start, text=text, shot_unit=shot_unit)
         )
 
     def _close_timeline_entry(self, timeline_index: int, end: float | None = None) -> None:
         self._timeline_writer.close(timeline_index, self.time if end is None else end)
 
-    def _construct_flat(self, plan, result):
-        """Phase 1 兼容: 扁平 segment 循环（与原逻辑完全一致）。"""
-        timeline = self.timeline
-        marker_timeline = self.marker_timeline
-        spacing = SUBTITLE_SPACING
-
-        # ========== 1. 标题 ==========
-        title_seg, subtitle_seg = self._find_title_segments(plan)
-
-        if title_seg or subtitle_seg:
-            self._render_title(title_seg, subtitle_seg)
-        self._dots_offset_tracker, self._dot1, self._dot2, self._t_tracker = \
-            self._setup_dot_animation(title_seg, subtitle_seg)
-
-        # ========== 2. 内容循环（使用提取的引用） ==========
-        dots_offset_tracker = self._dots_offset_tracker
-        dot1 = self._dot1
-        dot2 = self._dot2
-
-        # ========== 3. 内容循环 ==========
-        current_subtitles = self.current_subtitles
-        subtitle_heights = self.subtitle_heights
-
-        for seg in iter_scene_render_segments(plan):
-            stype = seg.segment_type
-
-            # --- 小标题 ---
-            if stype == "section_header":
-                self._render_section_header(seg, dots_offset_tracker)
-                continue
-
-            # --- 图片标记 ---
-            if stype == "marker_image" and seg.marker_data:
-                marker_timeline.append(self._marker_entry(seg))
-                kind = seg.marker_data["kind"]
-                if kind == "start" and not self.is_image_active:
-                    self.is_image_active = True
-                    self.play(
-                        dots_offset_tracker.animate.move_to(IMAGE_DOTS_OFFSET),
-                        run_time=DOTS_TRANSITION_TIME,
-                    )
-                elif kind == "end" and self.is_image_active:
-                    self.is_image_active = False
-                    self.play(
-                        dots_offset_tracker.animate.move_to(DEFAULT_DOTS_OFFSET),
-                        run_time=DOTS_TRANSITION_TIME,
-                    )
-                continue
-
-            # --- 音乐标记 ---
-            if stype == "marker_music":
-                if seg.marker_data:
-                    marker_timeline.append(self._marker_entry(seg))
-                continue
-
-            # --- 正文 / 附录 ---
-            if stype in ("content", "appendix"):
-                line = seg.text
-                wrapped_line = "\n".join(
-                    [line[i:i + MAX_CHARS_PER_LINE] for i in range(0, len(line), MAX_CHARS_PER_LINE)]
-                )
-
-                start_t = self.time
-                text_position = IMAGE_TEXT_POSITION if self.is_image_active else DEFAULT_TEXT_POSITION
-                sentence = textWithFont(wrapped_line, font_size=15).move_to(text_position)
-                timeline_index = self._append_timeline_entry(seg, start_t, text=line)
-                if segment_uses_voiceover(seg):
-                    with self._voiceover_segment(seg, line) as tracker:
-                        self.add(sentence)
-                    self.wait(2)
-                else:
-                    self.add(sentence)
-                    self.wait(self._segment_duration(seg.id, default=2.0))
-                self.remove(sentence)
-                self._close_timeline_entry(timeline_index)
-
-        # ========== 4. 收尾 ==========
-        self._finish(dot1, dot2, self._t_tracker)
-
-    # ========== Scene-based 渲染 ==========
-
-    def _construct_by_scenes(self, plan, result, segment_to_scene):
-        """Phase 2A: 按 scene 循环渲染。"""
+    def _construct_by_scenes(self, plan, result):
+        """Render in scene/shot order."""
         # 渲染标题
-        title_main, title_sub = self._find_title_segments(plan)
+        title_unit, title_main, title_sub = self._find_title_unit()
         if title_main or title_sub:
-            self._render_title(title_main, title_sub)
+            title_start = self.time
+            self._render_title(title_main, title_sub, title_unit)
             dots_offset_tracker, dot1, dot2, t_tracker = \
                 self._setup_dot_animation(title_main, title_sub)
+            if title_unit is not None and all(
+                item.segment.segment_type in TITLE_SEGMENT_TYPES
+                for item in title_unit.segments
+            ):
+                self._append_shot_timeline_entry(title_unit, title_start, self.time)
+            elif title_unit is not None:
+                self._shot_start_by_shot_id[title_unit.shot_id] = title_start
         else:
             # 无标题时仍需初始化点动画
             dots_offset_tracker, dot1, dot2, t_tracker = self._setup_dot_animation(None, None)
 
         # 按 scene/shot 顺序渲染正文；标题 segment 已在标题卡片中渲染一次。
-        for seg in iter_scene_render_segments(plan):
-            self._render_segment(seg, dots_offset_tracker)
+        for shot_unit in self._body_render_units:
+            self._render_shot_unit(shot_unit, dots_offset_tracker)
 
         self._finish(dot1, dot2, t_tracker)
 
-    def _render_segment(self, seg, dots_offset_tracker):
-        """渲染单个 segment（content/section_header/marker）。"""
-        timeline = self.timeline
-        marker_timeline = self.marker_timeline
-        current_subtitles = self.current_subtitles
-        subtitle_heights = self.subtitle_heights
-        spacing = SUBTITLE_SPACING
+    def _append_shot_timeline_entry(self, shot_unit, start: float, end: float) -> None:
+        full_unit = getattr(self, "_render_unit_by_shot_id", {}).get(
+            shot_unit.shot_id,
+            shot_unit,
+        )
+        self._shot_timeline_writer.upsert({
+            "shot_id": shot_unit.shot_id,
+            "scene_id": shot_unit.scene_id,
+            "segment_ids": full_unit.segment_ids,
+            "start": start,
+            "end": end,
+        })
+
+    def _render_shot_unit(self, shot_unit, dots_offset_tracker):
+        """Render one continuous shot execution unit."""
+        shot_start = self._shot_start_by_shot_id.pop(shot_unit.shot_id, self.time)
+        self._process_cues(shot_unit, "start", dots_offset_tracker)
+        for render_segment in shot_unit.segments:
+            segment_id = render_segment.segment.id
+            self._process_cues(shot_unit, "before", dots_offset_tracker, segment_id)
+            self._render_segment(render_segment, shot_unit, dots_offset_tracker)
+            self._process_cues(shot_unit, "after", dots_offset_tracker, segment_id)
+        self._process_cues(shot_unit, "end", dots_offset_tracker)
+        self._append_shot_timeline_entry(shot_unit, shot_start, self.time)
+
+    def _process_cues(
+        self,
+        shot_unit,
+        position: str,
+        dots_offset_tracker,
+        anchor_segment_id: str = "",
+    ) -> None:
+        for cue in shot_unit.cues:
+            if cue.get("position", "start") != position:
+                continue
+            if anchor_segment_id and cue.get("anchor_segment_id", "") != anchor_segment_id:
+                continue
+            self._process_cue(cue, shot_unit, dots_offset_tracker)
+
+    def _process_cue(self, cue, shot_unit, dots_offset_tracker) -> None:
+        cue_type = cue.get("cue_type", "")
+        if cue_type == "marker_image":
+            self.marker_timeline.append(self._marker_entry(cue, shot_unit))
+            kind = cue.get("kind", "")
+            if kind == "start" and not self.is_image_active:
+                self.is_image_active = True
+                if dots_offset_tracker is not None:
+                    self.play(
+                        dots_offset_tracker.animate.move_to(IMAGE_DOTS_OFFSET),
+                        run_time=DOTS_TRANSITION_TIME,
+                    )
+            elif kind == "end" and self.is_image_active:
+                self.is_image_active = False
+                if dots_offset_tracker is not None:
+                    self.play(
+                        dots_offset_tracker.animate.move_to(DEFAULT_DOTS_OFFSET),
+                        run_time=DOTS_TRANSITION_TIME,
+                    )
+            return
+
+        if cue_type == "marker_music":
+            self.marker_timeline.append(self._marker_entry(cue, shot_unit))
+
+    def _render_segment(self, render_segment, shot_unit, dots_offset_tracker):
+        """Render a single visible segment inside a shot."""
+        seg = render_segment.segment
         stype = seg.segment_type
 
         if stype == "section_header":
-            self._render_section_header(seg, dots_offset_tracker)
-            return
-
-        if stype == "marker_image" and seg.marker_data:
-            marker_timeline.append(self._marker_entry(seg))
-            kind = seg.marker_data["kind"]
-            if kind == "start" and not self.is_image_active:
-                self.is_image_active = True
-                self.play(
-                    dots_offset_tracker.animate.move_to(IMAGE_DOTS_OFFSET),
-                    run_time=DOTS_TRANSITION_TIME,
-                )
-            elif kind == "end" and self.is_image_active:
-                self.is_image_active = False
-                self.play(
-                    dots_offset_tracker.animate.move_to(DEFAULT_DOTS_OFFSET),
-                    run_time=DOTS_TRANSITION_TIME,
-                )
-            return
-
-        if stype == "marker_music":
-            if seg.marker_data:
-                marker_timeline.append(self._marker_entry(seg))
+            self._render_section_header(seg, dots_offset_tracker, render_segment, shot_unit)
             return
 
         if stype in ("content", "appendix"):
@@ -285,26 +287,39 @@ class ManifestDrivenScene(VoiceoverScene):
             start_t = self.time
             text_position = IMAGE_TEXT_POSITION if self.is_image_active else DEFAULT_TEXT_POSITION
             sentence = textWithFont(wrapped_line, font_size=15).move_to(text_position)
-            timeline_index = self._append_timeline_entry(seg, start_t, text=line)
+            timeline_index = self._append_timeline_entry(seg, start_t, text=line, shot_unit=shot_unit)
             if segment_uses_voiceover(seg):
                 with self._voiceover_segment(seg, line) as tracker:
                     self.add(sentence)
-                self.wait(2)
+                    self._wait_for_voiceover(tracker, seg, render_segment)
             else:
                 self.add(sentence)
-                self.wait(self._segment_duration(seg.id, default=2.0))
+                self.wait(self._segment_duration(seg, default=2.0, render_segment=render_segment))
             self.remove(sentence)
             self._close_timeline_entry(timeline_index)
 
-    def _segment_duration(self, segment_id: str, default: float = 2.0) -> float:
-        result = getattr(self, "_segment_result_by_id", {}).get(segment_id)
-        if result:
-            duration = result.end - result.start
+    def _segment_duration(self, seg, default: float = 2.0, render_segment=None) -> float:
+        item = render_segment or getattr(self, "_render_segment_by_segment_id", {}).get(seg.id)
+        result = getattr(self, "_segment_result_by_id", {}).get(seg.id)
+        return segment_render_duration(seg, result, item, default=default)
+
+    def _voiceover_duration(self, tracker, seg, render_segment=None) -> float:
+        tracker_duration = getattr(tracker, "duration", None)
+        if tracker_duration is not None:
+            try:
+                duration = float(tracker_duration)
+            except (TypeError, ValueError):
+                duration = 0.0
             if duration > 0:
                 return duration
-        return default
+        return self._segment_duration(seg, default=0.0, render_segment=render_segment)
 
-    def _render_section_header(self, seg, dots_offset_tracker):
+    def _wait_for_voiceover(self, tracker, seg, render_segment=None) -> None:
+        duration = self._voiceover_duration(tracker, seg, render_segment)
+        if duration > 0:
+            self.wait(duration)
+
+    def _render_section_header(self, seg, dots_offset_tracker, render_segment=None, shot_unit=None):
         """渲染 section header（左侧字幕堆叠）。"""
         timeline = self.timeline
         current_subtitles = self.current_subtitles
@@ -318,13 +333,18 @@ class ManifestDrivenScene(VoiceoverScene):
             subtitle.scale(SUBTITLE_MAX_WIDTH / subtitle.width)
 
         if segment_uses_voiceover(seg):
-            with self._voiceover_segment(seg, subtitle_text):
+            with self._voiceover_segment(seg, subtitle_text) as tracker:
                 self.play(Write(subtitle))
-                self.wait(0.5)
+                self._wait_for_voiceover(tracker, seg, render_segment)
         else:
             self.play(Write(subtitle))
-            self.wait(self._segment_duration(seg.id, default=0.5))
-        timeline_index = self._append_timeline_entry(seg, start_t, text=subtitle_text)
+            self.wait(self._segment_duration(seg, default=0.5, render_segment=render_segment))
+        timeline_index = self._append_timeline_entry(
+            seg,
+            start_t,
+            text=subtitle_text,
+            shot_unit=shot_unit,
+        )
         subtitle._md2video_timeline_index = timeline_index
 
         if len(subtitle_text) > 5:
@@ -371,7 +391,7 @@ class ManifestDrivenScene(VoiceoverScene):
         current_subtitles.append(subtitle)
         subtitle_heights.append(subtitle_height)
 
-    def _render_title(self, title_seg, subtitle_seg):
+    def _render_title(self, title_seg, subtitle_seg, shot_unit=None):
         """渲染标题卡片。"""
         title_parts = title_layout_parts(title_seg, subtitle_seg)
 
@@ -384,7 +404,12 @@ class ManifestDrivenScene(VoiceoverScene):
         start_t = self.time
         for seg, font_size, position in title_parts:
             mobject = textWithFont(seg.text, font_size=font_size).move_to(position)
-            timeline_index = self._append_timeline_entry(seg, start_t, text=seg.text)
+            timeline_index = self._append_timeline_entry(
+                seg,
+                start_t,
+                text=seg.text,
+                shot_unit=shot_unit,
+            )
             title_mobjects.append({
                 "mobject": mobject,
                 "timeline_index": timeline_index,
@@ -456,14 +481,10 @@ class ManifestDrivenScene(VoiceoverScene):
 
         timeline_path = Path(required_env_value("MD2VIDEO_TIMELINE_PATH"))
         timeline_path.parent.mkdir(parents=True, exist_ok=True)
-        shots = self._build_shot_timeline()
         with open(timeline_path, "w", encoding="utf-8") as f:
-            json.dump({"text": self.timeline, "markers": self.marker_timeline, "shots": shots},
+            json.dump({"text": self.timeline, "markers": self.marker_timeline, "shots": self.shot_timeline},
                        f, ensure_ascii=False, indent=2)
         print(f"Timeline saved: {timeline_path}")
-
-    def _build_shot_timeline(self) -> list[dict]:
-        return build_shot_timeline(self.timeline, self.marker_timeline)
 
     def _load_manifests(self) -> tuple[PlanManifest, ResultManifest]:
         """Load explicit PlanManifest and ExecutionAssets renderer inputs."""

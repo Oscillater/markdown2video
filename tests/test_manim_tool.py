@@ -17,8 +17,21 @@ def _write_render_inputs(tmp_path: Path, plan_data=None) -> tuple[Path, Path, Pa
     plan_path = tmp_path / "plan.json"
     assets_path = tmp_path / "execution-assets.json"
     timeline_path = tmp_path / "timeline.json"
+    default_plan = {
+        "version": "1",
+        "segments": [{
+            "id": "seg_001",
+            "text": "hello",
+            "segment_type": "content",
+            "target_duration": 1.0,
+        }],
+        "scenes": [{
+            "id": "scene_001",
+            "shots": [{"id": "shot_001", "segment_ids": ["seg_001"]}],
+        }],
+    }
     plan_path.write_text(
-        json.dumps(plan_data or {"version": "1", "segments": [], "scenes": []}),
+        json.dumps(plan_data or default_plan),
         encoding="utf-8",
     )
     assets_path.write_text(
@@ -29,8 +42,24 @@ def _write_render_inputs(tmp_path: Path, plan_data=None) -> tuple[Path, Path, Pa
 
 
 def _write_timeline(timeline_path: Path, data=None) -> None:
+    default_timeline = {
+        "text": [{
+            "segment_id": "seg_001",
+            "segment_type": "content",
+            "shot_id": "shot_001",
+            "start": 0.0,
+            "end": 1.0,
+        }],
+        "markers": [],
+        "shots": [{
+            "shot_id": "shot_001",
+            "segment_ids": ["seg_001"],
+            "start": 0.0,
+            "end": 1.0,
+        }],
+    }
     timeline_path.write_text(
-        json.dumps(data or {"text": [], "markers": [], "shots": []}),
+        json.dumps(data or default_timeline),
         encoding="utf-8",
     )
 
@@ -99,16 +128,18 @@ def _title_only_timeline(segment_id: str, segment_type: str) -> dict:
 def _marker_plan() -> dict:
     return {
         "version": "1",
-        "segments": [{
-            "id": "marker_001",
-            "text": "[music_start bgm]",
-            "segment_type": "marker_music",
-        }],
+        "segments": [],
         "scenes": [{
             "id": "scene_001",
             "shots": [{
                 "id": "shot_001",
-                "segment_ids": ["marker_001"],
+                "segment_ids": [],
+                "cues": [{
+                    "id": "marker_001",
+                    "cue_type": "marker_music",
+                    "kind": "start",
+                    "name": "bgm",
+                }],
             }],
         }],
     }
@@ -120,7 +151,7 @@ def _marker_timeline(marker: dict | None) -> dict:
         "markers": [] if marker is None else [marker],
         "shots": [{
             "shot_id": "shot_001",
-            "segment_ids": ["marker_001"],
+            "segment_ids": [],
             "start": 1.0,
             "end": 1.0,
         }],
@@ -377,7 +408,10 @@ class TestManimRenderTool:
         completed = MagicMock(returncode=0, stderr="")
 
         def run_success(*args, **kwargs):
-            _write_timeline(Path(kwargs["env"]["MD2VIDEO_TIMELINE_PATH"]))
+            _write_timeline(
+                Path(kwargs["env"]["MD2VIDEO_TIMELINE_PATH"]),
+                {"text": [], "markers": [], "shots": []},
+            )
             return completed
 
         with patch(
@@ -447,21 +481,23 @@ class TestManimRenderTool:
                         "output_dir": str(tmp_path),
                     })
 
-    def test_execute_accepts_marker_only_shot_timeline(self, tmp_path):
+    def test_execute_accepts_marker_cue_only_shot_timeline(self, tmp_path):
         plan_path, assets_path, timeline_path = _write_render_inputs(
             tmp_path,
             {
                 "version": "1",
-                "segments": [{
-                    "id": "marker_001",
-                    "text": "[music_start bgm]",
-                    "segment_type": "marker_music",
-                }],
+                "segments": [],
                 "scenes": [{
                     "id": "scene_001",
                     "shots": [{
                         "id": "shot_001",
-                        "segment_ids": ["marker_001"],
+                        "segment_ids": [],
+                        "cues": [{
+                            "id": "marker_001",
+                            "cue_type": "marker_music",
+                            "kind": "start",
+                            "name": "bgm",
+                        }],
                     }],
                 }],
             },
@@ -475,14 +511,14 @@ class TestManimRenderTool:
                 {
                     "text": [],
                     "markers": [{
-                        "segment_id": "marker_001",
-                        "segment_type": "marker_music",
+                        "id": "marker_001",
+                        "cue_type": "marker_music",
                         "shot_id": "shot_001",
                         "time": 1.0,
                     }],
                     "shots": [{
                         "shot_id": "shot_001",
-                        "segment_ids": ["marker_001"],
+                        "segment_ids": [],
                         "start": 1.0,
                         "end": 1.0,
                     }],
@@ -520,7 +556,65 @@ class TestManimRenderTool:
 
         assert output["timeline_path"] == str(tmp_path / "timeline.json")
 
-    def test_execute_rejects_marker_segment_missing_timeline_marker(self, tmp_path):
+    def test_execute_accepts_mixed_title_body_shot_timeline(self, tmp_path):
+        output = _execute_with_rendered_timeline(
+            tmp_path,
+            {
+                "version": "1",
+                "segments": [
+                    {
+                        "id": "title_001",
+                        "text": "Title",
+                        "segment_type": "title_main",
+                    },
+                    {
+                        "id": "seg_001",
+                        "text": "Body",
+                        "segment_type": "content",
+                        "target_duration": 1.0,
+                    },
+                ],
+                "scenes": [{
+                    "id": "scene_001",
+                    "shots": [{
+                        "id": "shot_001",
+                        "segment_ids": ["title_001", "seg_001"],
+                    }],
+                }],
+            },
+            {
+                "text": [
+                    {
+                        "segment_id": "title_001",
+                        "segment_type": "title_main",
+                        "scene_id": "scene_001",
+                        "shot_id": "shot_001",
+                        "start": 0.0,
+                        "end": 2.0,
+                    },
+                    {
+                        "segment_id": "seg_001",
+                        "segment_type": "content",
+                        "scene_id": "scene_001",
+                        "shot_id": "shot_001",
+                        "start": 2.0,
+                        "end": 3.0,
+                    },
+                ],
+                "markers": [],
+                "shots": [{
+                    "shot_id": "shot_001",
+                    "scene_id": "scene_001",
+                    "segment_ids": ["title_001", "seg_001"],
+                    "start": 0.0,
+                    "end": 3.0,
+                }],
+            },
+        )
+
+        assert output["timeline_path"] == str(tmp_path / "timeline.json")
+
+    def test_execute_rejects_marker_cue_missing_timeline_marker(self, tmp_path):
         with pytest.raises(RuntimeError, match="Timeline missing marker entries.*marker_001"):
             _execute_with_rendered_timeline(
                 tmp_path,

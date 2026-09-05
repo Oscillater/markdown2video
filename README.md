@@ -101,17 +101,17 @@ Markdown → Parser/Planner → Plan Manifest → Execution Assets → Manim Ren
 
 核心概念：
 
-- **Segment**：最小时间单元（一句话），TTS 以 Segment 为单位合成语音
-- **Shot**：最小连续视觉单元，由连续的 Segment 组成，每个 Shot 调用一个工具
-- **Scene**：视觉模板（风格组），由 Planner 定义 3~5 个模板，相同模板的 Shot 归入同一个 Scene
+- **Segment**：内容原子，通常是一句话或一个标题；持有朗读、显示、动画和 `target_duration` 等计划意图
+- **Shot**：最小连续视觉执行单元，由有序 Segment 和 marker/media/visual cue 组成，并保持一段连续视觉状态
+- **Scene**：视觉策略组，共享素材策略、layout/template 和风格决策
 
 数据流：
 
 1. **Parser** 将 Markdown 解析为 Segment 列表
-2. **Planner** 将 Segment 分组为 Shot（镜头），并为每个 Shot 分配 Scene 模板（视觉方案）
+2. **Planner** 将 Segment 分组为 Shot，将 marker 降级为 shot cue，并为 Scene 分配视觉和 layout 策略
 3. **PlanManifest** 保存计划和目标约束，不保存执行产物
 4. **ExecutionAssets** 记录 TTS 音频、本地图片或 Pexels 图片等素材事实
-5. **Manim Renderer** 渲染基础视频，并输出带 segment/shot id 的 `timeline.json`
+5. **Manim Renderer** 渲染基础视频，并输出真实时间事实 `timeline.json`
 6. **FFmpeg Assembler** 根据真实 timeline 拼接视频、混入语音、叠加音乐和图片
 7. **FinalResultManifest** 在 assemble 完成后写出最终 MP4、used assets、warnings 和 artifact index
 
