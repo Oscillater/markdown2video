@@ -11,6 +11,8 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
+from md2video.layout.mapping import box_pixel_rect, even_size
+from md2video.layout.registry import create_default_layout_registry
 from md2video.manifest.schema import (
     ExecutionAssets,
     PlanManifest,
@@ -250,12 +252,21 @@ def extract_shot_visual_entries_from_assets(
     result: ResultManifest | None = None,
     timeline_path: Path | None = None,
 ) -> List[Dict]:
-    """Extract per-shot visual overlay entries from execution-assets."""
+    """Extract per-shot visual overlay entries from execution-assets.
+
+    Each entry carries its scene layout contract so the overlay can be placed
+    by the same LayoutTemplate the renderer used.
+    """
     result = result or result_manifest_from_execution_assets(plan, execution_assets)
     shot_timing = _load_shot_timeline(timeline_path)
     fallback_timing = {
         shot.id: (shot.start, shot.end)
         for scene in result.scenes
+        for shot in scene.shots
+    }
+    scene_by_shot = {
+        shot.id: scene
+        for scene in plan.scenes
         for shot in scene.shots
     }
 
@@ -267,12 +278,51 @@ def extract_shot_visual_entries_from_assets(
             asset.shot_id,
             fallback_timing.get(asset.shot_id, (0.0, 0.0)),
         )
-        entries.append({
+        entry = {
             "name": asset.shot_id,
             "src": asset.path,
             "start": start,
             "end": end,
-        })
+        }
+        scene = scene_by_shot.get(asset.shot_id)
+        if scene is not None:
+            entry["layout_type"] = scene.layout_type
+            entry["layout_params"] = dict(scene.layout_params)
+        entries.append(entry)
+    return entries
+
+
+def attach_image_layout_regions(
+    entries: List[Dict],
+    video_width: int,
+    video_height: int,
+    layout_registry=None,
+) -> List[Dict]:
+    """Attach pixel-space "image" region rects derived from each entry's layout.
+
+    Entries without a resolvable layout or without an "image" region are left
+    untouched and keep the legacy overlay placement.
+    """
+    registry = layout_registry or create_default_layout_registry()
+    for entry in entries:
+        layout_type = entry.get("layout_type")
+        if not layout_type:
+            continue
+        try:
+            computed = registry.compute(
+                layout_type, entry.get("layout_params"), video_width, video_height,
+            )
+        except Exception:
+            continue
+        if "image" not in computed.regions:
+            continue
+        left, top, width, height = box_pixel_rect(
+            computed.region("image"), video_width, video_height,
+        )
+        width, height = even_size(width, height)
+        if width <= 0 or height <= 0:
+            continue
+        entry["region_px"] = {"left": left, "top": top, "width": width, "height": height}
     return entries
 
 
@@ -339,38 +389,59 @@ def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
         end = img["end"] if img["end"] is not None else video_duration
         duration = end - start
         out_label = f"[v{i}]"
+        region = img.get("region_px")
 
         if kb_enabled and duration > 1.0:
             # Ken Burns: scale(cover) → zoompan → overlay
+            region_w = region["width"] if region else video_width
+            region_h = region["height"] if region else video_height
             scaled_stream = f"[img{i}_scaled]"
             zoomed_stream = f"[img{i}_zoomed]"
             scale_filter = (
-                f"{img_input_stream}scale={video_width}:{video_height}:"
+                f"{img_input_stream}scale={region_w}:{region_h}:"
                 f"force_original_aspect_ratio=increase,setsar=1{scaled_stream}"
             )
             kb_filter = _build_ken_burns_filter(
                 scaled_stream, zoomed_stream, duration,
-                video_width, video_height,
+                region_w, region_h,
                 zoom_speed=ken_burns_config.zoom_speed,
                 zoom_direction=ken_burns_config.zoom_direction,
                 fps=ken_burns_config.fps,
             )
+            if region:
+                overlay_pos = f"x='{region['left']}':y='{region['top']}'"
+            else:
+                overlay_pos = "x='(W-w)/2':y='(H-h)/2'"
             overlay_filter = (
                 f"{video_label}{zoomed_stream}"
-                f"overlay=x='(W-w)/2':y='(H-h)/2':enable='between(t,{start},{end})'{out_label}"
+                f"overlay={overlay_pos}:enable='between(t,{start},{end})'{out_label}"
             )
             vid_parts.extend([scale_filter, kb_filter, overlay_filter])
         else:
-            # 静态 overlay（原有逻辑）
+            # 静态 overlay：有 layout region 时 contain 进 region，否则用旧常量
             scaled_img_stream = f"[img{i}_scaled]"
-            scale_filter = (
-                f"{img_input_stream}scale=w='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),{MAX_WIDTH},-2)'"
-                f":h='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),-2,{MAX_HEIGHT})',setsar=1{scaled_img_stream}"
-            )
-            overlay_filter = (
-                f"{video_label}{scaled_img_stream}"
-                f"overlay=x='{CENTER_X}-w/2':y='{CENTER_Y}-h/2':enable='between(t,{start},{end})'{out_label}"
-            )
+            if region:
+                region_w, region_h = region["width"], region["height"]
+                ratio_test = f"gt(iw/ih,{region_w}/{region_h})"
+                scale_filter = (
+                    f"{img_input_stream}scale=w='if({ratio_test},{region_w},-2)'"
+                    f":h='if({ratio_test},-2,{region_h})',setsar=1{scaled_img_stream}"
+                )
+                overlay_filter = (
+                    f"{video_label}{scaled_img_stream}"
+                    f"overlay=x='{region['left']}+({region_w}-w)/2'"
+                    f":y='{region['top']}+({region_h}-h)/2'"
+                    f":enable='between(t,{start},{end})'{out_label}"
+                )
+            else:
+                scale_filter = (
+                    f"{img_input_stream}scale=w='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),{MAX_WIDTH},-2)'"
+                    f":h='if(gt(iw/ih,{MAX_WIDTH}/{MAX_HEIGHT}),-2,{MAX_HEIGHT})',setsar=1{scaled_img_stream}"
+                )
+                overlay_filter = (
+                    f"{video_label}{scaled_img_stream}"
+                    f"overlay=x='{CENTER_X}-w/2':y='{CENTER_Y}-h/2':enable='between(t,{start},{end})'{out_label}"
+                )
             vid_parts.extend([scale_filter, overlay_filter])
         video_label = out_label
 
@@ -482,6 +553,9 @@ class FFmpegAssembler:
                     img["src"] = str((self.md_dir / src).resolve())
                 if Path(img["src"]).exists():
                     prepared_images.append(img)
+
+            # per-shot visual 按 scene 的 LayoutTemplate 摆放；无 layout 的条目保持旧行为
+            attach_image_layout_regions(prepared_images, video_width, video_height)
 
             # 加载 Ken Burns 配置（若未在构造时传入）
             kb_config = self.ken_burns_config

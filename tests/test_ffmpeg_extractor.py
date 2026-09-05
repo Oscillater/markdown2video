@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 
+import md2video.assembler.ffmpeg_assembler as ffmpeg_assembler
 from md2video.assembler.ffmpeg_assembler import (
+    attach_image_layout_regions,
+    build_and_run_ffmpeg,
     extract_image_entries,
     extract_music_entries,
     extract_shot_visual_entries,
     extract_shot_visual_entries_from_assets,
 )
+from md2video.config import KenBurnsConfig
 from md2video.manifest.schema import (
     AudioResult,
     ExecutionAssets,
@@ -241,6 +247,8 @@ class TestExtractShotVisualEntries:
             "src": "/repo/assets/local_image.jpg",
             "start": 0.0,
             "end": 2.0,
+            "layout_type": "center_title_body",
+            "layout_params": {},
         }]
 
     def test_execution_assets_visual_uses_timeline_shot_timing(self, tmp_path):
@@ -349,3 +357,164 @@ class TestExtractShotVisualEntries:
             ]),
         ])
         assert extract_shot_visual_entries(result) == []
+
+
+# ========== layout region consumption ==========
+
+def _plan_with_scene_layout(layout_type, layout_params=None):
+    return PlanManifest(
+        segments=[],
+        scenes=[
+            ScenePlan(
+                id="scene_001",
+                visual_type="stock_image",
+                layout_type=layout_type,
+                layout_params=layout_params or {},
+                shots=[ShotPlan(id="shot_001", segment_ids=[])],
+            ),
+        ],
+    )
+
+
+def test_extract_shot_visual_entries_from_assets_attaches_scene_layout():
+    """per-shot visual 条目携带所在 scene 的 layout 契约。"""
+    plan = _plan_with_scene_layout(
+        "image_top_text_bottom", {"split": "image_focus"},
+    )
+    assets = ExecutionAssets(visual_assets=[
+        VisualAsset(shot_id="shot_001", path="/tmp/img.jpg", provider="local"),
+    ])
+
+    entries = extract_shot_visual_entries_from_assets(plan, assets)
+
+    assert len(entries) == 1
+    assert entries[0]["layout_type"] == "image_top_text_bottom"
+    assert entries[0]["layout_params"] == {"split": "image_focus"}
+
+
+def test_extract_shot_visual_entries_from_assets_without_layout_fields():
+    plan = PlanManifest(segments=[], scenes=[])
+
+    entries = extract_shot_visual_entries_from_assets(plan, ExecutionAssets())
+
+    assert entries == []
+
+
+def test_attach_image_layout_regions_computes_pixel_rect():
+    entries = [{
+        "name": "shot_001",
+        "src": "/tmp/img.jpg",
+        "start": 0.0,
+        "end": 1.0,
+        "layout_type": "image_top_text_bottom",
+        "layout_params": {"split": "balanced", "gap": "normal"},
+    }]
+
+    attach_image_layout_regions(entries, 480, 854)
+
+    # image box: x 0.08..0.92, y 0.06..0.50 -> rounded + even dims
+    assert entries[0]["region_px"] == {
+        "left": 38, "top": 51, "width": 402, "height": 376,
+    }
+
+
+def test_attach_image_layout_regions_skips_without_image_region():
+    entries = [{
+        "name": "shot_001",
+        "src": "/tmp/img.jpg",
+        "start": 0.0,
+        "end": 1.0,
+        "layout_type": "center_title_body",
+        "layout_params": {},
+    }]
+
+    attach_image_layout_regions(entries, 480, 854)
+
+    assert "region_px" not in entries[0]
+
+
+def test_attach_image_layout_regions_skips_unknown_layout():
+    entries = [{
+        "name": "shot_001",
+        "src": "/tmp/img.jpg",
+        "start": 0.0,
+        "end": 1.0,
+        "layout_type": "not_a_template",
+        "layout_params": {},
+    }]
+
+    attach_image_layout_regions(entries, 480, 854)
+
+    assert "region_px" not in entries[0]
+
+
+def test_attach_image_layout_regions_keeps_plain_entries():
+    """marker 图片等无 layout 条目保持原样（legacy 摆放）。"""
+    entries = [{"name": "logo", "src": "/tmp/logo.jpg", "start": 0.0, "end": 1.0}]
+
+    attach_image_layout_regions(entries, 480, 854)
+
+    assert entries[0] == {"name": "logo", "src": "/tmp/logo.jpg", "start": 0.0, "end": 1.0}
+
+
+def _run_build_and_run_ffmpeg(monkeypatch, image_segments, kb_config):
+    captured = {}
+
+    def fake_run(cmd, check=True):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(ffmpeg_assembler.subprocess, "run", fake_run)
+    build_and_run_ffmpeg(
+        video_path=Path("base.mp4"),
+        music_segments=[],
+        image_segments=image_segments,
+        base_has_audio=True,
+        out_path=Path("out.mp4"),
+        video_duration=10.0,
+        video_width=480,
+        video_height=854,
+        ken_burns_config=kb_config,
+    )
+    cmd = captured["cmd"]
+    return cmd[cmd.index("-filter_complex") + 1]
+
+
+def test_build_and_run_ffmpeg_static_overlay_inside_layout_region(monkeypatch):
+    img = {
+        "name": "shot_001",
+        "src": "/tmp/img.jpg",
+        "start": 0.0,
+        "end": 1.5,
+        "region_px": {"left": 38, "top": 51, "width": 402, "height": 376},
+    }
+
+    filter_complex = _run_build_and_run_ffmpeg(monkeypatch, [img], KenBurnsConfig(enabled=False))
+
+    assert "scale=w='if(gt(iw/ih,402/376),402,-2)':h='if(gt(iw/ih,402/376),-2,376)'" in filter_complex
+    assert "overlay=x='38+(402-w)/2':y='51+(376-h)/2'" in filter_complex
+
+
+def test_build_and_run_ffmpeg_ken_burns_inside_layout_region(monkeypatch):
+    img = {
+        "name": "shot_001",
+        "src": "/tmp/img.jpg",
+        "start": 0.0,
+        "end": 1.5,
+        "region_px": {"left": 38, "top": 51, "width": 402, "height": 376},
+    }
+
+    filter_complex = _run_build_and_run_ffmpeg(monkeypatch, [img], KenBurnsConfig(enabled=True))
+
+    assert "scale=402:376:force_original_aspect_ratio=increase" in filter_complex
+    assert "s=402x376" in filter_complex
+    assert "overlay=x='38':y='51'" in filter_complex
+
+
+def test_build_and_run_ffmpeg_without_region_keeps_legacy_overlay(monkeypatch):
+    img = {"name": "logo", "src": "/tmp/img.jpg", "start": 0.0, "end": 1.5}
+
+    filter_complex = _run_build_and_run_ffmpeg(monkeypatch, [img], KenBurnsConfig(enabled=False))
+
+    assert "scale=w='if(gt(iw/ih,288/597),288,-2)':h='if(gt(iw/ih,288/597),-2,597)'" in filter_complex
+    assert "overlay=x='288-w/2':y='298-h/2'" in filter_complex
