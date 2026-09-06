@@ -22,6 +22,7 @@ from md2video.config import (
     load_planner_config,
     load_tool_config,
 )
+from md2video.core.multi_backend import RenderGroup, plan_render_groups
 from md2video.core.planner.rule_planner import (
     RulePlanner,
     renderable_segments,
@@ -207,22 +208,29 @@ class Pipeline:
 
         print("[3/5] Rendering video...")
         render_backend = self.tool_config.render_backend
-        render_tool = self.registry.get_tool("render", render_backend)
-        if not render_tool:
+        # 按 scene 的 render_backend 把 scene 序列切成极大同后端组；
+        # 要求的后端没注册就在开渲前 fail fast，不带病渲染。
+        groups = plan_render_groups(plan, render_backend)
+        missing_backends = []
+        for group in groups:
+            if not self.registry.get_tool("render", group.backend):
+                missing_backends.append(group.backend)
+        if missing_backends:
             raise ValueError(
-                f"Render tool not registered: render/{render_backend}"
+                "Render tool not registered: "
+                + ", ".join(
+                    f"render/{backend}" for backend in dict.fromkeys(missing_backends)
+                )
             )
-        timeline_path = run_dir / "timeline.json"
-        render_output = render_tool.execute({
-            "plan_path": str(plan_path),
-            "execution_assets_path": str(assets_path),
-            "timeline_path": str(timeline_path),
-            "output_dir": str(run_dir),
-            "timeout": 300,
-        })
-        video_path, timeline_path = self._validate_render_output(
-            render_output, timeline_path, expected_provider=render_backend,
-        )
+
+        if len(groups) <= 1:
+            render_output, video_path, timeline_path = self._render_single_group(
+                plan, assets, run_dir, groups[0] if groups else RenderGroup(backend=render_backend),
+            )
+        else:
+            render_output, video_path, timeline_path = self._render_backend_groups(
+                plan, assets, assets_path, run_dir, groups,
+            )
         render_warnings = render_output.get("warnings") or []
         self._warnings.extend(str(warning) for warning in render_warnings)
         print(f"  Video: {video_path}")
@@ -255,6 +263,94 @@ class Pipeline:
             render_output=render_output,
         )
         return output_path
+
+    def _render_single_group(
+        self,
+        plan: PlanManifest,
+        assets: ExecutionAssets,
+        run_dir: Path,
+        group: "RenderGroup",
+    ) -> tuple[dict, Path, Path]:
+        """单组路径（现有行为，逐帧不变）：一次渲染调用产出底片与 timeline。"""
+        render_tool = self.registry.get_tool("render", group.backend)
+        timeline_path = run_dir / "timeline.json"
+        render_output = render_tool.execute({
+            "plan_path": str(run_dir / "plan.json"),
+            "execution_assets_path": str(run_dir / "execution-assets.json"),
+            "timeline_path": str(timeline_path),
+            "output_dir": str(run_dir),
+            "timeout": 300,
+        })
+        video_path, timeline_path = self._validate_render_output(
+            render_output, timeline_path, expected_provider=group.backend,
+        )
+        return render_output, video_path, timeline_path
+
+    def _render_backend_groups(
+        self,
+        plan: PlanManifest,
+        assets: ExecutionAssets,
+        assets_path: Path,
+        run_dir: Path,
+        groups: list["RenderGroup"],
+    ) -> tuple[dict, Path, Path]:
+        """多组路径：切片渲染 → 局部 timeline 前缀偏移合并 → 底片拼接。
+
+        每组独立调用渲染后端（组边界即引擎切换，渲染器内部跨 shot 状态
+        清零）；合并后的 timeline 对完整 plan 重过全局时间不变量闸门。
+        """
+        from md2video.core.multi_backend import (
+            check_merged_timeline,
+            concat_group_videos,
+            merge_group_timelines,
+            slice_plan,
+        )
+
+        groups_root = run_dir / "groups"
+        local_timelines: list[dict] = []
+        group_videos: list[Path] = []
+        all_warnings: list[str] = []
+        for index, group in enumerate(groups):
+            group_dir = groups_root / f"{index:02d}_{group.backend}"
+            group_dir.mkdir(parents=True, exist_ok=True)
+            slice = slice_plan(plan, group.scenes)
+            slice_path = group_dir / "plan.json"
+            slice_path.write_text(slice.model_dump_json(indent=2), encoding="utf-8")
+            timeline_path = group_dir / "timeline.json"
+            render_tool = self.registry.get_tool("render", group.backend)
+            render_output = render_tool.execute({
+                "plan_path": str(slice_path),
+                "execution_assets_path": str(assets_path),
+                "timeline_path": str(timeline_path),
+                "output_dir": str(group_dir),
+                "timeout": 300,
+            })
+            video_path, timeline_path = self._validate_render_output(
+                render_output, timeline_path, expected_provider=group.backend,
+            )
+            local_timelines.append(
+                json.loads(timeline_path.read_text(encoding="utf-8"))
+            )
+            group_videos.append(video_path)
+            all_warnings.extend(str(w) for w in render_output.get("warnings") or [])
+            print(f"  Group {index}: {group.backend} ({len(group.scenes)} scenes)")
+
+        merged = merge_group_timelines(local_timelines)
+        merged_path = run_dir / "timeline.json"
+        merged_path.write_text(
+            json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        check_merged_timeline(plan, assets, merged)
+
+        concat_path = run_dir / "base_video.mp4"
+        concat_group_videos(group_videos, concat_path)
+
+        render_output = {
+            "render_dir": str(groups_root),
+            "provider": "+".join(group.backend for group in groups),
+            "warnings": all_warnings,
+        }
+        return render_output, concat_path, merged_path
 
     @staticmethod
     def _validate_render_output(

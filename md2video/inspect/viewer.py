@@ -104,6 +104,10 @@ def _plan_view(plan: PlanManifest) -> dict:
                 "visual_params": dict(scene.visual_params),
                 "layout_type": scene.layout_type,
                 "layout_params": dict(scene.layout_params),
+                "layout_regions": (
+                    dict(scene.layout_regions) if scene.layout_regions else {}
+                ),
+                "render_backend": scene.render_backend,
                 "section_context": scene.section_context,
                 "shots": [
                     {
@@ -374,12 +378,18 @@ _HTML_TAIL = """</script>
 
   data.plan.scenes.forEach(function (scene) {
     var box = el("div", { cls: "scene" });
-    box.appendChild(el("div", null,
-      el("b", { text: scene.id }), " · visual=" + scene.visual_type +
+    var sceneLine = el("b", { text: scene.id });
+    var lineText = " · visual=" + scene.visual_type +
       (paramsText(scene.visual_params) ? " (" + paramsText(scene.visual_params) + ")" : "") +
-      " · layout=" + scene.layout_type +
-      (paramsText(scene.layout_params) ? " (" + paramsText(scene.layout_params) + ")" : "") +
-      (scene.section_context ? " · " + scene.section_context : "")));
+      " · layout=" + (scene.layout_regions && Object.keys(scene.layout_regions).length
+        ? "proposal(" + Object.keys(scene.layout_regions).join("+") + ")"
+        : scene.layout_type) +
+      (scene.layout_type && !(scene.layout_regions && Object.keys(scene.layout_regions).length)
+        ? (paramsText(scene.layout_params) ? " (" + paramsText(scene.layout_params) + ")" : "")
+        : "") +
+      " · backend=" + (scene.render_backend || "(默认)") +
+      (scene.section_context ? " · " + scene.section_context : "");
+    box.appendChild(el("div", null, sceneLine, lineText));
     var shots = el("div", { cls: "shots" });
     scene.shots.forEach(function (shot) {
       var line = el("div", { cls: "shot" }, el("b", { text: shot.id }), " ← ");

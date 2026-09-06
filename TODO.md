@@ -58,7 +58,8 @@ future harness preview/review/partial rerun
 - Phase 1-6 已完成：渲染契约 + layout consumption 落地，像素级 smoke 验证通过。
 - 设计共识定稿（2026-09-05）：四本账、四道闸门、双 track 路线。设计定义见 `docs/architecture.md`（「总体模型」「覆盖地图」）。
 - Track A 首批已落地（2026-09-06）：A1 时间不变量闸门 + A2.5 渲染后端去硬编码 + A2/B1 Style Pack（`ink_night`，像素逐帧不变验收）+ A3 Plan Schema v2（plan 不含时间，一次切换完成）。
-- 最新验证：2026-09-06 运行 `python -m pytest -q`，结果是 `484 passed, 1 skipped`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的真实渲染像素 smoke（`tests/test_render_smoke.py`）。
+- Track A 第二批已落地（2026-09-07）：A4 Runtime Inspectability（run 目录制 + `manifest_viewer.html`）+ A5 Layout 提案机制（`layout_regions` + 约束注册表 + 结构化 LayoutIssue + 子构图 region 化）+ 外部皮肤包文件加载（`MD2VIDEO_STYLE_PACK_FILE`）+ A6 前半（按 scene 多后端分发与合成基础设施，Remotion 留后半）。
+- 最新验证：2026-09-07 运行 `python -m pytest -q`，结果是 `554 passed, 1 skipped, 2 warnings`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的像素 smoke（`tests/test_render_smoke.py`）与混合引擎真渲染验收（`tests/test_multi_backend.py`）；2 条 warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
 - 后续施工按 Track A / Track B 推进；原 Phase 7 计划并入 A4。
@@ -400,13 +401,13 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 目标：不同 scene 用不同渲染引擎；Remotion 作为第一个真实第二后端。
 
-- [ ] scene 级 `render_backend` 字段；要求的后端未注册时开渲前 fail fast。
-- [ ] 按 scene 分组分发：plan 切片 → 各后端 → N 段视频 + N 份局部 timeline。
-- [ ] 视频拼接（concat，编码参数一致）+ timeline 前缀和偏移合并 → 重过全局闸门。
-- [ ] 组边界状态策略：引擎切换即场景切换，渲染器内部跨 shot 状态（字幕堆叠/母题）清零。
+- [x] scene 级 `render_backend` 字段（空 = 用 `ToolConfig.render_backend`）；要求的后端未注册时开渲前 fail fast。
+- [x] 按 scene 分组分发：相邻同后端 scene 组成极大组；plan 切片 → 各后端 → N 段视频 + N 份局部 timeline（`core/multi_backend.py`）。
+- [x] 视频拼接（concat filter，全静音 run 出无音轨底片走 assembler 已验证静音路径）+ timeline 前缀和偏移合并 → 重过全局闸门（对完整 plan 跑 `check_timeline`）。
+- [x] 组边界状态策略：引擎切换即场景切换，每组独立渲染调用，渲染器内部跨 shot 状态（字幕堆叠/母题）清零。
 - [ ] Remotion 后端：同一渲染契约 + 自带 Realizer + 能力词汇声明（动效意图、母题 kind）。
 
-验收：混合 manim/remotion 的 plan 出一条成片；Remotion 通过全部闸门。
+验收：混合 manim/remotion 的 plan 出一条成片；Remotion 通过全部闸门。A6 前半验收（2026-09-07）：混合 manim/fake 的 plan 出一条成片且过全部闸门（真 manim 组 + fake 组，env-gated smoke）；全部 fake 的多组 run 出片过闸门；单一 manim 后端的 plan 行为与现状完全一致（example 端到端 framemd5 逐帧全等）。Remotion 后端归 A6 后半单独批次。
 
 ### A7 内容槽位（按需阀门）
 
@@ -499,4 +500,5 @@ Test / cleanup：
 - [x] 删除或重写依赖 `ShotPlan.target_duration` 的测试。
 - [x] 重写 marker-as-segment 的 renderer 测试为 marker-as-shot-cue。
 - [x] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物（并入 A4，run 目录制落地）。
+- [ ] 已知边界（不修，保持行为逐帧不变）：合成器 loudnorm 需要 >=3s 音频才开始输出，更短的纯静音 run 会在 assembler 报 NaN 编码错误——真实 run 远超该下限；如需支持超短静音片再单独评估。
 - [x] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确（并入 A1）。

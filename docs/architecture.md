@@ -79,7 +79,7 @@ Markdown source
 | 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警）；plan 已去 target_duration（v2 迁移）；素材 duration 合同（VisualAsset.duration）；时长估算器（`timeline/estimate.py`，仅容错决策与展示）；估算消费方（A4 viewer 预计 vs 实际） | hold cue 入口（概念位已留） |
 | 提案→裁判→交付（layout） | ComputedLayout 属性校验；注册表重复注册 fail-fast；mapping.py 双消费端共享；regions 直接提案入口（`ScenePlan.layout_regions`，`layout/resolve.py`，与模板同一裁决）；结构化报错（`LayoutIssue` + `LayoutValidationError`，一次报全部，含数值与建议）；约束注册表（`layout/constraints.py`，零特权 `register_constraint`，env `MD2VIDEO_LAYOUT_CONSTRAINTS` 显式加载外部约束模块）；子构图 region 化（center_title_body 的 `section_stack` 子 region） | —— |
 | 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过）；外部文件包加载（env `MD2VIDEO_STYLE_PACK_FILE`，`get_pack` 路径惰性加载一次、坏文件 fail fast、未知名降级 + warning） | —— |
-| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地 | 渲染后端=tool（plan 切片、局部 timeline） |
+| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地；按 scene 多后端分发（A6 前半：`ScenePlan.render_backend` + `core/multi_backend.py` 切片/合并/拼接/全局闸门，fake backend 验收） | Remotion 后端（A6 后半：同一渲染契约 + 自带 Realizer） |
 | 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
 | plan 收敛 | scene 级 visual/layout 决策已在；SegmentPlan 副本字段已收拢（v2 去 denormalize） | —— |
 | 可检查性（A4） | run 目录制（`inspect/runs.py`：新建+命名区分，永不覆盖/删除）；`FinalResultManifest.run_id/status`；静态检查页（`inspect/viewer.py`，黄金快照测试） | 未来 harness 直接读取 run 目录（不要求编辑/审批 UI） |
@@ -162,7 +162,7 @@ Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可�
 - 产出会占用时间轴的素材，输出必须携带 duration（静态素材为 0）；输出必须携带 cache_key。
 - 时长归属唯一：音频=TTS、shot=渲染器、视频素材=素材工具 probe；其他模块不许断言时长。
 
-渲染后端是特殊的 tool：消费 plan 与 execution-assets，输出视频与同构 timeline。引擎与设计包正交（见 Style 与 Pack）；引擎声明自己支持的能力名（动效意图、母题 kind），不认识的槽位优雅降级 + warning。按 scene 混合多后端时，每个后端从 t=0 渲染自己的切片、产出局部 timeline，由管线做偏移合并后重过全局闸门。
+渲染后端是特殊的 tool：消费 plan 与 execution-assets，输出视频与同构 timeline。引擎与设计包正交（见 Style 与 Pack）；引擎声明自己支持的能力名（动效意图、母题 kind），不认识的槽位优雅降级 + warning。按 scene 混合多后端时（A6 前半已落地）：`ScenePlan.render_backend` 为空的 scene 用 `ToolConfig.render_backend`；相邻同后端 scene 组成极大组，每组切片 plan 独立渲染（各后端从 t=0 渲自己的切片，组边界即引擎切换，渲染器内部跨 shot 状态清零），管线做局部 timeline 前缀偏移合并后对完整 plan 重过全局时间闸门，再把组视频拼接成底片交给 assembler（成片规格与单后端一致）。要求的后端未注册时开渲前 fail fast。
 
 ## Visual 与 Layout
 
@@ -253,6 +253,7 @@ Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可�
 | Layout 裁决（约束注册表、结构化 LayoutIssue、提案解析） | `layout/constraints.py`、`layout/resolve.py` | `test_layout_constraints.py`、`test_layout_proposal.py` |
 | 工具（契约、注册、缓存、TTS/图片/渲染实现） | `tools/protocol.py`、`tools/registry.py`、`tools/cache.py`、`tools/tts/`、`tools/image/`、`tools/render/manim_tool.py` | `test_tool_protocol.py`、`test_tool_registry.py`、`test_tool_cache.py`、`test_edge_tts.py`、`test_pexels_image_tool.py`、`test_local_image_tool.py`、`test_manim_tool.py` |
 | 编排（五步流水线、fail-fast、降级分发） | `core/pipeline.py` | `test_dispatch.py`、`test_pipeline_artifacts.py` |
+| 多后端分发（分组切片、timeline 合并、底片拼接、全局闸门） | `core/multi_backend.py` | `test_multi_backend.py`（混合 manim/fake 验收为 env-gated smoke） |
 | 渲染（shot 级渲染、timeline 事实） | `tools/render/manim_renderer_inputs.py`（纯 helper）、`tools/render/manim_renderer.py`、`tools/render/timeline_builder.py`、`tools/render/manifest_loader.py`、`tools/render/cached_voice.py` | `test_manim_renderer_inputs.py`、`test_renderer_timeline_state.py`、`test_cached_voice.py` |
 | 时间不变量闸门（shots 覆盖/按序/不重叠、cue 归属、朗读差值告警） | `timeline/invariants.py` | `test_timeline_invariants.py` |
 | 时长估算（音频事实 + pack 节奏 + 转场开销常数，仅容错/展示） | `timeline/estimate.py` | `test_timeline_estimate.py` |

@@ -51,6 +51,9 @@ class ScenePlan(BaseModel):
     # A5 直接提案入口：归一化 region 集合（name -> {x,y,width,height}）。
     # 与模板产出走同一套 ComputedLayout 属性校验；设置时优先于 layout_type。
     layout_regions: Optional[Dict[str, Dict[str, float]]] = None
+    # A6 按 scene 多后端：空 = 用 ToolConfig.render_backend（现有行为）。
+    # 相邻同后端 scene 组成极大组，按组切片渲染后在管线里拼接与合并 timeline。
+    render_backend: str = ""
     shots: List[ShotPlan] = Field(default_factory=list)
     section_context: str = ""
     # 向后兼容: 旧 JSON 含 segment_ids 时自动迁移为单 Shot
