@@ -342,7 +342,7 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 目标：风格声明化——token 声明 + 每引擎一个 Realizer。与 B1 同一里程碑，互相验收。
 
 - [x] `md2video/style/`：ThemeTokens schema（palette / typography 归一化字号 / motion 意图级 + 静默段节奏 / motif 槽位）。
-- [x] pack 加载与 token 校验（v0 代码内置注册，外部文件加载留接口）。
+- [x] pack 加载与 token 校验（内置注册 + 外部文件加载：env `MD2VIDEO_STYLE_PACK_FILE` 指向 ThemeTokens JSON，`get_pack` 解析路径上惰性加载一次，坏文件/缺文件/重名 fail fast，未知名降级 + warning）。
 - [x] ManimRealizer：token → 引擎参数的唯一换算点；动效意图映射；motif kind 注册表（orbit_dots 圆点代码从渲染器搬家至此）。
 - [x] 渲染器切换为消费 token；风格常量退役（DEFAULT_FONT 等）。
 - [x] 与 B1（reference pack）联合验收。

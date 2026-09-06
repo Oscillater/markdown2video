@@ -78,7 +78,7 @@ Markdown source
 |---|---|---|
 | 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警）；plan 已去 target_duration（v2 迁移）；素材 duration 合同（VisualAsset.duration）；时长估算器（`timeline/estimate.py`，仅容错决策与展示）；估算消费方（A4 viewer 预计 vs 实际） | hold cue 入口（概念位已留） |
 | 提案→裁判→交付（layout） | ComputedLayout 属性校验；注册表重复注册 fail-fast；mapping.py 双消费端共享；regions 直接提案入口（`ScenePlan.layout_regions`，`layout/resolve.py`，与模板同一裁决）；结构化报错（`LayoutIssue` + `LayoutValidationError`，一次报全部，含数值与建议）；约束注册表（`layout/constraints.py`，零特权 `register_constraint`，env `MD2VIDEO_LAYOUT_CONSTRAINTS` 显式加载外部约束模块）；子构图 region 化（center_title_body 的 `section_stack` 子 region） | —— |
-| 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过） | 外部文件包加载落地（`register_pack` 接口已留） |
+| 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过）；外部文件包加载（env `MD2VIDEO_STYLE_PACK_FILE`，`get_pack` 路径惰性加载一次、坏文件 fail fast、未知名降级 + warning） | —— |
 | 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地 | 渲染后端=tool（plan 切片、局部 timeline） |
 | 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
 | plan 收敛 | scene 级 visual/layout 决策已在；SegmentPlan 副本字段已收拢（v2 去 denormalize） | —— |
@@ -193,7 +193,7 @@ Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费�
 - **pack 是纯数据宣言**：`ThemeTokens` = palette（底/字/次级/强调色）+ typography（字族 + 角色字号，归一化单位）+ motion（意图级动效 + 静默段节奏）+ motif（母题槽位：可换、可无、可自定义）。
 - **引擎自带 Realizer（翻译官）**：token → 引擎原生参数的唯一换算点。ManimRealizer 翻成 font/font_size/color/动画选择；未来 RemotionRealizer 翻成 CSS/React。宣言只有一份，翻译官每个引擎一个。
 - **能力按名字引用**：pack 写 `appear: typewriter`、`motif: orbit_dots` 这类名字；引擎声明自己支持哪些名字，不认识的槽位优雅降级 + warning。
-- **用户直接改包**（Hugo/Hexo 模板模型）：DIY 就是编辑包内容，无多来源合并问题。仓库自带一个 reference pack（现有 house style 抽取），结构上与社区包无特权差别。
+- **用户直接改包**（Hugo/Hexo 模板模型）：DIY 就是编辑包内容，无多来源合并问题。仓库自带一个 reference pack（现有 house style 抽取），结构上与社区包无特权差别。外部包文件经 env `MD2VIDEO_STYLE_PACK_FILE`（指向 ThemeTokens JSON）加载：在 `get_pack` 解析路径上惰性加载一次（幂等缓存，管线与渲染子进程两侧一致）；文件解析/校验失败、缺文件、与已注册包重名都 fail fast（用户显式指定的包坏了必须报错），选择仍走 `MD2VIDEO_STYLE_PACK` 名字、未知名降级 + warning。
 
 关键性质：`引擎代码量 = N 引擎 × (1 个 Realizer + K 个能力原语)`，不随模板和包的数量增长。加新 layout 模板或新 style 包都是纯数据注册，引擎零代码；只有引入全新能力（新母题 kind、新动效意图）时，想支持的引擎各补一个实现。
 
@@ -258,7 +258,7 @@ Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可�
 | 时长估算（音频事实 + pack 节奏 + 转场开销常数，仅容错/展示） | `timeline/estimate.py` | `test_timeline_estimate.py` |
 | Run 目录制（run_id、独立 run 目录、永不覆盖） | `inspect/runs.py` | `test_run_dirs.py` |
 | 检查页（单文件自包含 viewer、预计 vs 实际时长） | `inspect/viewer.py` | `test_manifest_viewer.py`（含黄金快照） |
-| Style（ThemeTokens、pack 注册、ManimRealizer、母题注册表） | `style/schema.py`、`style/packs.py`、`style/manim_realizer.py`、`style/motifs.py` | `test_style_schema.py`、`test_style_manim_realizer.py`、`test_style_motifs.py` |
+| Style（ThemeTokens、pack 注册、ManimRealizer、母题注册表） | `style/schema.py`、`style/packs.py`、`style/manim_realizer.py`、`style/motifs.py` | `test_style_schema.py`、`test_style_manim_realizer.py`、`test_style_motifs.py`、`test_style_pack_file.py` |
 | 合成（按时间事实混音、region 叠图） | `assembler/ffmpeg_assembler.py` | `test_ffmpeg_extractor.py`、`test_ken_burns.py` |
 | 配置（常量、.env 加载） | `config.py` | 随各层测试覆盖 |
 | 像素 smoke（端到端落位验证，默认跳过） | `tests/test_render_smoke.py` | `MD2VIDEO_RENDER_SMOKE=1` 触发 |

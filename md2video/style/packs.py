@@ -1,11 +1,21 @@
-"""设计包注册表：v0 代码内置注册，外部文件加载走 register_pack 接口。
+"""设计包注册表：内置注册 + 外部文件加载（env `MD2VIDEO_STYLE_PACK_FILE`）。
 
 reference pack `ink_night` 是现有 house style（黑底白字仿宋 + 圆点母题 +
 现节奏常量）的纯数据抽取——只有宣言，没有引擎代码。包与社区包零特权差别。
+
+外部文件包：`MD2VIDEO_STYLE_PACK_FILE` 指向一个 ThemeTokens JSON，在
+`get_pack` 解析路径上惰性加载一次（幂等缓存，管线与渲染子进程两侧一致
+——两个进程各自在第一次取包时加载）。文件解析/校验失败、缺文件、与已
+注册包重名都 fail fast（用户显式指定的包坏了必须报错）；选择仍走
+`MD2VIDEO_STYLE_PACK` 名字，未知名降级 + warning。本机制只管加载，不提
+供第二套内置包（那是 B3）。
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+from pydantic import ValidationError
 
 from md2video.style.schema import (
     MotionTokens,
@@ -73,6 +83,7 @@ def register_pack(tokens: ThemeTokens) -> None:
 
 def get_pack(name: str | None = None) -> ThemeTokens:
     """按名字取包；未知名降级到默认包并告警（引擎不认识就降级 + warning）。"""
+    _load_pack_file_once()
     resolved = name or DEFAULT_PACK_NAME
     pack = _PACKS.get(resolved)
     if pack is None:
@@ -85,6 +96,39 @@ def get_pack(name: str | None = None) -> ThemeTokens:
 
 
 STYLE_PACK_ENV = "MD2VIDEO_STYLE_PACK"
+STYLE_PACK_FILE_ENV = "MD2VIDEO_STYLE_PACK_FILE"
+
+_pack_file_loaded = False
+
+
+def _load_pack_file_once() -> None:
+    """把 env 指向的 ThemeTokens JSON 注册进包表；进程内只加载一次（幂等）。
+
+    显式指定的文件出任何问题（缺文件、坏 JSON、token 不合法、与已注册包
+    重名）都 fail fast——用户指名要的包坏了，静默降级会掩盖配置错误。
+    管线与渲染子进程两侧一致：各进程在第一次 get_pack 时加载各自 env。
+    """
+    global _pack_file_loaded
+    if _pack_file_loaded:
+        return
+    _pack_file_loaded = True
+
+    raw = os.environ.get(STYLE_PACK_FILE_ENV, "")
+    if not raw.strip():
+        return
+    path = Path(raw.strip())
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{STYLE_PACK_FILE_ENV} points to a missing file: {path}"
+        )
+    try:
+        tokens = ThemeTokens.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValidationError as exc:
+        raise ValueError(
+            f"{STYLE_PACK_FILE_ENV} is not a valid ThemeTokens JSON ({path}): {exc}"
+        ) from exc
+    # 重名注册是配置错误：外部包不许静默顶掉内置/先前注册的包
+    register_pack(tokens)
 
 
 def active_pack() -> tuple[str, ThemeTokens]:
@@ -99,7 +143,22 @@ def active_pack() -> tuple[str, ThemeTokens]:
 
 
 def pack_names() -> list[str]:
+    # 走一次惰性加载，让"已注册包"名单与 get_pack 解析路径一致
+    _load_pack_file_once()
     return sorted(_PACKS)
+
+
+def reset_pack_file_cache() -> None:
+    """清掉"外部包文件已加载"标记（测试与进程级重载用）；不撤销已注册包。"""
+    global _pack_file_loaded
+    _pack_file_loaded = False
+
+
+def reset_pack_registry() -> None:
+    """恢复为仅内置包并清掉外部文件加载标记（测试与进程级重载用）。"""
+    _PACKS.clear()
+    register_pack(ink_night())
+    reset_pack_file_cache()
 
 
 register_pack(ink_night())
