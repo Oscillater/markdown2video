@@ -5,6 +5,8 @@ reference pack `ink_night` 是现有 house style（黑底白字仿宋 + 圆点�
 """
 from __future__ import annotations
 
+import os
+
 from md2video.style.schema import (
     MotionTokens,
     MotifTokens,
@@ -80,6 +82,20 @@ def get_pack(name: str | None = None) -> ThemeTokens:
         )
         return _PACKS[DEFAULT_PACK_NAME]
     return pack
+
+
+STYLE_PACK_ENV = "MD2VIDEO_STYLE_PACK"
+
+
+def active_pack() -> tuple[str, ThemeTokens]:
+    """解析当前生效包，返回 (请求名, 包)。
+
+    与渲染子进程同一规则（env `MD2VIDEO_STYLE_PACK`，缺省默认包），供
+    管线侧检查（viewer 展示、降级 warning）使用；不认识的名字由
+    get_pack 降级，调用方据此发 warning。
+    """
+    requested = os.environ.get(STYLE_PACK_ENV) or DEFAULT_PACK_NAME
+    return requested, get_pack(requested)
 
 
 def pack_names() -> list[str]:

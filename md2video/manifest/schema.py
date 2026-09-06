@@ -173,9 +173,16 @@ class ExecutionAssets(BaseModel):
 
 
 class FinalResultManifest(BaseModel):
-    """Final delivery summary written after assemble completes."""
+    """Final delivery summary written after assemble completes.
+
+    run_id 把这份 result 绑定到 artifacts/runs/<run_id>/ 目录；status 取值
+    "completed" / "failed"（失败 run 在自己的 run 目录写 failed result，
+    旧 run 的 result 永不被触碰——区分只靠 run_id 与命名）。
+    """
 
     version: str = "1"
+    run_id: str = ""
+    status: str = "completed"
     output_mp4: str
     used_assets: Dict[str, List[Dict]] = Field(default_factory=dict)
     warnings: List[str] = Field(default_factory=list)

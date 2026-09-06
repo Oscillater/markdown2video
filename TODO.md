@@ -372,18 +372,18 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 目标：让 runtime 的中间结果对人、对未来 harness、对 LLM 反馈回路可检查。
 
-- [ ] 输出 artifact index，记录本次生成的 plan、execution-assets、timeline、result、音频、图片、视频路径。
-- [ ] 输出紧凑可读的静态查看页面（`manifest_viewer.html`）。
-- [ ] 展示 plan：segments（类型/文本/角色）、shots with cues、scenes with visual/layout/theme intent。
-- [ ] 展示 execution-assets：audio/visual assets、provider、cache key、尺寸、duration、路径。
-- [ ] 展示 timeline：shot 主时间轴、text cue、marker cue、实际 duration。
-- [ ] 展示 result：最终 MP4、used assets、warnings、artifact index。
-- [ ] 展示 warnings：provider 缺失、降级、时长差异、style 缺失/降级。
-- [ ] 展示预计 vs 实际时长（消费 A3 估算器 + timeline）。
-- [ ] 吸收技术债：新 run 开始时失效旧 `result.json`（run id/status），避免失败路径留下混合 artifacts。
-- [ ] 吸收技术债：`manim_render_*` run-dir 生命周期策略（artifact index 索引 + 按策略清理）。
+- [x] 输出 artifact index，记录本次生成的 plan、execution-assets、timeline、result、音频、图片、视频路径。
+- [x] 输出紧凑可读的静态查看页面（`manifest_viewer.html`）。
+- [x] 展示 plan：segments（类型/文本/角色）、shots with cues、scenes with visual/layout/theme intent。
+- [x] 展示 execution-assets：audio/visual assets、provider、cache key、尺寸、duration、路径。
+- [x] 展示 timeline：shot 主时间轴、text cue、marker cue、实际 duration。
+- [x] 展示 result：最终 MP4、used assets、warnings、artifact index。
+- [x] 展示 warnings：provider 缺失、降级、时长差异、style 缺失/降级。
+- [x] 展示预计 vs 实际时长（消费 A3 估算器 + timeline）。
+- [x] 吸收技术债：旧 `result.json` 失效问题——每次 run 独立目录 `artifacts/runs/<run_id>/`（新建+命名区分，永不覆盖/删除），`FinalResultManifest` 增加 `run_id` 与 `status`（completed/failed），失败 run 在自己目录写 failed result，混合 artifacts 在结构上不可能。
+- [x] 吸收技术债：`manim_render_*` run-dir 生命周期策略——渲染目录落进本次 run 目录并登记 artifact_index；按用户拍板不做任何自动清理（产物只增不删）。
 
-验收：人不用读原始 JSON 能看懂一次运行；输出可被未来 harness 直接读取；不要求编辑/审批 UI。
+验收：人不用读原始 JSON 能看懂一次运行；输出可被未来 harness 直接读取；不要求编辑/审批 UI。✅（2026-09-06：viewer 结构化断言 + 黄金快照测试；example 端到端 framemd5 逐帧全等）
 
 ### A5 Layout 提案机制
 
@@ -498,5 +498,5 @@ Test / cleanup：
 - [x] 删除或重写旧 flat fallback 测试。
 - [x] 删除或重写依赖 `ShotPlan.target_duration` 的测试。
 - [x] 重写 marker-as-segment 的 renderer 测试为 marker-as-shot-cue。
-- [ ] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物（并入 A4）。
+- [x] 补测试：失败 run 不会让旧 `result.json` 被误认为当前 run 产物（并入 A4，run 目录制落地）。
 - [x] 补测试：非 0 起点 image shot 的 FFmpeg overlay / Ken Burns timing 正确（并入 A1）。

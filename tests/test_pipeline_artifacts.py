@@ -33,9 +33,11 @@ class FakeRenderTool:
 
     def execute(self, input_data):
         self.calls.append(input_data)
-        video_path = self.tmp_path / "base.mp4"
+        # 真实渲染后端的产物落进管线指定的 output_dir（run 目录）
+        output_dir = Path(input_data["output_dir"])
+        video_path = output_dir / "base.mp4"
         timeline_path = Path(input_data["timeline_path"])
-        render_dir = self.tmp_path / "manim_render_fake"
+        render_dir = output_dir / "manim_render_fake"
         if self.write_artifacts:
             video_path.write_bytes(b"fake mp4")
             timeline_path.write_text(
@@ -51,6 +53,12 @@ class FakeRenderTool:
             "provider": "manim",
             "render_dir": str(render_dir),
         }
+
+
+def _sole_run_dir(tmp_path: Path) -> Path:
+    runs = sorted((tmp_path / "runs").iterdir())
+    assert len(runs) == 1, f"expected exactly one run dir, got {runs}"
+    return runs[0]
 
 
 def _make_pipeline(tmp_path, voice=None, speed=None, render_tool=None):
@@ -112,15 +120,16 @@ def test_run_plan_writes_execution_assets_and_final_result(tmp_path):
         result = pipeline.run_plan(str(plan_path), str(output_path))
 
     assert result == output_path
+    run_dir = _sole_run_dir(tmp_path)
     render_tool = pipeline.registry.get_tool("render", "manim")
     assert len(render_tool.calls) == 1
     render_input = render_tool.calls[0]
-    assert render_input["plan_path"] == str(tmp_path / "plan.json")
-    assert render_input["execution_assets_path"] == str(tmp_path / "execution-assets.json")
-    assert render_input["timeline_path"] == str(tmp_path / "timeline.json")
-    assert render_input["output_dir"] == str(tmp_path)
+    assert render_input["plan_path"] == str(run_dir / "plan.json")
+    assert render_input["execution_assets_path"] == str(run_dir / "execution-assets.json")
+    assert render_input["timeline_path"] == str(run_dir / "timeline.json")
+    assert render_input["output_dir"] == str(run_dir)
 
-    assets_path = tmp_path / "execution-assets.json"
+    assets_path = run_dir / "execution-assets.json"
     assets = ExecutionAssets.model_validate_json(assets_path.read_text(encoding="utf-8"))
     assert len(assets.audio_assets) == 0
     assert len(assets.visual_assets) == 1
@@ -132,16 +141,23 @@ def test_run_plan_writes_execution_assets_and_final_result(tmp_path):
     assert assembler_cls.call_args.kwargs["execution_assets"].visual_assets[0].provider == "local"
 
     final_result = FinalResultManifest.model_validate_json(
-        (tmp_path / "result.json").read_text(encoding="utf-8"),
+        (run_dir / "result.json").read_text(encoding="utf-8"),
     )
     assert final_result.output_mp4 == str(output_path)
+    assert final_result.status == "completed"
+    assert final_result.run_id == run_dir.name
     assert final_result.artifact_index["execution_assets"] == str(assets_path)
-    assert final_result.artifact_index["base_video"] == str(tmp_path / "base.mp4")
-    assert final_result.artifact_index["render_dir"] == str(tmp_path / "manim_render_fake")
+    assert final_result.artifact_index["base_video"] == str(run_dir / "base.mp4")
+    assert final_result.artifact_index["render_dir"] == str(run_dir / "manim_render_fake")
     assert final_result.artifact_index["render_provider"] == "manim"
+    assert final_result.artifact_index["manifest_viewer"] == str(run_dir / "manifest_viewer.html")
     assert final_result.used_assets["visual"][0]["shot_id"] == "shot_001"
 
-    raw_result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    # 检查页是单文件自包含（有内容、含 run id），与四本账同住 run 目录
+    viewer_html = (run_dir / "manifest_viewer.html").read_text(encoding="utf-8")
+    assert run_dir.name in viewer_html
+
+    raw_result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     assert "segments" not in raw_result
 
 
@@ -240,14 +256,15 @@ class FakeAltRenderTool:
 
     def execute(self, input_data):
         self.calls.append(input_data)
-        video_path = self.tmp_path / "alt_base.mp4"
+        output_dir = Path(input_data["output_dir"])
+        video_path = output_dir / "alt_base.mp4"
         video_path.write_bytes(b"fake alt mp4")
         timeline_path = Path(input_data["timeline_path"])
         timeline_path.write_text(
             json.dumps({"text": [], "markers": [], "shots": []}),
             encoding="utf-8",
         )
-        render_dir = self.tmp_path / "fake_backend_render"
+        render_dir = output_dir / "fake_backend_render"
         render_dir.mkdir(parents=True, exist_ok=True)
         return {
             "video_path": str(video_path),
@@ -272,15 +289,16 @@ def test_run_plan_switches_to_registered_alternate_backend(tmp_path):
         result = pipeline.run_plan(str(plan_path), str(output_path))
 
     assert result == output_path
+    run_dir = _sole_run_dir(tmp_path)
     assert len(alt_tool.calls) == 1
-    assert alt_tool.calls[0]["timeline_path"] == str(tmp_path / "timeline.json")
+    assert alt_tool.calls[0]["timeline_path"] == str(run_dir / "timeline.json")
     assembler_cls.assert_called_once()
 
     final_result = FinalResultManifest.model_validate_json(
-        (tmp_path / "result.json").read_text(encoding="utf-8"),
+        (run_dir / "result.json").read_text(encoding="utf-8"),
     )
     assert final_result.artifact_index["render_provider"] == "fake-backend"
-    assert final_result.artifact_index["base_video"] == str(tmp_path / "alt_base.mp4")
+    assert final_result.artifact_index["base_video"] == str(run_dir / "alt_base.mp4")
 
 
 def test_run_plan_fails_fast_when_configured_backend_not_registered(tmp_path):

@@ -76,14 +76,15 @@ Markdown source
 
 | 原则 | 已有实现（证据） | 待补 |
 |---|---|---|
-| 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警）；plan 已去 target_duration（v2 迁移）；素材 duration 合同（VisualAsset.duration）；时长估算器（`timeline/estimate.py`，仅容错决策与展示） | hold cue 入口（概念位已留）；估算器消费方（A4 viewer） |
+| 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警）；plan 已去 target_duration（v2 迁移）；素材 duration 合同（VisualAsset.duration）；时长估算器（`timeline/estimate.py`，仅容错决策与展示）；估算消费方（A4 viewer 预计 vs 实际） | hold cue 入口（概念位已留） |
 | 提案→裁判→交付（layout） | ComputedLayout 属性校验（安全区/不重叠）；注册表重复注册 fail-fast；mapping.py 双消费端共享 | regions 直接提案入口；结构化报错；子构图（左侧堆叠列）region 化；约束可注册追加 |
 | 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过） | 外部文件包加载落地（`register_pack` 接口已留） |
 | 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地 | 渲染后端=tool（plan 切片、局部 timeline） |
 | 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
 | plan 收敛 | scene 级 visual/layout 决策已在；SegmentPlan 副本字段已收拢（v2 去 denormalize） | —— |
+| 可检查性（A4） | run 目录制（`inspect/runs.py`：新建+命名区分，永不覆盖/删除）；`FinalResultManifest.run_id/status`；静态检查页（`inspect/viewer.py`，黄金快照测试） | 未来 harness 直接读取 run 目录（不要求编辑/审批 UI） |
 | 演进纪律 | segment_ids→shot 迁移 validator；破坏性变更一次切换先例；plan 去时间已按同模式执行（`manifest/migration.py` + 一次切换） | —— |
-| 质量策略 | 纯函数 helper 层（renderer 可无 manim 测试）；mock 外部服务；env-gated 像素 smoke | viewer 黄金文件测试 |
+| 质量策略 | 纯函数 helper 层（renderer 可无 manim 测试）；mock 外部服务；env-gated 像素 smoke | —— |
 
 ## 核心数据模型
 
@@ -111,14 +112,23 @@ Runtime contract 定义 planner、tools、renderer 和 assembler 对 Manifest �
 
 ## Runtime Artifacts
 
-每次执行会产生四类主要 artifact：
+每次 run 在 `artifacts/runs/<run_id>/` 下产生独立目录（run_id = 时间戳 +
+短随机后缀，可排序、全局唯一），本次全部产物都落在其中：四类账本、
+manim 渲染目录、per-shot visual、检查页。**旧 run 永不覆盖、永不删除**；
+归属与失效判断只靠 run_id 与命名（产物只增不删）。输出 MP4 路径仍由
+用户指定。四类账本 artifact：
 
 - `plan.json`：计划和目标约束，描述 segments、scenes、shots、visual intent 和 layout intent；不含时间。
 - `execution-assets.json`：素材事实，记录 TTS 音频路径/时长、图片路径/尺寸、provider 和 cache key。
 - `timeline.json`：renderer 实际输出的时间事实；shots/text 使用 `start/end`，marker cue 使用 `time`。
-- `result.json`：最终交付摘要，只在 assemble 完成后写出，记录 output MP4、used assets、warnings 和 artifact index。
+- `result.json`：最终交付摘要，只在 assemble 完成后写出，记录 output MP4、used assets、warnings 和 artifact index；带 `run_id` 与 `status`（completed/failed）。失败 run 在自己的 run 目录写 failed result，旧 run 的 result 永不被触碰。
 
 `result.json` 不应该承担中间执行状态；renderer 和 assembler 应该显式消费 plan、execution assets 和 timeline。
+
+另有 `manifest_viewer.html`：一次 run 的紧凑静态检查页（单文件自包含，
+无外部网络资源），汇总 plan 意图、素材事实、时间事实、交付摘要、
+warnings 与预计 vs 实际时长（消费 `timeline/estimate.py` 估算 + timeline
+末 shot end），供人与未来 harness 不读原始 JSON 看懂一次运行。
 
 ## Planner
 
@@ -243,6 +253,8 @@ Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可�
 | 渲染（shot 级渲染、timeline 事实） | `tools/render/manim_renderer_inputs.py`（纯 helper）、`tools/render/manim_renderer.py`、`tools/render/timeline_builder.py`、`tools/render/manifest_loader.py`、`tools/render/cached_voice.py` | `test_manim_renderer_inputs.py`、`test_renderer_timeline_state.py`、`test_cached_voice.py` |
 | 时间不变量闸门（shots 覆盖/按序/不重叠、cue 归属、朗读差值告警） | `timeline/invariants.py` | `test_timeline_invariants.py` |
 | 时长估算（音频事实 + pack 节奏 + 转场开销常数，仅容错/展示） | `timeline/estimate.py` | `test_timeline_estimate.py` |
+| Run 目录制（run_id、独立 run 目录、永不覆盖） | `inspect/runs.py` | `test_run_dirs.py` |
+| 检查页（单文件自包含 viewer、预计 vs 实际时长） | `inspect/viewer.py` | `test_manifest_viewer.py`（含黄金快照） |
 | Style（ThemeTokens、pack 注册、ManimRealizer、母题注册表） | `style/schema.py`、`style/packs.py`、`style/manim_realizer.py`、`style/motifs.py` | `test_style_schema.py`、`test_style_manim_realizer.py`、`test_style_motifs.py` |
 | 合成（按时间事实混音、region 叠图） | `assembler/ffmpeg_assembler.py` | `test_ffmpeg_extractor.py`、`test_ken_burns.py` |
 | 配置（常量、.env 加载） | `config.py` | 随各层测试覆盖 |

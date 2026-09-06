@@ -1,14 +1,17 @@
 """
 Pipeline - framework/runtime orchestration.
 
-Runtime artifacts:
+Runtime artifacts（每次 run 一个独立目录 artifacts/runs/<run_id>/，永不
+覆盖、永不删除，归属与失效判断只靠 run_id 与命名）：
 - plan.json: intent and target constraints.
 - execution-assets.json: material facts produced by tools.
 - timeline.json: renderer timing facts.
 - result.json: final delivery summary written after assemble.
+- manifest_viewer.html: 一次 run 的紧凑静态检查页。
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from md2video.config import (
@@ -23,6 +26,8 @@ from md2video.core.planner.rule_planner import (
     RulePlanner,
     renderable_segments,
 )
+from md2video.inspect.runs import create_run_dir, new_run_id
+from md2video.inspect.viewer import VIEWER_FILENAME, build_run_view, write_manifest_viewer
 from md2video.layout import create_default_layout_registry
 from md2video.manifest.migration import load_plan_manifest_json
 from md2video.manifest.schema import (
@@ -39,6 +44,7 @@ from md2video.manifest.schema import (
     result_manifest_from_execution_assets,
 )
 from md2video.parser.md_parser import parse_to_plan_manifest
+from md2video.style.packs import active_pack
 from md2video.tools.registry import ToolRegistry
 from md2video.tools.render.manim_renderer_inputs import validate_renderer_visual_types
 from md2video.tools.tts.edge_tts import EdgeTTSTool
@@ -60,6 +66,9 @@ class Pipeline:
         self.layout_registry = layout_registry or create_default_layout_registry()
         self.registry = ToolRegistry()
         self._register_default_tools()
+        # 本次 run 的目录与 id（_open_run_dir 赋值）；产物只增不删
+        self.run_id = ""
+        self.run_dir: Path | None = None
 
     def _register_default_tools(self):
         # TTS
@@ -107,7 +116,6 @@ class Pipeline:
             plan=plan,
             output_path=output_path,
             base_dir=md_path.parent,
-            render_dir=self.artifacts_dir,
         )
 
     def run_plan(self, plan_path: str, output_path: str) -> Path:
@@ -120,8 +128,23 @@ class Pipeline:
             plan=plan,
             output_path=output_path,
             base_dir=plan_path.parent,
-            render_dir=self.artifacts_dir,
         )
+
+    def _open_run_dir(self) -> Path:
+        """创建本次 run 的独立目录 artifacts/runs/<run_id>/（绝不覆盖）。"""
+        runs_root = self.artifacts_dir / "runs"
+        runs_root.mkdir(parents=True, exist_ok=True)
+        for _ in range(5):
+            run_id = new_run_id()
+            try:
+                run_dir = create_run_dir(runs_root, run_id)
+            except FileExistsError:
+                continue
+            self.run_id = run_id
+            self.run_dir = run_dir
+            print(f"  Run dir: {run_dir}")
+            return run_dir
+        raise RuntimeError("Could not create a unique run directory under runs/")
 
     def _load_or_build_plan_from_markdown(self, md_path: Path) -> PlanManifest:
         plan = parse_to_plan_manifest(str(md_path))
@@ -143,12 +166,25 @@ class Pipeline:
         plan: PlanManifest,
         output_path: Path,
         base_dir: Path,
-        render_dir: Path,
     ) -> Path:
         self._warnings = []
+        run_dir = self._open_run_dir()
+        try:
+            return self._run_plan_steps(plan, output_path, base_dir, run_dir)
+        except Exception as exc:
+            self._write_failed_result(run_dir, exc)
+            raise
+
+    def _run_plan_steps(
+        self,
+        plan: PlanManifest,
+        output_path: Path,
+        base_dir: Path,
+        run_dir: Path,
+    ) -> Path:
         self._validate_plan_layouts(plan)
         self._validate_plan_visual_types(plan)
-        plan_path = self._write_plan_manifest(plan)
+        plan_path = self._write_plan_manifest(plan, run_dir)
 
         print("[2/5] Preparing execution assets...")
         assets = self._prepare_execution_assets(plan)
@@ -162,7 +198,7 @@ class Pipeline:
             validate_layouts=False,
         )
 
-        assets_path = self._write_execution_assets(assets)
+        assets_path = self._write_execution_assets(assets, run_dir)
         result = result_manifest_from_execution_assets(plan, assets)
 
         print("[3/5] Rendering video...")
@@ -172,12 +208,12 @@ class Pipeline:
             raise ValueError(
                 f"Render tool not registered: render/{render_backend}"
             )
-        timeline_path = render_dir / "timeline.json"
+        timeline_path = run_dir / "timeline.json"
         render_output = render_tool.execute({
             "plan_path": str(plan_path),
             "execution_assets_path": str(assets_path),
             "timeline_path": str(timeline_path),
-            "output_dir": str(render_dir),
+            "output_dir": str(run_dir),
             "timeout": 300,
         })
         video_path, timeline_path = self._validate_render_output(
@@ -201,12 +237,16 @@ class Pipeline:
         assembler.assemble()
         print(f"  Output: {output_path}")
 
+        timeline_data = json.loads(timeline_path.read_text(encoding="utf-8"))
         self._write_final_result(
-            output_path,
-            plan_path,
-            assets_path,
-            timeline_path,
-            assets,
+            run_dir=run_dir,
+            output_path=output_path,
+            plan=plan,
+            assets=assets,
+            timeline_data=timeline_data,
+            plan_path=plan_path,
+            assets_path=assets_path,
+            timeline_path=timeline_path,
             video_path=video_path,
             render_output=render_output,
         )
@@ -287,32 +327,36 @@ class Pipeline:
         print(f"  TTS: {len(assets.audio_assets)} audio assets")
         return assets
 
-    def _write_plan_manifest(self, plan: PlanManifest) -> Path:
-        path = self.artifacts_dir / "plan.json"
+    def _write_plan_manifest(self, plan: PlanManifest, run_dir: Path) -> Path:
+        path = Path(run_dir) / "plan.json"
         path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         return path
 
-    def _write_execution_assets(self, assets: ExecutionAssets) -> Path:
-        path = self.artifacts_dir / "execution-assets.json"
+    def _write_execution_assets(self, assets: ExecutionAssets, run_dir: Path) -> Path:
+        path = Path(run_dir) / "execution-assets.json"
         path.write_text(assets.model_dump_json(indent=2), encoding="utf-8")
         return path
 
     def _write_final_result(
         self,
+        run_dir: Path,
         output_path: Path,
+        plan: PlanManifest,
+        assets: ExecutionAssets,
+        timeline_data: dict | None,
         plan_path: Path,
         assets_path: Path,
         timeline_path: Path | None,
-        assets: ExecutionAssets,
         video_path: Path | None = None,
         render_output: dict | None = None,
     ) -> Path:
-        result_path = self.artifacts_dir / "result.json"
+        viewer_path = Path(run_dir) / VIEWER_FILENAME
         artifact_index = {
             "plan": str(plan_path),
             "execution_assets": str(assets_path),
             "timeline": str(timeline_path) if timeline_path else "",
-            "result": str(result_path),
+            "result": str(Path(run_dir) / "result.json"),
+            "manifest_viewer": str(viewer_path),
         }
         if video_path:
             artifact_index["base_video"] = str(video_path)
@@ -320,17 +364,69 @@ class Pipeline:
             artifact_index["render_dir"] = str(render_output.get("render_dir", ""))
             artifact_index["render_provider"] = str(render_output.get("provider", ""))
 
+        # 风格降级（请求的 pack 不认识）是 run 级 warning，进 result 供检查页展示
+        style_requested, style_pack = active_pack()
+        warnings = list(self._warnings)
+        if style_pack.id != style_requested:
+            warnings.append(
+                f"Style pack {style_requested!r} not found; "
+                f"falling back to {style_pack.id!r}"
+            )
+
         final_result = FinalResultManifest(
+            run_id=self.run_id,
+            status="completed",
             output_mp4=str(output_path),
             used_assets={
                 "audio": [asset.model_dump() for asset in assets.audio_assets],
                 "visual": [asset.model_dump() for asset in assets.visual_assets],
             },
-            warnings=self._warnings,
+            warnings=warnings,
             artifact_index=artifact_index,
         )
+
+        # 检查页内嵌 result 摘要（含指向自己的 artifact index），先落盘再写 result.json
+        view = build_run_view(
+            run_id=self.run_id,
+            plan=plan,
+            assets=assets,
+            timeline_data=timeline_data,
+            final_result=final_result,
+            style_pack=style_pack,
+            style_requested=style_requested,
+        )
+        write_manifest_viewer(run_dir, view=view)
+        result_path = Path(run_dir) / "result.json"
         result_path.write_text(final_result.model_dump_json(indent=2), encoding="utf-8")
         return result_path
+
+    def _write_failed_result(self, run_dir: Path, exc: Exception) -> None:
+        """失败 run 在自己的 run 目录标记 status=failed（尽力而为，不遮蔽原错误）。
+
+        旧 run 永不被触碰；run 未产出任何账本时 artifact_index 为空。
+        """
+        try:
+            artifact_index = {}
+            for name, filename in (
+                ("plan", "plan.json"),
+                ("execution_assets", "execution-assets.json"),
+                ("timeline", "timeline.json"),
+            ):
+                candidate = Path(run_dir) / filename
+                if candidate.is_file():
+                    artifact_index[name] = str(candidate)
+            failed = FinalResultManifest(
+                run_id=self.run_id,
+                status="failed",
+                output_mp4="",
+                warnings=self._warnings + [f"Run failed: {type(exc).__name__}: {exc}"],
+                artifact_index=artifact_index,
+            )
+            (Path(run_dir) / "result.json").write_text(
+                failed.model_dump_json(indent=2), encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     def _validate_plan_layouts(self, plan: PlanManifest) -> None:
         for scene in plan.scenes:
@@ -460,7 +556,9 @@ class Pipeline:
                     segment_data["audio"] = None
                 segments_data.append(segment_data)
 
-            output_dir = self.artifacts_dir / "visuals" / scene_plan.id
+            # run 目录制：per-shot visual 是本次 run 的产物，落进 run 目录
+            base_visual_dir = self.run_dir if self.run_dir is not None else self.artifacts_dir
+            output_dir = base_visual_dir / "visuals" / scene_plan.id
             output_dir.mkdir(parents=True, exist_ok=True)
 
             input_data = {

@@ -277,7 +277,7 @@ class TestDispatchRender:
         )
 
         with pytest.raises(ValueError, match="Invalid layout for scene scene_bad"):
-            p._execute_plan(plan, tmp_path / "out.mp4", tmp_path, tmp_path)
+            p._execute_plan(plan, tmp_path / "out.mp4", tmp_path)
 
         assert not p._prepare_execution_assets.called
 
@@ -315,7 +315,7 @@ class TestDispatchRender:
         )
 
         with pytest.raises(ValueError, match="Unsupported visual_type.*scene_manim.*manim"):
-            p._execute_plan(plan, tmp_path / "out.mp4", tmp_path, tmp_path)
+            p._execute_plan(plan, tmp_path / "out.mp4", tmp_path)
 
         assert not p._prepare_execution_assets.called
 
