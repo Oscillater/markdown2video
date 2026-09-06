@@ -17,6 +17,15 @@ def _expected_cache_key(text, voice, speed):
     return hashlib.sha256(f"tts:{canonical}".encode()).hexdigest()
 
 
+def _drain_asyncio_run(mock_asyncio_run):
+    """asyncio.run 的替身必须关掉收到的 coroutine。
+
+    mock 直接丢掉 coroutine 会留下 "coroutine 'Communicate.save' was never
+    awaited" RuntimeWarning，且 GC 时机让警告漂移到毫不相干的测试名下。
+    """
+    mock_asyncio_run.side_effect = lambda coro: coro.close()
+
+
 class TestEdgeTTSToolInit:
     def test_creates_cache_dir(self, tmp_path):
         cache_dir = tmp_path / "tts_cache"
@@ -50,6 +59,7 @@ class TestSynthesize:
     @patch("md2video.tools.tts.edge_tts.asyncio.run")
     def test_cache_miss(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
         voice, speed = "zh-CN-YunxiNeural", 1.0
+        _drain_asyncio_run(mock_asyncio_run)
         mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="3.0\n")
 
         tool = EdgeTTSTool(cache_dir=tmp_path, voice=voice)
@@ -64,6 +74,7 @@ class TestSynthesize:
     @patch("md2video.tools.tts.edge_tts.subprocess.run")
     @patch("md2video.tools.tts.edge_tts.asyncio.run")
     def test_custom_voice(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
+        _drain_asyncio_run(mock_asyncio_run)
         mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="1.0\n")
         tool = EdgeTTSTool(cache_dir=tmp_path, voice="zh-CN-YunxiNeural")
         result = tool.synthesize("hello", voice="en-US-JennyNeural")
@@ -72,21 +83,25 @@ class TestSynthesize:
 
     @patch("md2video.tools.tts.edge_tts.subprocess.run")
     @patch("md2video.tools.tts.edge_tts.asyncio.run")
-    def test_custom_speed_rate_string(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
+    @patch("md2video.tools.tts.edge_tts.Communicate")
+    def test_custom_speed_rate_string(
+        self, mock_communicate, mock_asyncio_run, mock_subprocess_run, tmp_path,
+    ):
+        """speed 换算成 edge-tts 的 rate 百分比字符串。"""
+        _drain_asyncio_run(mock_asyncio_run)
         mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="1.0\n")
         tool = EdgeTTSTool(cache_dir=tmp_path)
 
-        # 捕获 Communicate 的参数
-        def capture_asyncio(coro):
-            # 提取 Communicate 参数
-            return None
-        mock_asyncio_run.side_effect = capture_asyncio
-
         tool.synthesize("hello", speed=1.5)
+
+        # Communicate 收到 +50% 速率；patch 掉类后没有真实 coroutine 被创建
+        _, kwargs = mock_communicate.call_args
+        assert kwargs["rate"] == "+50%"
 
     @patch("md2video.tools.tts.edge_tts.subprocess.run")
     @patch("md2video.tools.tts.edge_tts.asyncio.run")
     def test_cache_key_deterministic(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
+        _drain_asyncio_run(mock_asyncio_run)
         mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="1.0\n")
         tool = EdgeTTSTool(cache_dir=tmp_path)
         r1 = tool.synthesize("same text", speed=1.0)
@@ -129,6 +144,7 @@ class TestToolProtocol:
     @patch("md2video.tools.tts.edge_tts.subprocess.run")
     @patch("md2video.tools.tts.edge_tts.asyncio.run")
     def test_execute_delegates_to_synthesize(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
+        _drain_asyncio_run(mock_asyncio_run)
         mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="2.0\n")
         tool = EdgeTTSTool(cache_dir=tmp_path)
         result = tool.execute({"text": "hello", "speed": 1.0, "format": "wav"})

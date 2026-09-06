@@ -492,7 +492,7 @@ Test / cleanup：
 - [x] README 不再写固定测试数量；测试基线只保留在 TODO 的最新验证记录中。
 - [x] 补像素级 smoke：`MD2VIDEO_RENDER_SMOKE=1` 触发真实 Manim 渲染 + FFmpeg 合成，断言文字/图片按 layout region 落位（`tests/test_render_smoke.py`）。
 - [x] 修复渲染分辨率 bug：`-ql` 质量旗标覆盖 manim.cfg 的竖屏声明导致横屏输出。
-- [ ] 调查当前 pytest warnings，来源主要是 mock async TTS 调用和部分第三方 deprecation。
+- [x] 调查当前 pytest warnings（2026-09-06）：4 条 RuntimeWarning（mock async edge-tts 的 `Communicate.save` coroutine 未 await）已修——`tests/test_edge_tts.py` 的 `asyncio.run` 替身现在关闭收到的 coroutine，`test_custom_speed_rate_string` 改为 patch `Communicate` 直接断言 rate 字符串。剩 2 条第三方 deprecation 修不了（修复在上游）：cloup `_util.py` 读了已废弃的 `click.__version__`（随 manim→click 引入，等 cloup 发版改用 importlib.metadata）；pydub `utils.py` 导入 `audioop`（Python 3.13 移除，等 pydub 上游跟进，当前 3.11 下不影响渲染链路）。测试数量只增不减，生产行为零变化。
 - [x] 补测试：音频按 `segment_id` 绑定，不依赖 segment 列表顺序。
 - [x] 补测试：render 成功但未生成新 `timeline.json` 时 hard fail，不复用旧 timeline。
 - [x] 删除或重写旧 flat fallback 测试。
