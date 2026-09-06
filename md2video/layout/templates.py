@@ -34,6 +34,22 @@ def _center_title_body(params, frame_width: int, frame_height: int) -> ComputedL
     gap = 0.04
     body_y = SAFE_AREA.y + title_height + gap
     body_height = SAFE_AREA.bottom - body_y
+    body_box = LayoutBox(
+        x=SAFE_AREA.x,
+        y=body_y,
+        width=SAFE_AREA.width,
+        height=body_height,
+    )
+    # section_stack 是 body 内的子构图 region：section header 左列堆叠的
+    # 边界由此表达（渲染器只装内容进 region，不再自行推算堆叠 bounds）。
+    # 它是 body 的嵌套子 region，不参加内容区重叠检查。v0 与 body 同框，
+    # 堆叠占满整个 body 列；以后收紧堆叠列只动这里。
+    section_stack_box = LayoutBox(
+        x=body_box.x,
+        y=body_box.y,
+        width=body_box.width,
+        height=body_box.height,
+    )
     return ComputedLayout(
         template_id="center_title_body",
         frame_width=frame_width,
@@ -46,12 +62,8 @@ def _center_title_body(params, frame_width: int, frame_height: int) -> ComputedL
                 width=SAFE_AREA.width,
                 height=title_height,
             ),
-            "body": LayoutBox(
-                x=SAFE_AREA.x,
-                y=body_y,
-                width=SAFE_AREA.width,
-                height=body_height,
-            ),
+            "body": body_box,
+            "section_stack": section_stack_box,
         },
         safe_region_names=["title", "body"],
         content_region_names=["title", "body"],

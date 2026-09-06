@@ -29,6 +29,7 @@ from md2video.core.planner.rule_planner import (
 from md2video.inspect.runs import create_run_dir, new_run_id
 from md2video.inspect.viewer import VIEWER_FILENAME, build_run_view, write_manifest_viewer
 from md2video.layout import create_default_layout_registry
+from md2video.layout.constraints import load_constraint_modules
 from md2video.manifest.migration import load_plan_manifest_json
 from md2video.manifest.schema import (
     AudioAsset,
@@ -64,6 +65,9 @@ class Pipeline:
 
         self.tool_config = tool_config or load_tool_config()
         self.layout_registry = layout_registry or create_default_layout_registry()
+        # 显式加载外部 layout 约束模块（env MD2VIDEO_LAYOUT_CONSTRAINTS）；
+        # 导入/注册失败在这里 fail fast，不带病开渲。
+        load_constraint_modules()
         self.registry = ToolRegistry()
         self._register_default_tools()
         # 本次 run 的目录与 id（_open_run_dir 赋值）；产物只增不删
@@ -429,13 +433,25 @@ class Pipeline:
             pass
 
     def _validate_plan_layouts(self, plan: PlanManifest) -> None:
+        """布局裁判：一次收集全部 scene 的全部 LayoutIssue 再 fail fast。"""
+        from md2video.config import MANIM_HEIGHT, MANIM_WIDTH
+        from md2video.layout.resolve import resolve_scene_layout
+
+        problems: list[str] = []
         for scene in plan.scenes:
             try:
-                self.layout_registry.compute(scene.layout_type, scene.layout_params)
-            except Exception as exc:
-                raise ValueError(
-                    f"Invalid layout for scene {scene.id}: {exc}"
-                ) from exc
+                resolve_scene_layout(
+                    scene.layout_type,
+                    scene.layout_params,
+                    scene.layout_regions,
+                    MANIM_WIDTH,
+                    MANIM_HEIGHT,
+                    registry=self.layout_registry,
+                )
+            except ValueError as exc:
+                problems.append(f"Invalid layout for scene {scene.id}: {exc}")
+        if problems:
+            raise ValueError(" | ".join(problems))
 
     def _dispatch_visual_tools(
         self,

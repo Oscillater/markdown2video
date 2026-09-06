@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 from md2video.layout.mapping import box_pixel_rect, even_size
-from md2video.layout.registry import create_default_layout_registry
+from md2video.layout.resolve import resolve_scene_layout
 from md2video.manifest.schema import (
     ExecutionAssets,
     PlanManifest,
@@ -288,6 +288,10 @@ def extract_shot_visual_entries_from_assets(
         if scene is not None:
             entry["layout_type"] = scene.layout_type
             entry["layout_params"] = dict(scene.layout_params)
+            if scene.layout_regions:
+                entry["layout_regions"] = {
+                    name: dict(box) for name, box in scene.layout_regions.items()
+                }
         entries.append(entry)
     return entries
 
@@ -300,17 +304,23 @@ def attach_image_layout_regions(
 ) -> List[Dict]:
     """Attach pixel-space "image" region rects derived from each entry's layout.
 
+    Layout resolution goes through the shared proposal/template judge so the
+    assembler cannot disagree with the renderer about a scene's regions.
     Entries without a resolvable layout or without an "image" region are left
     untouched and keep the legacy overlay placement.
     """
-    registry = layout_registry or create_default_layout_registry()
     for entry in entries:
         layout_type = entry.get("layout_type")
         if not layout_type:
             continue
         try:
-            computed = registry.compute(
-                layout_type, entry.get("layout_params"), video_width, video_height,
+            computed = resolve_scene_layout(
+                layout_type,
+                entry.get("layout_params"),
+                entry.get("layout_regions"),
+                video_width,
+                video_height,
+                registry=layout_registry,
             )
         except Exception:
             continue

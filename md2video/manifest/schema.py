@@ -48,6 +48,9 @@ class ScenePlan(BaseModel):
     visual_params: Dict = Field(default_factory=dict)
     layout_type: str = DEFAULT_LAYOUT_TYPE
     layout_params: Dict = Field(default_factory=dict)
+    # A5 直接提案入口：归一化 region 集合（name -> {x,y,width,height}）。
+    # 与模板产出走同一套 ComputedLayout 属性校验；设置时优先于 layout_type。
+    layout_regions: Optional[Dict[str, Dict[str, float]]] = None
     shots: List[ShotPlan] = Field(default_factory=list)
     section_context: str = ""
     # 向后兼容: 旧 JSON 含 segment_ids 时自动迁移为单 Shot

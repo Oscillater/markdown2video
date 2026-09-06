@@ -11,6 +11,7 @@ from md2video.config import (
 from md2video.core.planner.rule_planner import MARKER_SEGMENT_TYPES
 from md2video.layout.mapping import box_center_units, box_size_units
 from md2video.layout.registry import LayoutRegistry, create_default_layout_registry
+from md2video.layout.resolve import resolve_scene_layout
 from md2video.layout.schema import ComputedLayout
 from md2video.manifest.schema import (
     ExecutionAssets,
@@ -44,6 +45,7 @@ class ShotRenderUnit(NamedTuple):
     cues: tuple[dict[str, Any], ...]
     layout_type: str
     layout_params: dict[str, Any]
+    layout_regions: dict[str, dict[str, Any]] | None = None
 
     @property
     def segment_ids(self) -> list[str]:
@@ -60,10 +62,19 @@ class RegionPlacement(NamedTuple):
 
 
 class ShotLayoutContext(NamedTuple):
-    """Renderer-facing view of one shot's layout contract."""
+    """Renderer-facing view of one shot's layout contract.
+
+    ``section_stack`` 是 section header 左列堆叠的子构图 region（模板表达，
+    渲染器只装内容）；布局没有该子 region 时回退到 body placement。
+    """
 
     body: RegionPlacement | None
     has_image_region: bool
+    section_stack: RegionPlacement | None = None
+
+
+# Section header 堆叠列的 region 名（子构图 region 化，A5）
+SECTION_STACK_REGION_NAME = "section_stack"
 
 
 def compute_shot_layout(
@@ -74,11 +85,18 @@ def compute_shot_layout(
 ) -> ComputedLayout:
     """Compute the shot's layout regions; unknown layouts fail fast.
 
+    `layout_regions` 直接提案优先于模板（与管线校验同一套约束裁决）。
     The ComputedLayout records template metadata in reference pixels; region
     boxes stay normalized and are mapped to unit space by the callers.
     """
-    active_registry = registry or create_default_layout_registry()
-    return active_registry.compute(unit.layout_type, unit.layout_params, frame_width_px, frame_height_px)
+    return resolve_scene_layout(
+        unit.layout_type,
+        unit.layout_params,
+        unit.layout_regions,
+        frame_width_px,
+        frame_height_px,
+        registry=registry,
+    )
 
 
 def resolve_region_name(computed_layout: ComputedLayout, preference: Iterable[str]) -> str | None:
@@ -124,10 +142,26 @@ def shot_layout_context(
     registry: LayoutRegistry | None = None,
 ) -> ShotLayoutContext:
     computed = compute_shot_layout(unit, registry=registry)
-    return ShotLayoutContext(
-        body=body_region_placement(computed, frame_width, frame_height),
-        has_image_region="image" in computed.regions,
+    body = body_region_placement(computed, frame_width, frame_height)
+    stack_placement = region_placement_or_none(
+        computed, SECTION_STACK_REGION_NAME, frame_width, frame_height,
     )
+    return ShotLayoutContext(
+        body=body,
+        has_image_region="image" in computed.regions,
+        section_stack=stack_placement if stack_placement is not None else body,
+    )
+
+
+def region_placement_or_none(
+    computed_layout: ComputedLayout,
+    name: str,
+    frame_width: float,
+    frame_height: float,
+) -> RegionPlacement | None:
+    if name not in computed_layout.regions:
+        return None
+    return region_placement(computed_layout, name, frame_width, frame_height)
 
 
 def title_layout_positions(
@@ -219,6 +253,9 @@ def iter_shot_render_units(
                 cues=tuple(dict(cue) for cue in shot.cues),
                 layout_type=scene.layout_type,
                 layout_params=dict(scene.layout_params),
+                layout_regions=(
+                    dict(scene.layout_regions) if scene.layout_regions else None
+                ),
             )
 
 

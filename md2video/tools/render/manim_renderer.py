@@ -370,14 +370,18 @@ class ManifestDrivenScene(VoiceoverScene):
             self.wait(duration)
 
     def _render_section_header(self, seg, shot_unit=None, layout_ctx=None):
-        """渲染 section header（左侧字幕堆叠，约束在 body region 内）。"""
+        """渲染 section header（左侧字幕堆叠，装进模板的堆叠子 region）。"""
         timeline = self.timeline
         current_subtitles = self.current_subtitles
         subtitle_heights = self.subtitle_heights
         spacing = SUBTITLE_SPACING
         motion = self._realizer.tokens.motion
 
-        region = layout_ctx.body if layout_ctx is not None else None
+        # 堆叠边界来自模板子构图 region（section_stack）；没有子 region 的
+        # 布局回退到 body/text/caption placement，仍无 layout 时用 legacy 常量。
+        region = None
+        if layout_ctx is not None:
+            region = layout_ctx.section_stack or layout_ctx.body
         if region is not None:
             max_subtitle_width = min(SUBTITLE_MAX_WIDTH, region.max_width)
             region_left = region.center[0] - region.max_width / 2

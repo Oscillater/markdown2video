@@ -389,12 +389,12 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 目标：layout 从"模板选择"升级为"约束机制"。
 
-- [ ] `ScenePlan.layout_regions` 直接提案入口（与模板走同一套属性校验）。
-- [ ] 结构化 LayoutIssue：code + region + 数值差 + 修改建议，一次报全部问题。
-- [ ] 约束注册表（设计包可注册追加约束）。
-- [ ] 子构图 region 化：section header 左列堆叠改由模板子 region 表达。
+- [x] `ScenePlan.layout_regions` 直接提案入口（与模板走同一套属性校验；设置时优先于 layout_type；名为 image 的 region 是可出血视觉槽位）。
+- [x] 结构化 LayoutIssue：code + region + 数值差 + 修改建议，一次报全部问题（`layout/constraints.py`）；pipeline fail-fast 的报错包含全部 scene 的全部 issue。
+- [x] 约束注册表（零特权 `register_constraint(fn)`，内置与外部规则同一通道；env `MD2VIDEO_LAYOUT_CONSTRAINTS` 显式加载 Python 约束模块，导入失败 fail fast；pack JSON 永不被执行）。
+- [x] 子构图 region 化：section header 左列堆叠改由模板子 region `section_stack` 表达，渲染器只装内容。
 
-验收：非法提案得到可执行的结构化报错；现有模板路径行为不变。
+验收：非法提案得到可执行的结构化报错；现有模板路径行为不变。✅（2026-09-06：结构化报错含全部 issue 测试全绿；smoke 计划与 example 端到端改前后 framemd5 逐帧全等）
 
 ### A6 混合引擎（按 scene）
 

@@ -77,7 +77,7 @@ Markdown source
 | 原则 | 已有实现（证据） | 待补 |
 |---|---|---|
 | 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警）；plan 已去 target_duration（v2 迁移）；素材 duration 合同（VisualAsset.duration）；时长估算器（`timeline/estimate.py`，仅容错决策与展示）；估算消费方（A4 viewer 预计 vs 实际） | hold cue 入口（概念位已留） |
-| 提案→裁判→交付（layout） | ComputedLayout 属性校验（安全区/不重叠）；注册表重复注册 fail-fast；mapping.py 双消费端共享 | regions 直接提案入口；结构化报错；子构图（左侧堆叠列）region 化；约束可注册追加 |
+| 提案→裁判→交付（layout） | ComputedLayout 属性校验；注册表重复注册 fail-fast；mapping.py 双消费端共享；regions 直接提案入口（`ScenePlan.layout_regions`，`layout/resolve.py`，与模板同一裁决）；结构化报错（`LayoutIssue` + `LayoutValidationError`，一次报全部，含数值与建议）；约束注册表（`layout/constraints.py`，零特权 `register_constraint`，env `MD2VIDEO_LAYOUT_CONSTRAINTS` 显式加载外部约束模块）；子构图 region 化（center_title_body 的 `section_stack` 子 region） | —— |
 | 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过） | 外部文件包加载落地（`register_pack` 接口已留） |
 | 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地 | 渲染后端=tool（plan 切片、局部 timeline） |
 | 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
@@ -172,9 +172,11 @@ Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可�
 - `layout_type` / `layout_regions`：这些素材、文字、字幕放在屏幕哪里。
 - `theme`：长什么样、怎么动（见下一节 Style 与 Pack）。
 
-**Layout 是约束机制，不是模板库。**提案者（内置模板 / LLM 直接提案 regions / 用户配置）地位平等，产出候选 region 集合，由同一套属性校验裁决：安全区包含、内容区不重叠、最小尺寸；设计包可注册追加约束。通过则 `ComputedLayout` 交付给 tools；拒绝则返回结构化错误（哪个 region、差多少、怎么改），供 LLM 自我修正。
+**Layout 是约束机制，不是模板库。**提案者（内置模板 / `ScenePlan.layout_regions` 直接提案 / 用户配置）地位平等，产出候选 region 集合，由同一套属性校验裁决（`layout/constraints.py` 的约束注册表：安全区包含、内容区不重叠、最小尺寸）；设计包与用户可经零特权 `register_constraint(fn)` 注册追加约束。通过则 `ComputedLayout` 交付给 tools；拒绝则返回结构化错误 `LayoutValidationError`（每条 `LayoutIssue` 带哪个 region、期望/实际数值、怎么改，一次报全部问题），供 LLM 自我修正。提案里名为 `image` 的 region 是视觉槽位（可全屏出血、允许文字叠上），豁免安全区与重叠检查，与内置模板对 image region 的用法一致。
 
-子构图归 layout：例如小标题左侧堆叠的"列"由模板子 region 表达，渲染器只负责把内容装进 region；渲染器的自由度收敛为 region 内的动效（动效语义归 style）。
+外部约束模块通过 env `MD2VIDEO_LAYOUT_CONSTRAINTS`（逗号分隔 Python 模块路径）显式加载：pipeline 启动时导入并执行其注册，导入失败 fail fast。pack 的 JSON 文件永远纯数据、绝不被自动执行；要自定义规则的包作者随包附一段独立注册模块，由用户显式启用。
+
+子构图归 layout：center_title_body 的 section header 左列堆叠边界由模板子 region `section_stack` 表达（嵌套子 region，不参加内容区重叠检查），渲染器只负责把内容装进 region；渲染器的自由度收敛为 region 内的动效（动效语义归 style）。
 
 当前内置提案器（`center_title_body` / `full_bleed_image_caption_bottom` / `image_top_text_bottom`）继续作为默认值与示例存在。Layout 参数由模板自己的 Pydantic schema 校验；runtime 在执行 TTS、渲染和合成前先完成 layout 解析与约束校验。
 
@@ -248,6 +250,7 @@ Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可�
 | plan v1→v2 迁移（去时间、去副本字段） | `manifest/migration.py` | `test_manifest_migration.py` |
 | 规划（scenes/shots/cues，rule + llm） | `core/planner/rule_planner.py`、`core/planner/llm_planner.py` | `test_rule_planner.py`、`test_llm_planner.py` |
 | Layout（模板、注册表、共享坐标换算） | `layout/schema.py`、`layout/templates.py`、`layout/registry.py`、`layout/mapping.py` | `test_layout.py`、`test_layout_mapping.py` |
+| Layout 裁决（约束注册表、结构化 LayoutIssue、提案解析） | `layout/constraints.py`、`layout/resolve.py` | `test_layout_constraints.py`、`test_layout_proposal.py` |
 | 工具（契约、注册、缓存、TTS/图片/渲染实现） | `tools/protocol.py`、`tools/registry.py`、`tools/cache.py`、`tools/tts/`、`tools/image/`、`tools/render/manim_tool.py` | `test_tool_protocol.py`、`test_tool_registry.py`、`test_tool_cache.py`、`test_edge_tts.py`、`test_pexels_image_tool.py`、`test_local_image_tool.py`、`test_manim_tool.py` |
 | 编排（五步流水线、fail-fast、降级分发） | `core/pipeline.py` | `test_dispatch.py`、`test_pipeline_artifacts.py` |
 | 渲染（shot 级渲染、timeline 事实） | `tools/render/manim_renderer_inputs.py`（纯 helper）、`tools/render/manim_renderer.py`、`tools/render/timeline_builder.py`、`tools/render/manifest_loader.py`、`tools/render/cached_voice.py` | `test_manim_renderer_inputs.py`、`test_renderer_timeline_state.py`、`test_cached_voice.py` |
