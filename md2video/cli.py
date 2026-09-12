@@ -15,6 +15,10 @@ def main():
     p.add_argument("--speed", type=float, default=None, help="TTS speed (default: 1.0)")
     p.add_argument("--artifacts", default=None, help="Artifacts directory (default: artifacts/)")
     p.add_argument("--planner", choices=["rule", "llm"], default=None, help="Planner type (default: rule)")
+    p.add_argument(
+        "--bundle", action="store_true",
+        help="Also export an edit-ready media bundle (clips/SRT/EDL/assets) into the run dir",
+    )
     args = p.parse_args()
 
     kwargs = {}
@@ -26,6 +30,8 @@ def main():
         kwargs["artifacts_dir"] = args.artifacts
     if args.planner:
         kwargs["planner"] = args.planner
+    if args.bundle:
+        kwargs["export_bundle"] = True
 
     if bool(args.input) == bool(args.plan):
         p.error("provide exactly one input: markdown path or --plan plan.json")

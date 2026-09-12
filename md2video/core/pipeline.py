@@ -54,7 +54,7 @@ from md2video.tools.tts.edge_tts import EdgeTTSTool
 
 class Pipeline:
     def __init__(self, artifacts_dir=None, voice=None, speed=None, planner=None,
-                 tool_config=None, layout_registry=None):
+                 tool_config=None, layout_registry=None, export_bundle=False):
         self.artifacts_dir = Path(artifacts_dir or ARTIFACTS_DIR)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._warnings: list[str] = []
@@ -63,6 +63,8 @@ class Pipeline:
         self.voice = voice or DEFAULT_VOICE
         self.speed = speed or DEFAULT_SPEED
         self.planner = self._create_planner(planner)
+        # 解法 4：随 run 额外产出混剪素材包（clips/SRT/EDL/assets）
+        self.export_bundle = export_bundle
 
         self.tool_config = tool_config or load_tool_config()
         self.layout_registry = layout_registry or create_default_layout_registry()
@@ -258,6 +260,17 @@ class Pipeline:
         otio_path, otio_warning = self._export_otio_artifact(run_dir, timeline_data)
         if otio_warning:
             self._warnings.append(otio_warning)
+        bundle_dir = None
+        if self.export_bundle:
+            bundle_dir, bundle_warnings = self._export_bundle_artifact(
+                run_dir=run_dir,
+                timeline_data=timeline_data,
+                final_video=output_path,
+                plan=plan,
+                assets=assets,
+                base_dir=base_dir,
+            )
+            self._warnings.extend(bundle_warnings)
         self._write_final_result(
             run_dir=run_dir,
             output_path=output_path,
@@ -270,8 +283,35 @@ class Pipeline:
             video_path=video_path,
             render_output=render_output,
             otio_path=otio_path,
+            bundle_dir=bundle_dir,
         )
         return output_path
+
+    def _export_bundle_artifact(
+        self,
+        *,
+        run_dir: Path,
+        timeline_data: dict,
+        final_video: Path,
+        plan: PlanManifest,
+        assets: ExecutionAssets,
+        base_dir: Path,
+    ) -> tuple[Path | None, list[str]]:
+        """解法 4：混剪素材包（尽力导出，失败折进 warnings 不阻断成片）。"""
+        from md2video.timeline.bundle_export import BUNDLE_DIRNAME, export_bundle
+
+        bundle_dir, warnings = export_bundle(
+            timeline_data,
+            final_video,
+            Path(run_dir) / BUNDLE_DIRNAME,
+            plan=plan,
+            execution_assets=assets,
+            base_dir=base_dir,
+            run_name=self.run_id,
+        )
+        if bundle_dir is not None:
+            print(f"  Bundle: {bundle_dir}")
+        return bundle_dir, warnings
 
     def _export_otio_artifact(self, run_dir: Path, timeline_data: dict) -> tuple[Path | None, str]:
         """A9：把 timeline 事实另存一份 OTIO 交换格式（尽力导出，失败降级为 warning）。"""
@@ -465,6 +505,7 @@ class Pipeline:
         video_path: Path | None = None,
         render_output: dict | None = None,
         otio_path: Path | None = None,
+        bundle_dir: Path | None = None,
     ) -> Path:
         viewer_path = Path(run_dir) / VIEWER_FILENAME
         artifact_index = {
@@ -478,6 +519,8 @@ class Pipeline:
             artifact_index["base_video"] = str(video_path)
         if otio_path:
             artifact_index["otio_timeline"] = str(otio_path)
+        if bundle_dir:
+            artifact_index["bundle"] = str(bundle_dir)
         if render_output:
             artifact_index["render_dir"] = str(render_output.get("render_dir", ""))
             artifact_index["render_provider"] = str(render_output.get("provider", ""))
