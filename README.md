@@ -20,6 +20,7 @@ pydantic-ai >= 1.76.0
 python-dotenv >= 1.0.0
 Pillow
 requests
+opentimelineio
 ```
 
 ## 安装
@@ -93,10 +94,27 @@ python -m md2video example/example.md -o artifacts/output.mp4 --planner llm
 
 LLM 调用失败时会自动 fallback 到 Rule Planner，不影响正常使用。
 
+## 产物与检查
+
+每次运行创建独立目录 `artifacts/runs/<run_id>/`（永不覆盖、永不删除），记录本次 run 的 `plan.json`、`execution-assets.json`、`timeline.json`、`timeline.otio`（OpenTimelineIO 交换格式，可导入 Resolve/FCP/Premiere 生态）、`result.json`，并生成单文件自包含的 `manifest_viewer.html` 检查页（浏览器直接打开，无需读原始 JSON）。最终 MP4 写到 `-o` 指定的路径。
+
+加 `--bundle` 可在 run 目录额外产出混剪素材包 `bundle/`：按 shot 边界切好的 `clips/`、口播字幕 `subtitles.srt`、剪辑骨架 `timeline.edl`、原始素材 `assets/`（图片/BGM/每段配音）——供剪映/必剪等消费级剪辑软件继续加工（已实测两类软件均接受全部素材类型）。
+
+## 高级配置（环境变量）
+
+| 环境变量 | 作用 | 默认 |
+|---|---|---|
+| `MD2VIDEO_RENDER_BACKEND` | 渲染后端 provider 名：`manim`（默认）或 `remotion` | `manim` |
+| `MD2VIDEO_STYLE_PACK` | 选择设计包（ThemeTokens） | `ink_night` |
+| `MD2VIDEO_STYLE_PACK_FILE` | 指向外部设计包 JSON 文件（fail fast） | 无 |
+| `MD2VIDEO_LAYOUT_CONSTRAINTS` | 逗号分隔的 Python 模块路径，注册额外 layout 约束 | 无 |
+
+`remotion` 后端额外要求：Node.js 22+，并需在 `md2video/tools/render/remotion_backend/` 内执行一次 `npm install`（首次渲染会自动下载 headless 浏览器）。scene 级可用 `render_backend` 字段混合两种引擎（相邻同后端 scene 自动分组）。
+
 ## 架构
 
 ```
-Markdown → Parser/Planner → Plan Manifest → Execution Assets → Manim Renderer → Timeline → FFmpeg Assembler → Final Result → MP4
+Markdown → Parser/Planner → Plan Manifest → Execution Assets → Render Backend（默认 Manim）→ Timeline → FFmpeg Assembler → Final Result → MP4
 ```
 
 核心概念：
@@ -111,7 +129,7 @@ Markdown → Parser/Planner → Plan Manifest → Execution Assets → Manim Ren
 2. **Planner** 将 Segment 分组为 Shot，将 marker 降级为 shot cue，并为 Scene 分配视觉和 layout 策略
 3. **PlanManifest** 保存计划和目标约束，不保存执行产物
 4. **ExecutionAssets** 记录 TTS 音频、本地图片或 Pexels 图片等素材事实
-5. **Manim Renderer** 渲染基础视频，并输出真实时间事实 `timeline.json`
+5. **渲染后端**（默认 Manim，可通过 `MD2VIDEO_RENDER_BACKEND` 切换）渲染基础视频，并输出真实时间事实 `timeline.json`
 6. **FFmpeg Assembler** 根据真实 timeline 拼接视频、混入语音、叠加音乐和图片
 7. **FinalResultManifest** 在 assemble 完成后写出最终 MP4、used assets、warnings 和 artifact index
 
@@ -187,12 +205,17 @@ Markdown → Parser/Planner → Plan Manifest → Execution Assets → Manim Ren
 md2video/              # 核心代码
     manifest/          # Plan/Result Manifest 数据模型 (含 Segment + Shot + Scene)
     parser/            # Markdown 解析
+    layout/            # Layout 模板 + 约束注册表 + 共享坐标换算
+    style/             # 设计包 (ThemeTokens + Realizer + motif)
+    timeline/          # 时间不变量闸门 + 时长估算
+    inspect/           # run 目录制 + manifest viewer 检查页
     tools/tts/         # TTS 工具 (edge-tts)
-    tools/render/      # Manim 渲染 + CachedVoiceService
+    tools/render/      # 渲染后端 (Manim) + CachedVoiceService
     tools/             # Tool 基础设施 (Protocol, Registry, Cache)
     assembler/         # FFmpeg 合成
     core/              # Pipeline 编排
         planner/       # Planner (Rule + LLM 两阶段)
+        multi_backend.py # 按 scene 混合多渲染后端
     cli.py             # 命令行入口
     config.py          # 配置常量
 example/               # 示例 Markdown

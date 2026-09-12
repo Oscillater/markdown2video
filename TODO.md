@@ -58,11 +58,13 @@ future harness preview/review/partial rerun
 - Phase 1-6 已完成：渲染契约 + layout consumption 落地，像素级 smoke 验证通过。
 - 设计共识定稿（2026-09-05）：四本账、四道闸门、双 track 路线。设计定义见 `docs/architecture.md`（「总体模型」「覆盖地图」）。
 - Track A 首批已落地（2026-09-06）：A1 时间不变量闸门 + A2.5 渲染后端去硬编码 + A2/B1 Style Pack（`ink_night`，像素逐帧不变验收）+ A3 Plan Schema v2（plan 不含时间，一次切换完成）。
-- Track A 第二批已落地（2026-09-07）：A4 Runtime Inspectability（run 目录制 + `manifest_viewer.html`）+ A5 Layout 提案机制（`layout_regions` + 约束注册表 + 结构化 LayoutIssue + 子构图 region 化）+ 外部皮肤包文件加载（`MD2VIDEO_STYLE_PACK_FILE`）+ A6 前半（按 scene 多后端分发与合成基础设施，Remotion 留后半）。
-- 最新验证：2026-09-07 运行 `python -m pytest -q`，结果是 `554 passed, 1 skipped, 2 warnings`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的像素 smoke（`tests/test_render_smoke.py`）与混合引擎真渲染验收（`tests/test_multi_backend.py`）；2 条 warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
-- 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`。
+- Track A 第二批已落地（2026-09-07）：A4 Runtime Inspectability（run 目录制 + `manifest_viewer.html`）+ A5 Layout 提案机制（`layout_regions` + 约束注册表 + 结构化 LayoutIssue + 子构图 region 化）+ 外部皮肤包文件加载（`MD2VIDEO_STYLE_PACK_FILE`）+ A6 前半（按 scene 多后端分发与合成基础设施）。
+- Track A 第三批已落地（2026-09-07 晚）：A9 OTIO 导出（`timeline.otio` 交付形态）+ A6 后半（Remotion 真实第二后端：Python 调度器 + Node composition，能力词汇声明与降级，混合 manim/remotion 出片，双跑 framemd5 逐帧一致）。
+- Track A 第三批补验（2026-09-08）：CLI 全链路真跑（rule planner + edge-tts 配音 + Remotion 渲染 + FFmpeg 装配）暴露并修复三个 mock 盖不住的集成 bug——①`remotion_tool` 子进程 cwd 切到 backend_dir 后相对路径错位（props 找不到/视频写错目录，先 `resolve()` 再传 CLI，补相对路径回归测试）；②`ffmpeg_assembler.ffprobe_resolution` 对 Remotion 容器多出的尾部空字段（`480x854x`）做 `int('')` 炸裂（只取前两段）；③调度器 before/after 锚点 cue（真实 markdown 的 `[image_start]`/`[music_*]` 全走这条路）挂上时间后从未 append 进 `markers_out`，时间闸门直接拒绝且图片/BGM 条目为空（锚前=段起点、锚后=段终点落盘；锚点段不在本 shot 时收敛到本 shot 末端）。修正早前错误结论：图片/BGM 不需要进 Remotion payload——正文由组件按 region 画，图片/Ken Burns 与 BGM 由后端无关的装配层按 timeline marker 叠加；marker 修复后带图+BGM 的 `example.md` 走 Remotion 完整出片（66.6s，抽帧验证 `image_top_text_bottom` 版式成立、窗口外无图）。
+- 最新验证：2026-09-08 运行 `python -m pytest -q`，结果是 `583 passed, 4 skipped`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的真实渲染用例（`tests/test_render_smoke.py` 像素 smoke、`tests/test_multi_backend.py` 真渲染验收、`tests/test_remotion_smoke.py` remotion 单后端与混合后端真渲染）；2 条 warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
+- 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
-- 后续施工按 Track A / Track B 推进；原 Phase 7 计划并入 A4。
+- 后续施工：A6 后半（Remotion 真实第二后端）→ A9 OTIO 导出 → A7 内容槽位 → B2 知识口播 pack（与 A7 按需互相触发）；A8 组件注册挂起（建议 Remotion 落地后再定义契约）；LLM planner API 修复等有效 key。
 
 ## Phase 1: 基础架构 - 已完成
 
@@ -405,9 +407,9 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 - [x] 按 scene 分组分发：相邻同后端 scene 组成极大组；plan 切片 → 各后端 → N 段视频 + N 份局部 timeline（`core/multi_backend.py`）。
 - [x] 视频拼接（concat filter，全静音 run 出无音轨底片走 assembler 已验证静音路径）+ timeline 前缀和偏移合并 → 重过全局闸门（对完整 plan 跑 `check_timeline`）。
 - [x] 组边界状态策略：引擎切换即场景切换，每组独立渲染调用，渲染器内部跨 shot 状态（字幕堆叠/母题）清零。
-- [ ] Remotion 后端：同一渲染契约 + 自带 Realizer + 能力词汇声明（动效意图、母题 kind）。
+- [x] Remotion 后端：同一渲染契约 + 自带 Realizer + 能力词汇声明（动效意图、母题 kind）。（决策 2026-09-07：第二后端只做 Remotion；HyperFrames / 云渲染 API 不做专项评估，留 Idea Pool。）
 
-验收：混合 manim/remotion 的 plan 出一条成片；Remotion 通过全部闸门。A6 前半验收（2026-09-07）：混合 manim/fake 的 plan 出一条成片且过全部闸门（真 manim 组 + fake 组，env-gated smoke）；全部 fake 的多组 run 出片过闸门；单一 manim 后端的 plan 行为与现状完全一致（example 端到端 framemd5 逐帧全等）。Remotion 后端归 A6 后半单独批次。
+验收：混合 manim/remotion 的 plan 出一条成片；Remotion 通过全部闸门。A6 前半验收（2026-09-07）：混合 manim/fake 的 plan 出一条成片且过全部闸门（真 manim 组 + fake 组，env-gated smoke）；全部 fake 的多组 run 出片过闸门；单一 manim 后端的 plan 行为与现状完全一致（example 端到端 framemd5 逐帧全等）。A6 后半验收（2026-09-07）：`RemotionRenderTool`（契约同 manim_tool：五字段进 / 五字段出 + 后端自跑时间闸门）+ 纯函数调度器 `remotion_schedule.py`（音频事实 + pack 节奏推导，动效不消耗时间窗口为已记录差异）+ Node 侧 composition（`tools/render/remotion_backend/`，能力词汇：reveal write/fade/appear、dismiss instant/fade、motif orbit_dots，词汇外降级 + warning）；`test_remotion_backend.py` 13 项单测；env-gated 真渲染 smoke（`test_remotion_smoke.py`）：remotion 单后端出片（480x854、时长与调度一致、标题/正文按 layout 区域像素落位、双跑 framemd5 逐帧一致）+ manim/remotion 混合 plan 经 multi_backend 分组渲染拼接出一条成片（render_provider "manim+remotion"）。补验（2026-09-08）：CLI 全链路真跑出片（配音 + Remotion + 装配），并修复三个集成 bug（相对路径解析、`ffprobe_resolution` 尾部空字段、before/after 锚点 cue 不落 timeline markers），回归测试随之补齐（`test_remotion_tool_resolves_relative_paths_against_caller_cwd`、`test_ffprobe_resolution.py`、`test_before_and_after_marker_cues_reach_timeline`、`test_unanchored_after_marker_clings_to_own_shot_end`）。带图+BGM 的 `example.md` 走 Remotion 完整出片：图片/Ken Burns 与 BGM 由后端无关装配层按 timeline marker 叠加，正文由组件按 region 落位，引擎内不重复画图。
 
 ### A7 内容槽位（按需阀门）
 
@@ -417,6 +419,38 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 - [ ] 表现语义（列表逐条浮现、金句、引用样式）由 pack 提供。
 
 验收：带列表/引用的 markdown 出片；不支持的 pack 干净降级。
+
+### A8 组件注册（提案 → 契约验收 → 入库）—— 挂起
+
+决策（2026-09-07）：组件注册的门槛就是契约本身，**不设人工审核环节**；且**不依赖 harness**——验收入口做成纯 infra CLI，交互回路留给未来 harness，契约不变。
+
+补充决策（2026-09-07 晚）：A8 **整体挂起**，待讨论「怎么挂」的具体机制后再排期。挂起的排序理由：组件契约应在第二个真实后端（Remotion）落地后再定义——只有一个引擎时契约容易长成 manim 形状，两个引擎的实例才能校准出引擎无关的接口。
+
+- [ ] 定义组件契约：visual_type / motif kind / layout 模板插件的最小实现接口 + 能力词汇声明（不认识的槽位优雅降级 + warning）。代码分发沿用 A5 模式：只经显式模块加载，pack JSON 永不执行。
+- [ ] 验收入口 `md2video check-component <module>`：fixture plan 跑四道闸门 + 双跑逐帧一致（确定性验证，无人审安全性的来源）+ 黄金帧存档；全部通过才允许注册进 pack/注册表。
+- [ ] 入库后 plan 只引用 `id@version`，代码本体住注册模块；组件内容哈希进 result.json（供应链兜底：版本锁定 + 可审计，替代人工审核）。
+
+验收：外部写一个 motif / visual_type 组件，check-component 通过后在 plan 中引用出片；故意破坏组件使闸门失败时被拒且报错可定位。
+
+### A9 OTIO 导出（交付形态，infra）
+
+决策（2026-09-07）：OTIO 导出归 runtime/infra（timeline 事实的另一种 serialization），不是 harness 功能。
+
+- [x] `timeline.json` → OpenTimelineIO 纯函数 lowering + 结构黄金测试；经 OTIO 适配器可达 EDL / FCPXML / AAF 生态。
+- [x] result.json artifact index 登记 OTIO 产物。
+
+验收：✅（2026-09-07）`timeline/otio_export.py` 纯函数 lowering（shots→Video track Clip、marker→所属 shot Clip 上的 Marker、text 事实→Clip metadata、无可归属条目→Timeline metadata 孤儿区、fps 优先取 timeline 携带值可扩展多帧率）+ `test_otio_export.py` 11 项测试（结构/序列化确定性/roundtrip/坏条目容忍/库缺失与失败降级/管线 artifact_index 登记）全绿，全量 `565 passed, 2 skipped`；opentimelineio 缺失或导出失败时降级为 warning，不阻断 MP4 交付。真文件级验证（2026-09-08）：对 example.md 真实 run 的 `timeline.otio` 做独立读回校验 19/19 通过（fps 经 `global_start_time.rate` 可读——为此给导出补了 `global_start_time=RationalTime(0, fps)`，外部 NLE 导入器习惯从这里取时间线帧率；clip↔shot 起止逐项对齐；marker 挂所属 clip 且时码对齐；text 事实 21 条全进 metadata；roundtrip 字节一致）；另装官方 `otio-cmx3600-adapter` 把真文件转成 CMX 3600 EDL 成功（4 事件对 4 shot、marker→LOC 注释、时码帧量化正确），证明第三方 NLE 生态可消费。残留：Resolve 真机导入验证属一次性人工检查（不进 CI），未执行。消费级剪辑软件直连实测（2026-09-12，GUI 实机操作）：本机仅有的两款——必剪（导入过滤器仅 mp4/mov/avi/rmvb/f4v/mkv/m4v/flv/mpg/gif/rm + mp3/wav/m4a 等媒体格式，手动输入 timeline.otio 与 timeline.json 完整路径均弹「文件导入失败」）与 Clipchamp（选择器过滤器为所有文件，但仅接受视频/音频/图像/GIF，.otio 与 .json 均被静默丢弃）——均无法直接打开 OTIO 或裸 JSON；结论：面向消费级剪辑软件的交换路径走 CMX 3600 EDL（已验证可转换）或直接交付成片，OTIO 面向的是专业 NLE（Resolve/ Premiere+插件）生态。
+
+### A9.1 混剪素材包 bundle 导出（解法 1+4，交付形态）
+
+决策（2026-09-12）：消费级剪辑软件（必剪/Clipchamp 实测）无法直接打开 OTIO/JSON，面向用户的编辑交付走「混剪素材包」；EDL/OTIO 是零成本基础设施备胎，不当用户功能宣传。成片永远是第一交付物，bundle 失败只降级为 warning。
+
+- [x] `timeline/bundle_export.py` 纯函数导出（默认关，CLI `--bundle` 开）：`subtitles.srt`（text cue 白名单 content/appendix，挂屏标题类排除）+ `timeline.edl`（复用 otio lowering 转 CMX3600）+ `clips/shot_*.mp4`（按 shots 边界重编码切成片，流拷贝会按关键帧漂移故不用；末端截到成片实际时长）+ `assets/`（声明图片/BGM/每段配音拷贝）+ README。
+- [x] 管线接线：`Pipeline(export_bundle=True)` → run 目录 `bundle/`，登记 `result.json artifact_index["bundle"]`；任何子步失败折进 run warnings，不阻断成片。
+- [x] 测试 `test_bundle_export.py` 9 项：SRT 时码格式/黄金/过滤与容错、bundle 文本产物确定性（逐字节）、EDL 独立读回（cmx_3600 适配器；注意注册名带下划线；CMX3600 不携带可靠帧率，跨实现只断言结构与文本级 30fps 帧时码）、真 ffmpeg 切片帧级精度与时长截断、管线登记与默认关闭。全量 `592 passed, 4 skipped`。
+- [x] 真 CLI 冒烟（remotion 后端，example.md）：run `20260912-144901-0a6714` 产出完整 bundle——SRT 16 条口播（标题正确排除）、4 个切片（1.0/10.13/18.2/37.2s，与 shot 边界帧级吻合）、19 条配音 + BGM + 封面图、EDL 四事件时码正确。
+
+验收：✅（2026-09-12）④ 实机验收通过——必剪与 Clipchamp 各建工程，GUI 导入 bundle 三类素材（clips/shot_002.mp4、assets/images/cover.jpg、assets/audio/seg_003），素材池各出现一条（必剪 全部(3)=视频1+图片1+音频1；Clipchamp 三项入库且 mp4 被自动托到时间线放置区）。实测抓到并修复一个真 bug：edge-tts 产物名为 .wav 实为 mp3 内容，必剪按扩展名验格式静默拒收——`_copy_assets` 拷贝前按魔数（ID3/FFxx/RIFF-WAVE/OggS/fLaC）识别真实容器再定扩展名，含回归测试。另一已知边界：文件框一次输入多个引号路径会被两家的对话框截断到前两个（与 bundle 无关，逐个导入即正常）。SRT 本机无软件可导（剪映/PR 才支持），只做格式级校验。时间线层定位不变：消费级=人工按序拖切片，剪映=解法3 草稿注入（挂起），专业=EDL。遗留现场：必剪测试草稿 202609091423 内有 3 条导入素材、Clipchamp 有测试工程「Video Project」（用户示意不必清理）。
 
 ## Track B: 自研设计包
 
@@ -440,11 +474,13 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 ## 里程碑与依赖
 
-依赖链：**A1、A2.5 随时可做；A2 + B1 绑定落地 → A3（静默节奏来源 = pack motion token）→ A4（viewer，B2 调参受益）→ B2（按需触发 A7）→ A5 → A6**。breaking 迁移只有 A3 一次。
+依赖链：**A1、A2.5 随时可做；A2 + B1 绑定落地 → A3（静默节奏来源 = pack motion token）→ A4（viewer，B2 调参受益）→ A5 → A6**。已按此顺序全部落地（2026-09-07，A9 OTIO 导出随之完成）；后续为 A7 与 B2 按需互相触发。决策（2026-09-07）：harness 推迟；第二后端只做 Remotion；A8 组件注册挂起待讨论（建议 Remotion 落地后再定义契约——现在已满足该前提）。breaking 迁移只有 A3 一次。
 
 ## Future: Harness / Agent Workflow Layer
 
 这些属于未来 harness/workflow，不应该混进当前 runtime 交付。
+
+决策（2026-09-07）：harness 整体推迟，不作为近期里程碑、不阻塞 Track A/B 任何批次；组件注册（A8）设计方向已定为纯 infra 验收入口（契约即门槛、无人工审核），但已随 A8 一起挂起——建议 Remotion 落地后再定义契约，未来 harness 只是在其上加交互回路，契约不变。
 
 前置条件：A4 viewer（LLM 反馈回路）、A5 提案机制（结构化报错）、LLM planner API 配置修复（当前 401）。
 
@@ -473,7 +509,7 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 Ops / config：
 
-- [ ] 修复 LLM planner API 配置（`.env` key 当前 401；Skill / LLM planner 生效前提）。
+- [ ] 修复 LLM planner API 配置（`.env` key 当前 401；Skill / LLM planner 生效前提）。当前无可用测试 key，暂搁置。诊断定性（2026-09-07）：401 归因为中转站 key 失效；另已查实一个**不依赖 API key 的格式 bug**——pydantic-ai `OpenAIChatModel` 构造参数是裸模型名（源码 `self._model_name` 原样上 API，`openai:` 前缀解析只存在于 `infer_model` 字符串路径），`.env` 的裸名 `z-ai/glm-5-turbo` 恰好正确，但 README 示例与 config 默认值的 `openai:gpt-4o` 前缀格式会被原样发上 API，即使 key 有效也会失败（`llm_planner.py:148`）。修法（不需要 key，可先行）：构造前剥离 provider 前缀、兼容两种写法 + README/config 对齐 + 补测试。
 
 Docs mismatch / consistency：
 

@@ -79,12 +79,13 @@ Markdown source
 | 时间解耦：时长是事实，谁产出谁发现 | TTS 先行、时长进账本；渲染器内音频按 segment_id 绑定播放；音乐循环流裁剪到已知 shot 区间；timeline 是唯一时间事实；时间不变量闸门（`timeline/invariants.py`：覆盖/按序/不重叠/cue 归属/朗读差值告警）；plan 已去 target_duration（v2 迁移）；素材 duration 合同（VisualAsset.duration）；时长估算器（`timeline/estimate.py`，仅容错决策与展示）；估算消费方（A4 viewer 预计 vs 实际） | hold cue 入口（概念位已留） |
 | 提案→裁判→交付（layout） | ComputedLayout 属性校验；注册表重复注册 fail-fast；mapping.py 双消费端共享；regions 直接提案入口（`ScenePlan.layout_regions`，`layout/resolve.py`，与模板同一裁决）；结构化报错（`LayoutIssue` + `LayoutValidationError`，一次报全部，含数值与建议）；约束注册表（`layout/constraints.py`，零特权 `register_constraint`，env `MD2VIDEO_LAYOUT_CONSTRAINTS` 显式加载外部约束模块）；子构图 region 化（center_title_body 的 `section_stack` 子 region） | —— |
 | 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过）；外部文件包加载（env `MD2VIDEO_STYLE_PACK_FILE`，`get_pack` 路径惰性加载一次、坏文件 fail fast、未知名降级 + warning） | —— |
-| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地；按 scene 多后端分发（A6 前半：`ScenePlan.render_backend` + `core/multi_backend.py` 切片/合并/拼接/全局闸门，fake backend 验收） | Remotion 后端（A6 后半：同一渲染契约 + 自带 Realizer） |
+| 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地；按 scene 多后端分发（A6：`ScenePlan.render_backend` + `core/multi_backend.py` 切片/合并/拼接/全局闸门）；Remotion 真实第二后端（A6 后半：`tools/render/remotion_tool.py` 同一渲染契约 + `remotion_schedule.py` 纯函数调度器 + Node composition，能力词汇声明、词汇外降级 + warning） | —— |
 | 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
 | plan 收敛 | scene 级 visual/layout 决策已在；SegmentPlan 副本字段已收拢（v2 去 denormalize） | —— |
 | 可检查性（A4） | run 目录制（`inspect/runs.py`：新建+命名区分，永不覆盖/删除）；`FinalResultManifest.run_id/status`；静态检查页（`inspect/viewer.py`，黄金快照测试） | 未来 harness 直接读取 run 目录（不要求编辑/审批 UI） |
 | 演进纪律 | segment_ids→shot 迁移 validator；破坏性变更一次切换先例；plan 去时间已按同模式执行（`manifest/migration.py` + 一次切换） | —— |
 | 质量策略 | 纯函数 helper 层（renderer 可无 manim 测试）；mock 外部服务；env-gated 像素 smoke | —— |
+| 组件注册（A8，规划中） | 零特权注册先例已在：motif kind 注册表（`style/motifs.py`）+ 约束注册表（`layout/constraints.py` 的 `register_constraint`）；代码只经显式模块加载、pack JSON 永不执行（A5 模式） | 组件契约（最小实现接口 + 能力词汇声明）；验收入口 `check-component`（四闸门 + 双跑逐帧一致 + 黄金帧存档，不设人工审核）；plan 引用 `id@version`，组件内容哈希进 result 供审计 |
 
 ## 核心数据模型
 
@@ -130,6 +131,21 @@ manim 渲染目录、per-shot visual、检查页。**旧 run 永不覆盖、永�
 warnings 与预计 vs 实际时长（消费 `timeline/estimate.py` 估算 + timeline
 末 shot end），供人与未来 harness 不读原始 JSON 看懂一次运行。
 
+另有 `timeline.otio`：同一 timeline 事实面向剪辑生态（Resolve / FCP /
+Premiere，经 OTIO 的 EDL/FCPXML/AAF 适配器）的 OpenTimelineIO 交换
+序列化（A9）。纯函数 lowering（`timeline/otio_export.py`）：shots →
+Video track Clip，marker cue → 所属 shot Clip 上的 Marker，text cue →
+Clip metadata 事实；opentimelineio 缺失或导出失败时降级为 warning，
+不阻断 MP4 交付。
+
+面向消费级剪辑软件另有可选的混剪素材包（`--bundle`，
+`timeline/bundle_export.py`）：按 shot 边界重编码切片、口播字幕 SRT
+（挂屏标题类排除）、CMX3600 EDL、原始图片/BGM/配音——音频按内容
+魔数纠正扩展名（edge-tts 可能名 .wav 实为 mp3，按扩展名验格式的
+消费级软件会静默拒收）。文本产物逐字节确定；子步失败折进 warnings。
+消费级软件只到「素材池」层，时间线组装人工按序拖切片（剪映草稿注入
+为未来候选项）；专业 NLE 走 EDL/OTIO。
+
 ## Planner
 
 Planner 接收 segments，输出 scenes/shots 和视觉决策。
@@ -162,7 +178,9 @@ Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可�
 - 产出会占用时间轴的素材，输出必须携带 duration（静态素材为 0）；输出必须携带 cache_key。
 - 时长归属唯一：音频=TTS、shot=渲染器、视频素材=素材工具 probe；其他模块不许断言时长。
 
-渲染后端是特殊的 tool：消费 plan 与 execution-assets，输出视频与同构 timeline。引擎与设计包正交（见 Style 与 Pack）；引擎声明自己支持的能力名（动效意图、母题 kind），不认识的槽位优雅降级 + warning。按 scene 混合多后端时（A6 前半已落地）：`ScenePlan.render_backend` 为空的 scene 用 `ToolConfig.render_backend`；相邻同后端 scene 组成极大组，每组切片 plan 独立渲染（各后端从 t=0 渲自己的切片，组边界即引擎切换，渲染器内部跨 shot 状态清零），管线做局部 timeline 前缀偏移合并后对完整 plan 重过全局时间闸门，再把组视频拼接成底片交给 assembler（成片规格与单后端一致）。要求的后端未注册时开渲前 fail fast。
+渲染后端是特殊的 tool：消费 plan 与 execution-assets，输出视频与同构 timeline。引擎与设计包正交（见 Style 与 Pack）；引擎声明自己支持的能力名（动效意图、母题 kind），不认识的槽位优雅降级 + warning。按 scene 混合多后端时：`ScenePlan.render_backend` 为空的 scene 用 `ToolConfig.render_backend`；相邻同后端 scene 组成极大组，每组切片 plan 独立渲染（各后端从 t=0 渲自己的切片，组边界即引擎切换，渲染器内部跨 shot 状态清零），管线做局部 timeline 前缀偏移合并后对完整 plan 重过全局时间闸门，再把组视频拼接成底片交给 assembler（成片规格与单后端一致）。要求的后端未注册时开渲前 fail fast。
+
+当前有两个渲染后端：`manim`（默认）与 `remotion`（A6 后半）。Remotion 侧的时间不是渲染中发现而是**渲染前推导**：纯函数调度器（`remotion_schedule.py`）从音频事实 + pack 节奏得出逐段可见窗口，Node composition 逐帧执行同一份调度，成片时长经 ffprobe 与调度对账；这保持「timeline 是唯一时间事实、时间由执行发现」的合同（发现者从 manim-voiceover 换成调度器消费的音频事实账本）。
 
 ## Visual 与 Layout
 
@@ -191,7 +209,7 @@ Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费�
 风格是第四个声明维度，与引擎正交：
 
 - **pack 是纯数据宣言**：`ThemeTokens` = palette（底/字/次级/强调色）+ typography（字族 + 角色字号，归一化单位）+ motion（意图级动效 + 静默段节奏）+ motif（母题槽位：可换、可无、可自定义）。
-- **引擎自带 Realizer（翻译官）**：token → 引擎原生参数的唯一换算点。ManimRealizer 翻成 font/font_size/color/动画选择；未来 RemotionRealizer 翻成 CSS/React。宣言只有一份，翻译官每个引擎一个。
+- **引擎自带 Realizer（翻译官）**：token → 引擎原生参数的唯一换算点。ManimRealizer 翻成 font/font_size/color/动画选择；Remotion 侧由 `remotion_schedule.py` 的 style payload 翻成 CSS 值（像素字号/颜色/意图名），Node composition 实现能力原语（typewriter/fade/appear、instant/fade、orbit_dots 母题）。宣言只有一份，翻译官每个引擎一个。
 - **能力按名字引用**：pack 写 `appear: typewriter`、`motif: orbit_dots` 这类名字；引擎声明自己支持哪些名字，不认识的槽位优雅降级 + warning。
 - **用户直接改包**（Hugo/Hexo 模板模型）：DIY 就是编辑包内容，无多来源合并问题。仓库自带一个 reference pack（现有 house style 抽取），结构上与社区包无特权差别。外部包文件经 env `MD2VIDEO_STYLE_PACK_FILE`（指向 ThemeTokens JSON）加载：在 `get_pack` 解析路径上惰性加载一次（幂等缓存，管线与渲染子进程两侧一致）；文件解析/校验失败、缺文件、与已注册包重名都 fail fast（用户显式指定的包坏了必须报错），选择仍走 `MD2VIDEO_STYLE_PACK` 名字、未知名降级 + warning。
 
@@ -255,7 +273,10 @@ Phase 1-7 主要是在做底座：数据结构、工具、布局、渲染、可�
 | 编排（五步流水线、fail-fast、降级分发） | `core/pipeline.py` | `test_dispatch.py`、`test_pipeline_artifacts.py` |
 | 多后端分发（分组切片、timeline 合并、底片拼接、全局闸门） | `core/multi_backend.py` | `test_multi_backend.py`（混合 manim/fake 验收为 env-gated smoke） |
 | 渲染（shot 级渲染、timeline 事实） | `tools/render/manim_renderer_inputs.py`（纯 helper）、`tools/render/manim_renderer.py`、`tools/render/timeline_builder.py`、`tools/render/manifest_loader.py`、`tools/render/cached_voice.py` | `test_manim_renderer_inputs.py`、`test_renderer_timeline_state.py`、`test_cached_voice.py` |
+| Remotion 后端（第二渲染后端：调度器 + 契约工具 + Node composition） | `tools/render/remotion_schedule.py`、`tools/render/remotion_tool.py`、`tools/render/remotion_backend/`（Node 工程） | `test_remotion_backend.py`、`test_remotion_smoke.py`（env-gated 真渲染） |
 | 时间不变量闸门（shots 覆盖/按序/不重叠、cue 归属、朗读差值告警） | `timeline/invariants.py` | `test_timeline_invariants.py` |
+| OTIO 交付导出（timeline 事实的剪辑生态交换 serialization） | `timeline/otio_export.py` | `test_otio_export.py` |
+| 混剪素材包（消费级剪辑软件的素材/字幕/EDL 交付，`--bundle`） | `timeline/bundle_export.py` | `test_bundle_export.py` |
 | 时长估算（音频事实 + pack 节奏 + 转场开销常数，仅容错/展示） | `timeline/estimate.py` | `test_timeline_estimate.py` |
 | Run 目录制（run_id、独立 run 目录、永不覆盖） | `inspect/runs.py` | `test_run_dirs.py` |
 | 检查页（单文件自包含 viewer、预计 vs 实际时长） | `inspect/viewer.py` | `test_manifest_viewer.py`（含黄金快照） |
