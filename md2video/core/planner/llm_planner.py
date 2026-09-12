@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -130,6 +131,19 @@ def _build_chunk_mapping_user_prompt(
 
 # ==================== LLM Planner ====================
 
+# pydantic-ai 的 OpenAIChatModel 构造参数是裸模型名（原样上 API），"openai:"
+# 前缀解析只存在于它的 infer_model 字符串路径；README/config 文档的是
+# "openai:gpt-4o" 写法——不剥前缀会把前缀当模型名发出去，key 有效也失败。
+# 只剥 openai: 前缀（两种写法都接受），其他含冒号的模型名（如 Ollama 的
+# llama3:8b）原样保留。
+_OPENAI_PREFIX_RE = re.compile(r"^openai:", re.IGNORECASE)
+
+
+def strip_openai_prefix(model: str) -> str:
+    """兼容 "openai:gpt-4o" 与裸名 "gpt-4o"，返回发往 API 的裸模型名。"""
+    return _OPENAI_PREFIX_RE.sub("", model.strip(), count=1)
+
+
 class LlmPlanner:
     """两阶段语义规划器：全局定调 → 局部分镜 → 框架重组校验。
 
@@ -145,7 +159,8 @@ class LlmPlanner:
             api_key=api_key or None,
             base_url=base_url or None,
         )
-        ai_model = OpenAIChatModel(model, provider=provider)
+        self._model_name = strip_openai_prefix(model)
+        ai_model = OpenAIChatModel(self._model_name, provider=provider)
         self._layout_registry = create_default_layout_registry()
 
         # 第一阶段 agent：全局定调

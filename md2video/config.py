@@ -50,7 +50,7 @@ MAX_CHUNK_SEGS = 30    # 单 chunk 最大 segment 数
 @dataclass
 class PlannerConfig:
     default: str = "rule"          # "rule" or "llm"
-    model: str = "openai:gpt-4o"  # pydantic-ai model string
+    model: str = "openai:gpt-4o"  # "openai:gpt-4o" 或裸名 "gpt-4o"（前缀在构造 LLM 请求前剥除）
     api_key: str = ""             # OpenAI-compatible API key
     base_url: str = ""            # 可选，兼容 API 地址
 

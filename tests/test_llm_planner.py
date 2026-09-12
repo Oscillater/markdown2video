@@ -9,11 +9,40 @@ from md2video.core.planner.llm_planner import (
     BLUEPRINT_SYSTEM_PROMPT,
     LlmPlanner,
     SceneTemplate, BlueprintOutput, ShotMapping, ChunkMappingOutput,
+    strip_openai_prefix,
 )
 
 
 def _seg(id, text, stype="content", section="", **kw):
     return SegmentPlan(id=id, text=text, segment_type=stype, section_context=section, **kw)
+
+
+# ==================== 模型名前缀 ====================
+
+def test_strip_openai_prefix_strips_documented_prefix():
+    assert strip_openai_prefix("openai:gpt-4o") == "gpt-4o"
+
+
+def test_strip_openai_prefix_accepts_bare_name():
+    assert strip_openai_prefix("gpt-4o") == "gpt-4o"
+
+
+def test_strip_openai_prefix_case_insensitive():
+    assert strip_openai_prefix("OpenAI:gpt-4o") == "gpt-4o"
+
+
+def test_strip_openai_prefix_keeps_colon_in_model_name():
+    """Ollama 等兼容网关的模型名自带冒号（llama3:8b），不能当 provider 前缀剥。"""
+    assert strip_openai_prefix("llama3:8b") == "llama3:8b"
+
+
+def test_strip_openai_prefix_keeps_slash_names():
+    assert strip_openai_prefix("z-ai/glm-5-turbo") == "z-ai/glm-5-turbo"
+
+
+def test_constructor_normalizes_model_name():
+    planner = LlmPlanner(model="openai:gpt-4o", api_key="test-key")
+    assert planner._model_name == "gpt-4o"
 
 
 # ==================== plan() 集成测试 ====================
