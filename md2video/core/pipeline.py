@@ -255,6 +255,9 @@ class Pipeline:
         print(f"  Output: {output_path}")
 
         timeline_data = json.loads(timeline_path.read_text(encoding="utf-8"))
+        otio_path, otio_warning = self._export_otio_artifact(run_dir, timeline_data)
+        if otio_warning:
+            self._warnings.append(otio_warning)
         self._write_final_result(
             run_dir=run_dir,
             output_path=output_path,
@@ -266,8 +269,15 @@ class Pipeline:
             timeline_path=timeline_path,
             video_path=video_path,
             render_output=render_output,
+            otio_path=otio_path,
         )
         return output_path
+
+    def _export_otio_artifact(self, run_dir: Path, timeline_data: dict) -> tuple[Path | None, str]:
+        """A9：把 timeline 事实另存一份 OTIO 交换格式（尽力导出，失败降级为 warning）。"""
+        from md2video.timeline.otio_export import OTIO_FILENAME, write_otio_artifact
+
+        return write_otio_artifact(timeline_data, Path(run_dir) / OTIO_FILENAME)
 
     def _render_single_group(
         self,
@@ -454,6 +464,7 @@ class Pipeline:
         timeline_path: Path | None,
         video_path: Path | None = None,
         render_output: dict | None = None,
+        otio_path: Path | None = None,
     ) -> Path:
         viewer_path = Path(run_dir) / VIEWER_FILENAME
         artifact_index = {
@@ -465,6 +476,8 @@ class Pipeline:
         }
         if video_path:
             artifact_index["base_video"] = str(video_path)
+        if otio_path:
+            artifact_index["otio_timeline"] = str(otio_path)
         if render_output:
             artifact_index["render_dir"] = str(render_output.get("render_dir", ""))
             artifact_index["render_provider"] = str(render_output.get("provider", ""))
