@@ -61,269 +61,53 @@ future harness preview/review/partial rerun
 - Track A 第二批已落地（2026-09-07）：A4 Runtime Inspectability（run 目录制 + `manifest_viewer.html`）+ A5 Layout 提案机制（`layout_regions` + 约束注册表 + 结构化 LayoutIssue + 子构图 region 化）+ 外部皮肤包文件加载（`MD2VIDEO_STYLE_PACK_FILE`）+ A6 前半（按 scene 多后端分发与合成基础设施）。
 - Track A 第三批已落地（2026-09-07 晚）：A9 OTIO 导出（`timeline.otio` 交付形态）+ A6 后半（Remotion 真实第二后端：Python 调度器 + Node composition，能力词汇声明与降级，混合 manim/remotion 出片，双跑 framemd5 逐帧一致）。
 - Track A 第三批补验（2026-09-08）：CLI 全链路真跑（rule planner + edge-tts 配音 + Remotion 渲染 + FFmpeg 装配）暴露并修复三个 mock 盖不住的集成 bug——①`remotion_tool` 子进程 cwd 切到 backend_dir 后相对路径错位（props 找不到/视频写错目录，先 `resolve()` 再传 CLI，补相对路径回归测试）；②`ffmpeg_assembler.ffprobe_resolution` 对 Remotion 容器多出的尾部空字段（`480x854x`）做 `int('')` 炸裂（只取前两段）；③调度器 before/after 锚点 cue（真实 markdown 的 `[image_start]`/`[music_*]` 全走这条路）挂上时间后从未 append 进 `markers_out`，时间闸门直接拒绝且图片/BGM 条目为空（锚前=段起点、锚后=段终点落盘；锚点段不在本 shot 时收敛到本 shot 末端）。修正早前错误结论：图片/BGM 不需要进 Remotion payload——正文由组件按 region 画，图片/Ken Burns 与 BGM 由后端无关的装配层按 timeline marker 叠加；marker 修复后带图+BGM 的 `example.md` 走 Remotion 完整出片（66.6s，抽帧验证 `image_top_text_bottom` 版式成立、窗口外无图）。
-- 最新验证：2026-09-08 运行 `python -m pytest -q`，结果是 `583 passed, 4 skipped`；skip 的是 `MD2VIDEO_RENDER_SMOKE=1` 才运行的真实渲染用例（`tests/test_render_smoke.py` 像素 smoke、`tests/test_multi_backend.py` 真渲染验收、`tests/test_remotion_smoke.py` remotion 单后端与混合后端真渲染）；2 条 warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
+- 最新验证：2026-09-12 运行 `python -m pytest -q`，结果是 `616 passed, 4 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
+- 近期主线：「组件注册 + 口播 skill」——场景风格由注册组件承载（agent 产码 → 过 check-component 入库，plan 引用 `id@version`），知识口播 craft 由 skill 承载（agent 读结构化 markdown、经 `--plan` 直产 plan）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
-- 后续施工：A6 后半（Remotion 真实第二后端）→ A9 OTIO 导出 → A7 内容槽位 → B2 知识口播 pack（与 A7 按需互相触发）；A8 组件注册挂起（建议 Remotion 落地后再定义契约）；LLM planner API 修复等有效 key。
+- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅ → 口播 skill v1（以 B2 验收为 eval）；A7 维持挂起。
 
-## Phase 1: 基础架构 - 已完成
+## Phase 1-4: 基础架构 → 现有工具重构 - 已完成
 
-状态：已完成。
+- Phase 1：Manifest schema、Scene 数据模型、Rule Planner、Scene 粒度 Manim 渲染、FFmpeg 合成、单元测试（`changelog/phase1.md`、`phase1.1_unit_tests.md`、`phase1.2_media_embedding_fixes.md`）。
+- Phase 2：Shot 层（Segment→Shot→Scene）+ LLM Planner 两阶段（Blueprint → Chunk Mapping → Reconcile）（`changelog/phase2a_scene_architecture.md`、`phase2b_llm_planner.md`、`phase2_shot_layer.md`）。
+- Phase 3：Tool Protocol / Registry / Cache / 优先级调度 / `target_duration` 契约（`changelog/phase3_tool_infrastructure.md`）。早期 Adapter 层已在 Phase 4 删除；将来真需要 CLI/HTTP 工具时重新设计。
+- Phase 4：pipeline 分发非 `text_only` scene 到视觉工具、Tool 输出写回 `ShotResult.visual`、assembler 叠加 per-shot visual、删除 Adapter 死代码与 LLM Planner 旧转换逻辑（`changelog/phase4_refactor.md`）。
 
-- Manifest schema。
-- Scene 数据模型。
-- Rule Planner。
-- Scene 粒度 Manim 渲染。
-- FFmpeg 合成。
-- 单元测试。
+（原逐项任务清单见 git history，2026-09-12 压缩，行为零变化。）
 
-参考：`changelog/phase1.md`。
+## Phase 5: Runtime artifact 分层 + Manifest-first execution - 已完成
 
-## Phase 2: Shot 层 + LLM Planner - 已完成
+建立的契约（细节见 `docs/architecture.md`「Runtime Artifacts」）：
 
-状态：已完成。
+- 四类账本各管一摊：`plan.json` 只放意图与目标约束；`execution-assets.json` 放素材事实（音频/图片路径、duration、尺寸、provider、cache key）；`timeline.json` 是 renderer 输出的时间事实；`result.json` 只在 assemble 完成后写出（output MP4、used assets、warnings、artifact index）。
+- manifest-first 入口 `python -m md2video --plan plan.json -o output.mp4`：复用同一 TTS / 渲染 / 合成流程，不另写生成器；manifest-first 渲染 cwd 统一到 artifacts。
+- 图片链路：`stock_image`（local 免 key / Pexels 可选 key）→ visual assets（显式本地图片缺失 hard fail）→ FFmpeg per-shot overlay 优先用真实 timeline 的 shot timing。
+- TTS 音频按 `segment_id` 绑定、绝对路径落盘；CLI `--voice` / `--speed` 进入 TTS 执行路径。
 
-- 引入 Shot 作为最小连续视觉单元。
-- 实现 Scene + Shot 分组。
-- 实现 LLM Planner 两阶段流程：Blueprint -> Chunk Mapping -> Reconcile。
+验收：无 API key 也有完整图片链路集成测试；text-only 行为保留为回归路径。逐项任务勾稽与验收记录见 git history（2026-09-12 压缩，行为零变化）。
 
-参考：
+## Phase 5.5: Runtime Layout Template - 已完成
 
-- `changelog/phase2a_scene_architecture.md`
-- `changelog/phase2b_llm_planner.md`
-- `changelog/phase2_shot_layer.md`
+- 「用什么视觉素材」（`visual_type`）与「画面怎么摆」（`layout_type` + `layout_params`）拆成两个决定，布局字段是 Manifest 一等公民；`manim` 只是 `render/manim` backend，不是 visual provider。
+- 内置模板 3 个：`center_title_body`、`full_bleed_image_caption_bottom`、`image_top_text_bottom`；参数为有限选项、模板自己的 Pydantic schema 校验。
+- Agent/Planner 只能选模板和参数，不允许自由像素坐标；不生成完整视频也能测试 layout 计算与约束。
+- Guardrails：registry 重复注册同一 template id 必须 fail fast；layout 参数不接受「看似有效但当前不生效」的字段（caption 样式参数推迟到 renderer 真正消费时引入，已在 Phase 6 落地）。
 
-## Phase 3: Tool 接口 + 基础设施 - 已完成
+交付边界：本阶段完成 Manifest/layout-engine 契约与 runtime 校验；Manim / FFmpeg 真正消费归 Phase 6（像素 smoke 验证已补）。逐项任务勾稽见 git history（2026-09-12 压缩，行为零变化）。
 
-状态：已完成。
+## Phase 6: Renderer Closure - 已完成
 
-- Tool Protocol。
-- Tool Registry。
-- Tool Cache。
-- 优先级调度。
-- `target_duration` 契约。
+renderer contract cleanup 与 layout consumption 均已落地并通过像素级 smoke。收敛后的契约（细节见 `docs/architecture.md`「Runtime Contract」）：
 
-参考：`changelog/phase3_tool_infrastructure.md`。
+- `plan.segments` 是内容字典；`scene.shots[].segment_ids` 是执行顺序；Shot 是最小连续视觉执行单元，marker/media/visual event 以 cue 挂在 shot 上——不显示、不朗读、不消费 duration，不再有 marker-as-segment 语义。
+- Renderer 显式消费 `PlanManifest + ExecutionAssets`，按 shot 生成 render unit（scene contract + layout contract + ordered segments + durations + cues），显式 open/close shot 写出 `timeline.json`：`shots[].start/end` 是主时间轴，`text` 只是可见文本 cue，`markers` 只是事件 cue，不参与反推 shot。
+- 时长裁决：有声段跟随音频事实（音频按 `segment_id` 绑定播放），静默段有明确默认时长来源；plan 不含时间（`ShotPlan.target_duration` 在本阶段删除、`SegmentPlan.target_duration` 随 A3 v2 移除）。
+- 有 scenes/shots 的 plan 必须完整覆盖可渲染 segments，orphan fail fast，无 flat fallback；渲染前清理 stale timeline、渲染后校验覆盖当前 plan；Pipeline 在 assemble 前校验 render backend 输出字段与文件存在性。
+- Manim 与 FFmpeg 经共享坐标层 `layout/mapping.py` 消费同一套 layout：正文/字幕落 body/text/caption region、标题卡落 title region、文本按 region 宽度缩放；per-shot visual 按 scene layout 的 `image` region 摆放（Ken Burns cover / 静态 contain）；marker 图片 overlay 保留 legacy 定位（时间区间可跨 shot，不强行套单个 scene 模板）。
+- 分辨率由 `manim.cfg` 声明（480x854 @30fps 竖屏），渲染 backend 不传质量旗标（`-ql` 曾把竖屏覆盖成横屏，已修）。
 
-注意：早期 Adapter 层已经在 Phase 4 删除。如果以后真的需要 CLI/HTTP 工具，再重新设计，不把旧 Adapter 当成当前事实。
-
-## Phase 4: 现有工具重构 - 已完成
-
-状态：已完成。
-
-- Pipeline 可以把非 `text_only` scene 分发给视觉工具。
-- Tool 输出可以写回 `ShotResult.visual`。
-- FFmpeg assembler 可以消费 per-shot visual。
-- 删除 Adapter 死代码和 LLM Planner 旧转换逻辑。
-
-参考：`changelog/phase4_refactor.md`。
-
-## Phase 5: Runtime artifact 分层 + Manifest-first execution
-
-状态：已完成。
-
-目标：证明非文字视觉素材可以进入 pipeline，并且按 shot 出现在最终视频时间线上。
-
-这一阶段仍属于 framework/runtime。重点不是让 agent 选得多聪明，而是让 Manifest 输入可以稳定执行，并让中间 artifact 语义清晰。
-
-已完成或基本完成：
-
-- [x] 已有 `PexelsImageTool`。
-- [x] `PexelsImageTool` 实现 `tool_type="image"` 和 `provider_name="pexels"`。
-- [x] Pexels 搜索/下载路径使用 `ToolCache`。
-- [x] 有 `PEXELS_API_KEY` 时，Pipeline 会把 Pexels 注册到 `stock_image`。
-- [x] Pipeline 可以分发 `stock_image` scene 到视觉工具。
-- [x] Tool 输出可以填充 `ShotResult.visual`。
-- [x] FFmpeg assembler 可以叠加 per-shot visual。
-- [x] 已有基础 Ken Burns `zoompan` 支持。
-- [x] Pexels 行为有 mock HTTP 单测。
-- [x] Ken Burns filter 有单测。
-- [x] `PexelsImageTool` 输出包含 `cache_key`。
-- [x] 已有 `LocalImageTool`，图片链路不依赖 API key。
-- [x] 已有 no-key `stock_image` 测试：`Plan -> Pipeline visual dispatch -> ShotResult.visual -> FFmpeg overlay entry`。
-- [x] 文档说明 Pexels 是可选 provider，不是本地验证的前置条件。
-
-完成任务：
-
-- [x] 定义 runtime artifact 分层：`plan.json` / `execution-assets.json` / `timeline.json` / `result.json`。
-- [x] 新增 `ExecutionAssets` 或等价 schema，记录 audio assets 和 visual assets。
-- [x] 把 TTS 产物从当前 `ResultManifest` 语义中迁到 execution-assets：音频路径、duration、provider、cache key。
-- [x] 把 `LocalImageTool` / Pexels 输出写入 execution-assets 的 visual assets：shot_id、provider、path、width、height、cache key。
-- [x] `plan.json` 只保留计划和目标约束，不混入实际素材产物。
-- [x] renderer 消费 `PlanManifest + ExecutionAssets`，不再消费半成品 `result.json`。
-- [x] assembler 消费 `PlanManifest + ExecutionAssets + timeline`。
-- [x] assemble 完成后才写最终 `result.json`，记录 output MP4、used assets、warnings、artifact index。
-- [x] 增加 manifest-first 输入入口，例如 `python -m md2video --plan plan.json -o output.mp4`。
-- [x] 让 manifest-first 入口复用现有 TTS / Manim / FFmpeg 流程，不另写一套生成器。
-- [x] 加一条不调用外部 API 的集成测试，验证 local image 进入 execution-assets，并进入最终 FFmpeg overlay 输入。
-- [x] 保留全 `text_only` 行为作为回归测试路径。
-- [x] 统一 manifest-first render cwd 到 artifacts，避免污染 plan 所在目录。
-- [x] `timeline.json` 输出 segment_id / scene_id / shot_id / start / end。
-- [x] assembler 优先使用真实 timeline 的 shot timing 做 per-shot visual overlay。
-- [x] TTS audio asset 写出绝对路径，减少 `--plan` 渲染 cwd 对音频解析的影响。
-- [x] 显式 local image 路径缺失时 hard fail，不继续生成缺图视频。
-- [x] CLI `--voice` / `--speed` 覆盖进入 TTS 执行路径。
-- [x] README 和 architecture 文档同步 runtime artifact 分层。
-
-图片链路在新 artifact 体系里的落点：
-
-```text
-PlanManifest
-scene.visual_type = "stock_image"
-scene.visual_params = {"preferred_provider": "local", "path": "local_image.jpg"}
-
-        ↓
-
-execution-assets.json
-visual_assets = [{shot_id, provider, path, width, height, cache_key}]
-
-        ↓
-
-timeline.json
-shot / segment / marker timing
-
-        ↓
-
-FFmpeg overlay
-
-        ↓
-
-result.json
-output_mp4 + used_assets + warnings
-```
-
-验收标准：
-
-- 没有 API key 也能通过测试证明图片链路。
-- `stock_image` / `LocalImageTool` 路径能通过 Manifest 输入进入 execution-assets 和 FFmpeg overlay。
-- 图片事实落在 execution-assets，而不是半成品 result。
-- 时间事实落在 timeline，per-shot visual overlay 优先使用 renderer 真实 shot 时间。
-- 最终 `result.json` 只在 assemble 完成后生成。
-- 单元测试保持通过：当前基线是 `352 passed, 3 warnings`。
-- 真实 Pexels 只是可选验证，不是唯一验证方式。
-
-## Phase 5.5: Runtime Layout Template
-
-状态：已完成。
-
-目标：把“用什么视觉素材”和“画面怎么摆”分开。
-
-这一阶段仍属于 framework/runtime，不属于 harness。Layout Template 是稳定排版约束，agent 或 planner 只能选择模板和参数，不能自由决定像素坐标。
-
-计划任务：
-
-- [x] 在 Manifest 中新增一等布局字段，暂定 `layout_type` + `layout_params`。
-- [x] 保留 `visual_type` 表达素材/工具选择：`text_only`、`stock_image`（含 local provider）、`stock_video` 等；`manim` 只作为 `render/manim` backend。
-- [x] 用 `layout_type` 表达画面摆法：全屏图+底部字幕、上图下文、纯文字标题页等。
-- [x] 定义 `LayoutTemplate`。
-- [x] 定义 `LayoutRegistry`。
-- [x] 先实现 2-3 个稳定模板：
-  - `center_title_body`
-  - `full_bleed_image_caption_bottom`
-  - `image_top_text_bottom`
-- [x] layout 参数必须是有限选项，并且能做 schema 校验。
-- [x] 增加 safe area、文字边界、字幕/图片不重叠测试。
-
-验收标准：
-
-- Agent 或 Planner 只能选择模板和参数。
-- 不允许自由决定像素坐标。
-- 不生成完整视频也能测试 layout 计算和约束。
-
-交付边界：
-
-- 本阶段完成 Manifest/layout-engine 契约和 runtime 校验。
-- Manim / FFmpeg 真正消费 `LayoutTemplate` 仍归 Phase 6。
-
-Phase 5.5 review guardrails：
-
-- [x] 文档不得把未实现模板写成已完成范围；当前内置模板只有 `center_title_body`、`full_bleed_image_caption_bottom`、`image_top_text_bottom`。
-- [x] Layout 参数不能接受“看似有效但当前不生效”的字段；caption 样式类参数留到 Phase 6 renderer 真正消费时再引入。
-- [x] `LayoutRegistry` 重复注册同一个 template id 时必须 fail fast，避免未来扩展时静默覆盖。
-- [x] Phase 6 接入 renderer/assembler 后补像素级 smoke，验证视频画面确实按 layout 摆放（`tests/test_render_smoke.py`，`MD2VIDEO_RENDER_SMOKE=1` 触发真实渲染 + 合成 + 取帧断言）。
-
-## Phase 6: Renderer Closure
-
-状态：已完成。renderer contract cleanup 与 layout consumption 均已落地并通过像素级 smoke。
-
-目标：完成新的 renderer contract，让渲染器消费和其他环节一致的 Segment + Shot + Layout + ExecutionAssets 模型，并把 renderer 输出的 timeline 变成 assembler 可直接信任的时间事实。
-
-Phase 6 的收敛方向：
-
-```text
-plan.segments
-= 内容字典；Segment 是内容原子，目标语义上持有 duration budget
-
-scene.shots[].segment_ids
-= 执行顺序；Shot 是连续视觉执行单元
-
-scene.shots[].cues
-= marker / media / visual event metadata；不显示、不朗读、不消费 duration
-
-renderer scheduling helpers
-= 把 segment / marker / layout / target budget lower 成 render units 和 cues
-
-timeline.json
-= renderer 运行后的时间事实；shots 是主时间轴，text/markers 是 shot 内 cue
-```
-
-Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration` 迁移到 Segment；`ShotPlan.target_duration` 删除；marker 不再作为可渲染 segment，而是在 planning/render scheduling 阶段 lower 成 shot cue/metadata；有 scenes/shots 的 plan 必须完整覆盖可渲染 segments，不再保留 flat fallback。
-
-当前状态：
-
-- `layout/mapping.py` 是 Manim 与 FFmpeg 共用的坐标换算层：normalized region -> 单位空间（渲染器）/ 像素空间（合成器），两边对同一模板的理解来自同一组函数。
-- Renderer 按 shot 用 `shot_layout_context` 解析 region：正文/字幕堆叠落在 body/text/caption region，标题卡片落在 title region，文本按 region 宽度约束缩放；没有 image region 的布局保留 marker 图片出现时的 legacy 文本让位。
-- FFmpeg per-shot visual 用 scene layout 的 `image` region 摆放：Ken Burns cover 整个 region，静态 overlay contain 进 region；`timeline.json` 的 shots 条目现在记录 `layout_type`。
-- Markdown marker 图片 overlay 保留 legacy 定位：marker 时间区间可跨 shot，不强行套单个 scene 模板。
-- 渲染分辨率修复：ManimRenderTool 不再传 Manim 质量旗标（`-ql` 会把 manim.cfg 声明的 480x854 竖屏覆盖成 854x480 横屏），分辨率/帧率由 manim.cfg 决定。
-
-已完成的过渡工作：
-
-- [x] renderer helper 已验证 shot 顺序、unknown segment、title skip、silent path、layout 信息携带。
-- [x] render tool 已能清理 stale timeline，并校验 timeline 覆盖当前 plan。
-- [x] renderer 音频播放已从“按列表顺序消费”改为“按 `segment_id` 查找 audio asset”。
-- [x] 上述 helper/test 已按新 schema / shot cue marker contract 调整。
-
-计划任务：
-
-- [x] 实现 `ManimRenderTool.execute()`。
-- [x] Tool 路径可用后，移除 Pipeline 对 Manim subprocess 的特殊分支。
-- [x] Renderer 显式接收 `PlanManifest + ExecutionAssets`。
-- [ ] Renderer 消费 `layout_type` / `layout_params` / `LayoutTemplate`。
-- [x] 文件 artifact 只是输出记录，不是 renderer 的隐藏输入状态。
-- [x] RenderTool 在渲染前清理旧 `timeline.json`，并在渲染后校验本次生成的 timeline。
-- [x] RenderTool 会校验 timeline 覆盖当前 plan 的 shot 和 segment。
-- [x] Pipeline 会在 assemble 前校验 render backend 输出字段和文件存在性。
-- [x] Renderer manifest/env loader 已从 Manim 场景模块中抽出为轻量 helper，避免纯输入测试依赖 Manim。
-- [x] Renderer 输入契约已有纯 helper 测试，覆盖标题正文遍历、未知 segment 引用、音频 asset 绑定和 `visual_type` 边界。
-- [x] Timeline 写入已改为按 handle 关闭，并有重复文本/同文本 header-content 的回归测试。
-- [x] 补 renderer helper contract 测试：shot 顺序是主遍历顺序、unknown segment fail fast、title 不进正文、marker 进入 timeline 路径、layout 决策进入 render unit。
-- [x] 补 duration helper 测试：silent content/header 可从 result duration 或 shot target 推导时长，voiceover 仍以音频/voiceover 为主。
-- [x] 支持无音频或静音 demo 的输入校验：没有 audio assets 且 segment 没有 `audio_request` 时不报错；silent path 不初始化 `CachedVoiceService`。
-- [x] Schema cleanup：新增 `SegmentPlan.target_duration`，删除 `ShotPlan.target_duration`。
-- [x] Schema cleanup：给 `ShotPlan` 增加 cue/metadata 字段，用于 marker / media / visual event。
-- [x] Schema cleanup：删除或拒绝旧 marker-as-rendered-segment 语义。
-- [x] Parser/Planner lowering：Markdown marker 仍可被识别，但最终 Plan 里 marker 应进入 shot cue/metadata。
-- [x] Parser/Planner validation：planner 必须保证所有可渲染 segment 都被某个 shot 引用。
-- [x] Runtime validation：有 scenes/shots 时 orphan segment fail fast；删除无 scenes 的 flat fallback。
-- [x] Renderer scheduling helper：生成 shot render unit，而不是 segment render unit。
-- [x] Shot render unit 必须包含 scene contract、layout contract、ordered segments、segment durations、marker cues。
-- [x] Duration：按 segment 计算预算和实际等待；shot duration 是内部 segment/cue 聚合结果。
-- [x] Duration：voiceover segment 以音频/voiceover 为主；silent segment 使用 `SegmentPlan.target_duration` 或 layout/render template 默认。
-- [x] Renderer timeline：renderer 显式 open/close shot，直接写出 `timeline.json.shots[].start/end`。
-- [x] Renderer timeline：`timeline.text` 只表示可见文本 cue；`timeline.markers` 只表示事件 cue，不参与反推 shot。
-- [x] 让 Manim 消费 `LayoutTemplate`：`shot_layout_context` / `title_layout_positions`，region 内摆放 + 宽度约束。
-- [x] 让 FFmpeg 图片布局消费同一套 layout 契约：`attach_image_layout_regions` + region overlay（cover/contain）。
-- [x] 坐标换算收敛到共享 `layout/mapping.py`，Manim 与 FFmpeg 不再各自解释模板。
-
-验收标准：
-
-- text-only 视频仍正常。
-- 有声 segment 的朗读时长跟随音频/voiceover，silent segment 也有明确时长。
-- Shot timeline 是 renderer 显式输出的主时间轴。
-- marker 是 shot cue/metadata，不作为正文显示或朗读。
-- Manim 和 FFmpeg 对 layout 的理解一致。
-- renderer 不依赖旧的 stale manifest/result 文件。
+逐项任务勾稽、breaking contract 细节与验收记录见 git history（2026-09-12 压缩，行为零变化）。
 
 ## Track A: Infrastructure
 
@@ -411,26 +195,40 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 验收：混合 manim/remotion 的 plan 出一条成片；Remotion 通过全部闸门。A6 前半验收（2026-09-07）：混合 manim/fake 的 plan 出一条成片且过全部闸门（真 manim 组 + fake 组，env-gated smoke）；全部 fake 的多组 run 出片过闸门；单一 manim 后端的 plan 行为与现状完全一致（example 端到端 framemd5 逐帧全等）。A6 后半验收（2026-09-07）：`RemotionRenderTool`（契约同 manim_tool：五字段进 / 五字段出 + 后端自跑时间闸门）+ 纯函数调度器 `remotion_schedule.py`（音频事实 + pack 节奏推导，动效不消耗时间窗口为已记录差异）+ Node 侧 composition（`tools/render/remotion_backend/`，能力词汇：reveal write/fade/appear、dismiss instant/fade、motif orbit_dots，词汇外降级 + warning）；`test_remotion_backend.py` 13 项单测；env-gated 真渲染 smoke（`test_remotion_smoke.py`）：remotion 单后端出片（480x854、时长与调度一致、标题/正文按 layout 区域像素落位、双跑 framemd5 逐帧一致）+ manim/remotion 混合 plan 经 multi_backend 分组渲染拼接出一条成片（render_provider "manim+remotion"）。补验（2026-09-08）：CLI 全链路真跑出片（配音 + Remotion + 装配），并修复三个集成 bug（相对路径解析、`ffprobe_resolution` 尾部空字段、before/after 锚点 cue 不落 timeline markers），回归测试随之补齐（`test_remotion_tool_resolves_relative_paths_against_caller_cwd`、`test_ffprobe_resolution.py`、`test_before_and_after_marker_cues_reach_timeline`、`test_unanchored_after_marker_clings_to_own_shot_end`）。带图+BGM 的 `example.md` 走 Remotion 完整出片：图片/Ken Burns 与 BGM 由后端无关装配层按 timeline marker 叠加，正文由组件按 region 落位，引擎内不重复画图。
 
-### A7 内容槽位（按需阀门）
+### A7 内容槽位（按需阀门）—— 挂起
 
 识别归 infra（parser/schema/降级规则），表现归 pack。只在 B 系列包需要时激活。
+
+状态：**挂起**。理由：当前 markdown 识别够用；内容表现优先走「组件注册 + 口播 skill」主线——agent 经 `--plan` 直产 plan 时绕开 parser 拍平，列表可由 agent 直接拆成独立 segment。重启时注意：三块工作中只有「引擎表现原语」可走组件路线；「识别」（新 segment 类型会流经 TTS/planner/renderer/assembler，契约宽度远超表现组件）与「pack 槽位」（ThemeTokens schema 扩容）只能改 core/schema，组件路线不省这两块的成本，不必等 A8。
+
+已知未修边界（挂起期间接受）：md 入口下列表符号被 segmenter 当标点剥掉、`**加粗**` 星号可能漏进画面文本；如需最小卫生修可做 parser 归一化（拍平列表、剥 emphasis 标记），暂不排期。
 
 - [ ] parser 识别列表/加粗/引用 → 新 segment 类型；不支持的 pack 强制降级 + warning。
 - [ ] 表现语义（列表逐条浮现、金句、引用样式）由 pack 提供。
 
 验收：带列表/引用的 markdown 出片；不支持的 pack 干净降级。
 
-### A8 组件注册（提案 → 契约验收 → 入库）—— 挂起
+### A8 组件注册（提案 → 契约验收 → 入库）
 
-决策（2026-09-07）：组件注册的门槛就是契约本身，**不设人工审核环节**；且**不依赖 harness**——验收入口做成纯 infra CLI，交互回路留给未来 harness，契约不变。
+门槛就是契约本身，**不设人工审核环节**；验收入口是纯 infra CLI，不依赖 harness，交互回路留给未来 harness，契约不变。契约在第二个真实后端（Remotion）落地后才定义，避免只有一个引擎时长成 manim 形状——该前提已满足。
 
-补充决策（2026-09-07 晚）：A8 **整体挂起**，待讨论「怎么挂」的具体机制后再排期。挂起的排序理由：组件契约应在第二个真实后端（Remotion）落地后再定义——只有一个引擎时契约容易长成 manim 形状，两个引擎的实例才能校准出引擎无关的接口。
+契约：表现组件 = 接管一个 scene 正文画面的 Remotion 组件。**输入 = 文字 + 每段可见窗口 + 画布尺寸；输出 = 自由画面**——配色/字体/排版/动效由组件自带，不消费 pack token（创作自由度优先于全片换肤一致：终端展示本该自带绿字黑底）。pack 与组件的分界：换个 pack 跟着变的归 pack（全片气质），不变的是组件（一类内容的演法）；pack 的动效意图只作用于引擎默认渲染的画面。两条底线：①组件不改时间事实——可见窗口由调度器按音频事实裁决，音频绑定留在 wrapper，时间闸门不豁免；②确定性渲染——禁 random/网络/fs，双跑逐帧一致。已接受的代价：组件场景的 layout 合法性由上架时的黄金帧验收承担（运行时机器检查只覆盖引擎渲染的画面，组件与场景风格不另设运行时检查）。
 
-- [ ] 定义组件契约：visual_type / motif kind / layout 模板插件的最小实现接口 + 能力词汇声明（不认识的槽位优雅降级 + warning）。代码分发沿用 A5 模式：只经显式模块加载，pack JSON 永不执行。
-- [ ] 验收入口 `md2video check-component <module>`：fixture plan 跑四道闸门 + 双跑逐帧一致（确定性验证，无人审安全性的来源）+ 黄金帧存档；全部通过才允许注册进 pack/注册表。
-- [ ] 入库后 plan 只引用 `id@version`，代码本体住注册模块；组件内容哈希进 result.json（供应链兜底：版本锁定 + 可审计，替代人工审核）。
+接入方式：组件按 scene 挂载、按 shot 窗口渲染（`ScenePlan.component`，空 = 引擎默认，与 `render_backend` 同构）；plan 引用 `id@version`，不搞浮动最新版；未知组件 id 降级默认渲染 + warning；声明组件但 scene 落入 manim 组 fail fast。v1 只开放 body 表现，标题卡与 section 堆叠字幕仍归引擎。分工：组件针对 shot——逐 shot 窗口渲染正文画面；scene 满足风格——风格单位，声明本组 shot 用哪个组件。组件注册一次、处处引用；需要画面连续的内容（如数学演算）由切镜保证——连续段放进同一个 shot，组件在该 shot 窗口内从头画到尾。
 
-验收：外部写一个 motif / visual_type 组件，check-component 通过后在 plan 中引用出片；故意破坏组件使闸门失败时被拒且报错可定位。
+layout 冻结：不再加模板、不加功能，新表现力一律走注册组件；运行时不新增 layout/风格检查——组件的上架验收（check-component）是唯一关卡。
+
+- [x] 组件注册表 + 显式模块加载（env `MD2VIDEO_COMPONENTS`，A5 模式：代码只经显式 import，pack JSON 永不执行；同 ref 同内容幂等、异内容 fail fast；相对路径按调用方模块目录解析）。
+- [x] `ScenePlan.component` 字段与裁判（格式错误与跨后端使用 fail fast；未知 id 留给渲染层降级 + warning，无组件 run 的调度 props 零改动）。
+- [x] 调度器为组件 scene 产出 payload（ref 随 shot 下发；未注册/未安装降级 + warning，不静默落到 Node 缺省）；Node wrapper 按 shot 窗口挂载（绝对时间语义，音频绑定留 wrapper，标题与 section 堆叠仍归引擎）+ 生成 barrel + 缺省回退。
+- [x] 验收入口 `python -m md2video.check_component <module>`：禁用 API 静态扫描 → staged 安装 → fixture plan（标题 + 三段静默正文）真渲染两遍 → timeline 逐字节 + framemd5 逐帧一致 → 黄金帧（首轮存档、复核逐字节比对）→ 全过提交安装，失败回滚不留痕（installed = registered；安装后内容漂移 fail fast）。
+- [x] 首批技术向组件走完全流程入库：`step_list@1.0.0`（步骤列表逐条浮现）、`code_display@1.0.0`（GitHub-dark 代码面板：行号 + 极简语法着色）、`terminal@1.0.0`（终端黑窗口，`$` 前缀段渲染为命令行）。
+
+验收：外部写一个表现组件，check-component 通过后在 plan 中引用出片；故意破坏组件使闸门失败时被拒且报错可定位。
+
+已完成部分验收（2026-09-12）：三个首批组件各经 `python -m md2video.check_component` 真验收通过（双跑 framemd5 逐帧一致、4 张黄金帧入库），step_list 另做像素级确认（自带深板岩底 ≠ 引擎黑底）；env-gated 冒烟覆盖三个组件的复核路径；全量 `621 passed, 5 skipped`（skip 均为 env-gated 真渲染）。
+
+另一议程（暂缓）：是否增列「内容识别插件」为第四类组件（即 A7 识别的组件化路线）——新 segment 类型流经 TTS/planner/renderer/assembler，契约宽度远超表现组件。
 
 ### A9 OTIO 导出（交付形态，infra）
 
@@ -461,12 +259,14 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 - [x] 现有 house style（黑底白字仿宋 + 圆点母题 + 现节奏常量）抽取为 `ink_night` pack。
 - [x] 与 A2 联合验收：像素逐帧不变。✅（2026-09-06）
 
-### B2 知识口播 Pack
+### B2 知识口播 skill
 
-- [ ] 节奏、字号梯度、母题、内容表现语义（列表逐条浮现、金句、引用）。
-- [ ] 需要 A7 槽位时按需触发。
+- [ ] 口播 skill v1：给 planner agent 的一篇文档——内容套路（结构模板：钩子/分段/节奏；切镜规则：需要画面连续的内容切进同一个 shot）、组件货架（注册组件的 id + 适用内容 + 例子，agent 按内容挑并写进 scene）、命令用法（--plan 全流程）、读 viewer + warnings 迭代、缺组件时走组件提案流程。
+- [ ] `knowledge` 风格 pack（暂缓）：首片读片后若引擎默认画面拖后腿，再把节奏 / 字号梯度 / 母题调成 knowledge pack——pack 全片级、配置选择，不进 skill 的选择面。
 
-验收：一篇带列表/引用的知识 markdown 出"至少能看、不划走"的片。
+分工：流程归代码（CLI / 管线 / 闸门）；场景演法归组件（agent 按内容挑，自带视觉，pack 不引用组件）；全片气质归 pack（配置级，现默认 ink_night；第二套气质出现时再考虑写进 plan 头部使 plan 自描述）；内容套路归 skill 文档。
+
+验收：一篇技术向知识 markdown，经 skill 产 plan 出"至少能看、不划走"的片（近期主线的 eval 样例）。
 
 ### B3（远期）第二套风格
 
@@ -474,17 +274,18 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 ## 里程碑与依赖
 
-依赖链：**A1、A2.5 随时可做；A2 + B1 绑定落地 → A3（静默节奏来源 = pack motion token）→ A4（viewer，B2 调参受益）→ A5 → A6**。已按此顺序全部落地（2026-09-07，A9 OTIO 导出随之完成）；后续为 A7 与 B2 按需互相触发。决策（2026-09-07）：harness 推迟；第二后端只做 Remotion；A8 组件注册挂起待讨论（建议 Remotion 落地后再定义契约——现在已满足该前提）。breaking 迁移只有 A3 一次。
+依赖链：**A1、A2.5 随时可做；A2 + B1 绑定落地 → A3（静默节奏来源 = pack motion token）→ A4（viewer，B2 调参受益）→ A5 → A6**。已按此顺序全部落地（A9 / A9.1 随后完成，2026-09-07 ~ 09-12）。breaking 迁移只有 A3 一次。
+
+近期主线（2026-09-12 起）：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线（契约 + 注册表 + check-component + 首批三组件入库）~~ ✅；余下为**口播 skill v1（以 B2 验收为 eval）**。原则：agent 产码过闸入库、运行中不现写代码；组件管画面、调度管时间。A7 挂起（识别与 pack 槽位将来重启时走 core/schema，不等 A8）。
 
 ## Future: Harness / Agent Workflow Layer
 
 这些属于未来 harness/workflow，不应该混进当前 runtime 交付。
 
-决策（2026-09-07）：harness 整体推迟，不作为近期里程碑、不阻塞 Track A/B 任何批次；组件注册（A8）设计方向已定为纯 infra 验收入口（契约即门槛、无人工审核），但已随 A8 一起挂起——建议 Remotion 落地后再定义契约，未来 harness 只是在其上加交互回路，契约不变。
+本节属于未来 harness/workflow，不混进当前 runtime 交付。「口播 skill」的最小版是例外：它已升为近期主线（见 B2 与「里程碑与依赖」）——skill 是 agent 侧的 craft 文档 + 工作流，不给 runtime 增加交付面。其余交互回路（preview/review、局部重跑、人工验收）仍推迟。
 
-前置条件：A4 viewer（LLM 反馈回路）、A5 提案机制（结构化报错）、LLM planner API 配置修复（当前 401）。
+前置条件：A4 viewer（LLM 反馈回路）、A5 提案机制（结构化报错）已就绪；LLM planner 模型名前缀 bug 修复排在近期主线首位（当前 401 为中转站 key 失效，见 Maintenance）。
 
-- `md2video` Codex/Raft skill。
 - 视频任务上下文打包。
 - Agent 生成或编辑 `PlanManifest`：内容、shot grouping、scene layout/theme 选择、cue 与显式停顿（hold cue）。
 - Agent 选图、写 query、提出 layout 提案，但不能写自由像素坐标，也不能绕过约束校验。
@@ -509,7 +310,7 @@ Breaking contract：Phase 6 不再保留旧 renderer contract。`target_duration
 
 Ops / config：
 
-- [ ] 修复 LLM planner API 配置（`.env` key 当前 401；Skill / LLM planner 生效前提）。当前无可用测试 key，暂搁置。诊断定性（2026-09-07）：401 归因为中转站 key 失效；另已查实一个**不依赖 API key 的格式 bug**——pydantic-ai `OpenAIChatModel` 构造参数是裸模型名（源码 `self._model_name` 原样上 API，`openai:` 前缀解析只存在于 `infer_model` 字符串路径），`.env` 的裸名 `z-ai/glm-5-turbo` 恰好正确，但 README 示例与 config 默认值的 `openai:gpt-4o` 前缀格式会被原样发上 API，即使 key 有效也会失败（`llm_planner.py:148`）。修法（不需要 key，可先行）：构造前剥离 provider 前缀、兼容两种写法 + README/config 对齐 + 补测试。
+- [ ] 修复 LLM planner API 配置（`.env` key 当前 401；Skill / LLM planner 生效前提）。当前无可用测试 key，暂搁置；401 归因为中转站 key 失效（2026-09-07 定性）。模型名格式 bug（`openai:` 前缀被原样发上 API，key 有效也失败）已修复：构造前剥前缀、兼容两种写法、README/config 对齐（2026-09-12）。
 
 Docs mismatch / consistency：
 

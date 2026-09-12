@@ -92,6 +92,8 @@ python -m md2video example/example.md -o artifacts/output.mp4 --planner llm
 | OpenAI | `openai:gpt-4o` | 官方 OpenAI API |
 | OpenAI 兼容 | `openai:gpt-4o` + 设 `MD2VIDEO_LLM_BASE_URL` | 中转站、本地部署等 |
 
+模型名支持两种写法：`openai:gpt-4o` 或裸名 `gpt-4o`——`openai:` 前缀在构造请求前剥除，不会发往 API。
+
 LLM 调用失败时会自动 fallback 到 Rule Planner，不影响正常使用。
 
 ## 产物与检查
@@ -108,8 +110,17 @@ LLM 调用失败时会自动 fallback 到 Rule Planner，不影响正常使用�
 | `MD2VIDEO_STYLE_PACK` | 选择设计包（ThemeTokens） | `ink_night` |
 | `MD2VIDEO_STYLE_PACK_FILE` | 指向外部设计包 JSON 文件（fail fast） | 无 |
 | `MD2VIDEO_LAYOUT_CONSTRAINTS` | 逗号分隔的 Python 模块路径，注册额外 layout 约束 | 无 |
+| `MD2VIDEO_COMPONENTS` | 逗号分隔的 Python 模块路径，开发期注册表现组件（正式入库走验收入口） | 无 |
 
 `remotion` 后端额外要求：Node.js 22+，并需在 `md2video/tools/render/remotion_backend/` 内执行一次 `npm install`（首次渲染会自动下载 headless 浏览器）。scene 级可用 `render_backend` 字段混合两种引擎（相邻同后端 scene 自动分组）。
+
+表现组件（A8）：scene 级 `component` 字段引用 `id@version`，组件接管该 scene 的正文画面——自带视觉（配色/字体/排版/动效），不消费设计包 token，仅 `remotion` 后端可消费。组件入库走验收入口（契约即门槛：禁用 API 静态扫描 + fixture 双跑逐帧一致 + 黄金帧，全过才安装）。内置组件已随仓库分发：`step_list@1.0.0`（步骤列表逐条浮现）、`code_display@1.0.0`（代码面板 + 语法着色）、`terminal@1.0.0`（终端窗口）：
+
+```bash
+python -m md2video.check_component md2video.components.sources.step_list.register
+python -m md2video.check_component md2video.components.sources.code_display.register
+python -m md2video.check_component md2video.components.sources.terminal.register
+```
 
 ## 架构
 

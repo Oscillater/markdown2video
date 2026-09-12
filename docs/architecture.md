@@ -80,18 +80,18 @@ Markdown source
 | 提案→裁判→交付（layout） | ComputedLayout 属性校验；注册表重复注册 fail-fast；mapping.py 双消费端共享；regions 直接提案入口（`ScenePlan.layout_regions`，`layout/resolve.py`，与模板同一裁决）；结构化报错（`LayoutIssue` + `LayoutValidationError`，一次报全部，含数值与建议）；约束注册表（`layout/constraints.py`，零特权 `register_constraint`，env `MD2VIDEO_LAYOUT_CONSTRAINTS` 显式加载外部约束模块）；子构图 region 化（center_title_body 的 `section_stack` 子 region） | —— |
 | 风格声明化（style/pack） | ThemeTokens schema（`style/schema.py`）；ManimRealizer 唯一换算点；motif kind 注册表（orbit_dots）；reference pack `ink_night`（像素逐帧不变验收通过）；外部文件包加载（env `MD2VIDEO_STYLE_PACK_FILE`，`get_pack` 路径惰性加载一次、坏文件 fail fast、未知名降级 + warning） | —— |
 | 工具合同化 | Tool Protocol + 注册表 + cache_key 缓存；降级链；local 免 key / pexels 可选 key；渲染后端按 `ToolConfig.render_backend` 选择（A2.5）；VisualAsset.duration 合同落地；按 scene 多后端分发（A6：`ScenePlan.render_backend` + `core/multi_backend.py` 切片/合并/拼接/全局闸门）；Remotion 真实第二后端（A6 后半：`tools/render/remotion_tool.py` 同一渲染契约 + `remotion_schedule.py` 纯函数调度器 + Node composition，能力词汇声明、词汇外降级 + warning） | —— |
-| 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用槽位（表现归 pack，按需激活） |
+| 内容词汇表 | 标题/段落/附录；marker/媒体标记 lowering 机制已在 | 列表/强调/引用（A7 挂起：md 入口下结构被拍平，agent 走 `--plan` 可绕开；重启时表现优先走组件路线评估） |
 | plan 收敛 | scene 级 visual/layout 决策已在；SegmentPlan 副本字段已收拢（v2 去 denormalize） | —— |
 | 可检查性（A4） | run 目录制（`inspect/runs.py`：新建+命名区分，永不覆盖/删除）；`FinalResultManifest.run_id/status`；静态检查页（`inspect/viewer.py`，黄金快照测试） | 未来 harness 直接读取 run 目录（不要求编辑/审批 UI） |
 | 演进纪律 | segment_ids→shot 迁移 validator；破坏性变更一次切换先例；plan 去时间已按同模式执行（`manifest/migration.py` + 一次切换） | —— |
 | 质量策略 | 纯函数 helper 层（renderer 可无 manim 测试）；mock 外部服务；env-gated 像素 smoke | —— |
-| 组件注册（A8，规划中） | 零特权注册先例已在：motif kind 注册表（`style/motifs.py`）+ 约束注册表（`layout/constraints.py` 的 `register_constraint`）；代码只经显式模块加载、pack JSON 永不执行（A5 模式） | 组件契约（最小实现接口 + 能力词汇声明）；验收入口 `check-component`（四闸门 + 双跑逐帧一致 + 黄金帧存档，不设人工审核）；plan 引用 `id@version`，组件内容哈希进 result 供审计 |
+| 组件注册（A8） | 零特权注册先例已在：motif kind 注册表（`style/motifs.py`）+ 约束注册表（`layout/constraints.py` 的 `register_constraint`）；代码只经显式模块加载、pack JSON 永不执行（A5 模式） | 表现组件契约：输入 = 文字 + 可见窗口 + 画布，输出 = 自由画面（自带视觉，不消费 pack token）；两条底线 = 不改时间事实 + 确定性渲染；验收入口 `check-component`（时间闸门 + 双跑逐帧一致 + 黄金帧存档，不设人工审核；组件场景的 layout 合法性由上架验收承担，运行时机器检查只覆盖引擎渲染画面）；plan 引用 `id@version`，内容哈希进 result 供审计 |
 
 ## 核心数据模型
 
 - `Segment`：内容原子，通常是一句话或一个标题。Markdown marker 可以作为 source event 被识别，但进入 renderer contract 前应 lower 到 shot cue/metadata。
-- `Shot`：最小连续视觉执行单元。一个 shot 包含一组有序 segment_ids 和 cue，并保持一段连续视觉状态。
-- `Scene`：视觉策略组。一个 scene 可以包含多个共享素材策略、layout/template 和风格决策的 shot。
+- `Shot`：最小连续视觉执行单元。一个 shot 包含一组有序 segment_ids 和 cue，并保持一段连续视觉状态。需要画面连续的内容（如一段数学演算）应整体放进同一个 shot，由组件在 shot 窗口内连续渲染。
+- `Scene`：视觉策略组。一个 scene 可以包含多个共享素材策略、layout/template 和风格决策的 shot。分工：**组件针对 shot**——注册组件逐 shot 窗口接管正文画面；**scene 满足风格**——scene 是风格化单位，经 `ScenePlan.component`（`id@version`）声明本组 shot 用哪个组件，风格注册一次、处处引用。
 
 Manifest 是 Planner、Tool、Renderer、Assembler 之间唯一的数据流。工具之间不应该直接通信。
 
@@ -102,7 +102,7 @@ Runtime contract 定义 planner、tools、renderer 和 assembler 对 Manifest �
 - `Segment` 是内容原子，不自动等于显示单元、朗读单元和时间单元三合一。一个 segment 可以产生 audio cue、visual cue 或 animation cue，但这些 cue 不必拥有相同生命周期。
 - plan 不含时间（v2）：segment 不携带任何时长字段。静默段的时长由渲染器按 pack 节奏发现；shot duration 由内部 segment/cue 的实际执行结果聚合得出。
 - `Shot` 是最小连续视觉单元，持有一组有序 `segment_ids`，并携带 marker / media / visual event cue metadata。
-- `Scene` 是共享视觉策略、素材策略和 layout/template 决策的 shot 组。scene 可以持有 `visual_type`、`layout_type` 和 `layout_params`，但不决定 segment 顺序。
+- `Scene` 是共享视觉策略、素材策略和 layout/template 决策的 shot 组。scene 可以持有 `visual_type`、`layout_type`、`layout_params` 和 `component`（注册组件引用，逐 shot 渲染），但不决定 segment 顺序。
 - Renderer 必须按 `plan.scenes -> scene.shots -> shot.segment_ids` 遍历。`PlanManifest.segments` 只作为按 id 查找的内容字典，不决定渲染顺序。
 - 显示和朗读是分开的。`audio_request` 表示文本是否需要朗读；visual/layout/template 逻辑决定画面显示什么、显示多久。
 - `section_context` 只是 metadata，用来记录 segment 属于哪个 section。它不是并行显示文本，也不是并行朗读内容。若需要持续显示 section title，应由 layout/render template 显式表达，而不是从 `section_context` 推断。
@@ -198,6 +198,8 @@ Tool 选择由 `visual_type`、provider name 和配置优先级决定。LLM 可�
 
 当前内置提案器（`center_title_body` / `full_bleed_image_caption_bottom` / `image_top_text_bottom`）继续作为默认值与示例存在。Layout 参数由模板自己的 Pydantic schema 校验；runtime 在执行 TTS、渲染和合成前先完成 layout 解析与约束校验。
 
+layout 冻结：不再加模板、不再演进，新表现力一律走注册组件；运行时不新增 layout/风格检查，组件上架验收（check-component）是唯一关卡。
+
 Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费同一套 layout，两者对模板的理解来自同一组函数：
 
 - Renderer 用 `shot_layout_context` 把 shot 的模板解析成单位空间的 region 摆放：正文/字幕堆叠落在 body/text/caption region，标题卡片落在 title region，文本按 region 宽度约束缩放。
@@ -216,6 +218,10 @@ Manim 和 FFmpeg 通过共享的坐标换算层（`layout/mapping.py`）消费�
 关键性质：`引擎代码量 = N 引擎 × (1 个 Realizer + K 个能力原语)`，不随模板和包的数量增长。加新 layout 模板或新 style 包都是纯数据注册，引擎零代码；只有引入全新能力（新母题 kind、新动效意图）时，想支持的引擎各补一个实现。
 
 边界：合成器 v0 不消费 style（底色字体烧在底片里）；Ken Burns 参数、音乐音量是 pipeline 配置，不进 pack。
+
+与表现组件（A8）的分界：换个 pack 跟着变的归 pack（全片气质：palette / 字号 / 节奏 / 动效意图）；不变的是组件（一类内容的演法，如终端展示、代码高亮）。组件场景的画面由组件自带视觉负责，不消费 pack token；pack 的动效意图只作用于引擎默认渲染的画面。
+
+选择分工：pack 是全片级配置决定（env 选择，默认包），不进 planner 的场景级选择面；planner（skill 指导下的 agent）按内容挑的是组件——场景级，写进 `ScenePlan.component`。第二套气质出现时再考虑把 pack 写进 plan 头部，使 plan 自描述。
 
 ## 渲染分辨率
 
