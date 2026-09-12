@@ -254,6 +254,8 @@ layout 冻结：不再加模板、不加功能，新表现力一律走注册组�
 
 验收：✅（2026-09-13）`python -m md2video.check_component md2video.components.sources.math_canvas.register` 通过——按场夹具（scene_001 复现被 scene_002 隔开）双跑 framemd5 逐帧一致；黄金帧目检确认第二次访问（t=6.0s）画面包含第一次访问累积的单位圆 + 新增正弦曲线（时间不连续、状态连续）。单测：registry mount 校验/幂等/manifest roundtrip/旧条目缺省 shot（5 项）+ 调度器 scene_shots/复现收拢/按 shot 不带画布字段（3 项）。全量 `629 passed, 6 skipped`。普通按 shot 组件 payload 零变化（无 scene_shots 字段）。
 
+showcase 首片（2026-09-13）：`evals/trig_circle.md` 经 skill 产 plan 出片 **65.7s**（20 段 / 11 场 / 18 段配音 / 零 warning，`artifacts/trig_circle.mp4`）。`math_canvas` 场景在 plan.scenes 里复现三次表达「回到这场」，中间被文字场真实隔开（8.0s / 22.1s / 37.9s 三次访问）；抽帧目检确认累积叙事成立——访问一只单位圆，访问二圆仍在 + 正弦叠加，访问三再叠加余弦，3b1b 式「切走再回来画面还在」在真实成片里生效。
+
 ### A9 OTIO 导出（交付形态，infra）
 
 决策（2026-09-07）：OTIO 导出归 runtime/infra（timeline 事实的另一种 serialization），不是 harness 功能。
