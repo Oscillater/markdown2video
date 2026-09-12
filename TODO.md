@@ -62,10 +62,10 @@ future harness preview/review/partial rerun
 - Track A 第三批已落地（2026-09-07 晚）：A9 OTIO 导出（`timeline.otio` 交付形态）+ A6 后半（Remotion 真实第二后端：Python 调度器 + Node composition，能力词汇声明与降级，混合 manim/remotion 出片，双跑 framemd5 逐帧一致）。
 - Track A 第三批补验（2026-09-08）：CLI 全链路真跑（rule planner + edge-tts 配音 + Remotion 渲染 + FFmpeg 装配）暴露并修复三个 mock 盖不住的集成 bug——①`remotion_tool` 子进程 cwd 切到 backend_dir 后相对路径错位（props 找不到/视频写错目录，先 `resolve()` 再传 CLI，补相对路径回归测试）；②`ffmpeg_assembler.ffprobe_resolution` 对 Remotion 容器多出的尾部空字段（`480x854x`）做 `int('')` 炸裂（只取前两段）；③调度器 before/after 锚点 cue（真实 markdown 的 `[image_start]`/`[music_*]` 全走这条路）挂上时间后从未 append 进 `markers_out`，时间闸门直接拒绝且图片/BGM 条目为空（锚前=段起点、锚后=段终点落盘；锚点段不在本 shot 时收敛到本 shot 末端）。修正早前错误结论：图片/BGM 不需要进 Remotion payload——正文由组件按 region 画，图片/Ken Burns 与 BGM 由后端无关的装配层按 timeline marker 叠加；marker 修复后带图+BGM 的 `example.md` 走 Remotion 完整出片（66.6s，抽帧验证 `image_top_text_bottom` 版式成立、窗口外无图）。
 - 最新验证：2026-09-12 运行 `python -m pytest -q`，结果是 `616 passed, 4 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
-- 近期主线：「组件注册 + 口播 skill」——场景风格由注册组件承载（agent 产码 → 过 check-component 入库，plan 引用 `id@version`），知识口播 craft 由 skill 承载（agent 读结构化 markdown、经 `--plan` 直产 plan）。
+- 近期主线已完成（2026-09-12）：~~「组件注册 + 口播 skill」~~ ✅——场景风格由注册组件承载（plan 引用 `id@version`），知识口播 craft 由 skill 承载（`skills/voiceover/SKILL.md`，agent 读结构化 markdown、经 `--plan` 直产 plan）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
-- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅ → 口播 skill v1（以 B2 验收为 eval）；A7 维持挂起。
+- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅、~~口播 skill v1~~ ✅（首片 71s，见 B2）；A7 维持挂起。下一批候选：组件「显示文本 ≠ 朗读文本」契约扩展、knowledge pack（按 B2 触发条件）。
 
 ## Phase 1-4: 基础架构 → 现有工具重构 - 已完成
 
@@ -261,7 +261,7 @@ layout 冻结：不再加模板、不加功能，新表现力一律走注册组�
 
 ### B2 知识口播 skill
 
-- [ ] 口播 skill v1：给 planner agent 的一篇文档——内容套路（结构模板：钩子/分段/节奏；切镜规则：需要画面连续的内容切进同一个 shot）、组件货架（注册组件的 id + 适用内容 + 例子，agent 按内容挑并写进 scene）、命令用法（--plan 全流程）、读 viewer + warnings 迭代、缺组件时走组件提案流程。
+- [x] 口播 skill v1（`skills/voiceover/SKILL.md`）：给 planner agent 的一篇文档——内容套路（结构模板：钩子/分段/节奏；切镜规则：需要画面连续的内容切进同一个 shot）、组件货架（注册组件的 id + 适用内容 + 例子，agent 按内容挑并写进 scene）、命令用法（--plan 全流程）、读 viewer + warnings 迭代、缺组件时走组件提案流程。首片验收（2026-09-12）：`evals/git_internals.md` 经 skill 产 plan 出片 71s（17 段配音、三个组件全部正确挂载、零 warning）。跑出的契约坑已写回 skill：**要朗读的 segment 必须显式带 `audio_request`**（缺 = 静默段，管线不读也不警告——首跑曾全片无声）。遗留：①组件"显示文本 ≠ 朗读文本"（代码/命令类组件的口播听感）需要契约扩展，待排期；②正文 15px 偏小的读片意见归 knowledge pack 触发条件。
 - [ ] `knowledge` 风格 pack（暂缓）：首片读片后若引擎默认画面拖后腿，再把节奏 / 字号梯度 / 母题调成 knowledge pack——pack 全片级、配置选择，不进 skill 的选择面。
 
 分工：流程归代码（CLI / 管线 / 闸门）；场景演法归组件（agent 按内容挑，自带视觉，pack 不引用组件）；全片气质归 pack（配置级，现默认 ink_night；第二套气质出现时再考虑写进 plan 头部使 plan 自描述）；内容套路归 skill 文档。
@@ -276,7 +276,7 @@ layout 冻结：不再加模板、不加功能，新表现力一律走注册组�
 
 依赖链：**A1、A2.5 随时可做；A2 + B1 绑定落地 → A3（静默节奏来源 = pack motion token）→ A4（viewer，B2 调参受益）→ A5 → A6**。已按此顺序全部落地（A9 / A9.1 随后完成，2026-09-07 ~ 09-12）。breaking 迁移只有 A3 一次。
 
-近期主线（2026-09-12 起）：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线（契约 + 注册表 + check-component + 首批三组件入库）~~ ✅；余下为**口播 skill v1（以 B2 验收为 eval）**。原则：agent 产码过闸入库、运行中不现写代码；组件管画面、调度管时间。A7 挂起（识别与 pack 槽位将来重启时走 core/schema，不等 A8）。
+近期主线（2026-09-12 收官）：~~LLM planner 前缀修复~~、~~A8 组件管线（契约 + 注册表 + check-component + 首批三组件入库）~~、~~口播 skill v1（以 B2 验收为 eval）~~ 全部 ✅。原则：agent 产码过闸入库、运行中不现写代码；组件管画面、调度管时间。A7 挂起（识别与 pack 槽位将来重启时走 core/schema，不等 A8）。
 
 ## Future: Harness / Agent Workflow Layer
 

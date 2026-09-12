@@ -1,0 +1,309 @@
+{
+  "version": "2",
+  "segments": [
+    {
+      "id": "title_main_001",
+      "text": "Git 内部原理",
+      "segment_type": "title_main"
+    },
+    {
+      "id": "title_sub_001",
+      "text": "一次 commit 背后发生了什么",
+      "segment_type": "title_sub"
+    },
+    {
+      "id": "hook_001",
+      "text": "你每天都在敲 git commit。但回车按下去的那一刻，Git 到底做了什么？",
+      "segment_type": "content",
+      "section_context": "开场",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "obj_header_001",
+      "text": "一切皆是对象",
+      "segment_type": "section_header",
+      "section_context": "一切皆是对象",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "obj_intro_001",
+      "text": "Git 的仓库，本质上是一个对象数据库。它只有三种核心对象。",
+      "segment_type": "content",
+      "section_context": "一切皆是对象",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "obj_blob_001",
+      "text": "blob，只存文件的内容。",
+      "segment_type": "content",
+      "section_context": "一切皆是对象",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "obj_tree_001",
+      "text": "tree，存目录结构和文件名。",
+      "segment_type": "content",
+      "section_context": "一切皆是对象",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "obj_commit_001",
+      "text": "commit，把一次快照打包，记下作者和时间。",
+      "segment_type": "content",
+      "section_context": "一切皆是对象",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "chain_header_001",
+      "text": "提交链成历史",
+      "segment_type": "section_header",
+      "section_context": "提交链成历史",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "chain_intro_001",
+      "text": "每个 commit，都记着上一个 commit 的编号。这个编号叫哈希，是内容的指纹。",
+      "segment_type": "content",
+      "section_context": "提交链成历史",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "chain_demo_001",
+      "text": "我们看一眼真实的仓库。",
+      "segment_type": "content",
+      "section_context": "提交链成历史",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "chain_cmd_001",
+      "text": "$ git log --oneline",
+      "segment_type": "content",
+      "section_context": "提交链成历史",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "chain_cmd_002",
+      "text": "$ git show HEAD",
+      "segment_type": "content",
+      "section_context": "提交链成历史",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "branch_header_001",
+      "text": "分支只是个指针",
+      "segment_type": "section_header",
+      "section_context": "分支只是个指针",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "branch_intro_001",
+      "text": "所谓分支，其实只是一个 41 字节的文件。里面只有一行字：它指向哪个 commit。",
+      "segment_type": "content",
+      "section_context": "分支只是个指针",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "branch_head_001",
+      "text": "ref: refs/heads/main",
+      "segment_type": "content",
+      "section_context": "分支只是个指针",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "branch_new_001",
+      "text": "创建一个新分支，就是放进一张新纸条，不到一毫秒。",
+      "segment_type": "content",
+      "section_context": "分支只是个指针",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "end_001",
+      "text": "所以，commit 不是改动的集合，而是一个带指针的快照。",
+      "segment_type": "content",
+      "section_context": "结尾",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    },
+    {
+      "id": "end_002",
+      "text": "理解了这一点，rebase 和 reset 就都不神秘了。",
+      "segment_type": "content",
+      "section_context": "结尾",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_001",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "section_context": "开场",
+      "shots": [
+        {
+          "id": "shot_001",
+          "segment_ids": [
+            "title_main_001",
+            "title_sub_001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_002",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "section_context": "开场",
+      "shots": [
+        {
+          "id": "shot_002",
+          "segment_ids": [
+            "hook_001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_003",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "section_context": "一切皆是对象",
+      "shots": [
+        {
+          "id": "shot_003",
+          "segment_ids": [
+            "obj_header_001",
+            "obj_intro_001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_004",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "component": "step_list@1.0.0",
+      "section_context": "一切皆是对象",
+      "shots": [
+        {
+          "id": "shot_004",
+          "segment_ids": [
+            "obj_blob_001",
+            "obj_tree_001",
+            "obj_commit_001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_005",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "section_context": "提交链成历史",
+      "shots": [
+        {
+          "id": "shot_005",
+          "segment_ids": [
+            "chain_header_001",
+            "chain_intro_001",
+            "chain_demo_001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_006",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "component": "terminal@1.0.0",
+      "section_context": "提交链成历史",
+      "shots": [
+        {
+          "id": "shot_006",
+          "segment_ids": [
+            "chain_cmd_001",
+            "chain_cmd_002"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_007",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "section_context": "分支只是个指针",
+      "shots": [
+        {
+          "id": "shot_007",
+          "segment_ids": [
+            "branch_header_001",
+            "branch_intro_001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_008",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "component": "code_display@1.0.0",
+      "section_context": "分支只是个指针",
+      "shots": [
+        {
+          "id": "shot_008",
+          "segment_ids": [
+            "branch_head_001",
+            "branch_new_001"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scene_009",
+      "visual_type": "text_only",
+      "render_backend": "remotion",
+      "section_context": "结尾",
+      "shots": [
+        {
+          "id": "shot_009",
+          "segment_ids": [
+            "end_001",
+            "end_002"
+          ]
+        }
+      ]
+    }
+  ]
+}
