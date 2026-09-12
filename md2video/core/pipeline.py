@@ -84,6 +84,11 @@ class Pipeline:
         from md2video.tools.render.manim_tool import ManimRenderTool
         self.registry.register("render", ManimRenderTool())
 
+        # Render (Remotion) — 第二后端（A6 后半）：注册不依赖 Node 环境，
+        # 依赖缺失在 execute 时 fail fast 并给出可执行提示。
+        from md2video.tools.render.remotion_tool import RemotionRenderTool
+        self.registry.register("render", RemotionRenderTool())
+
         # Local image provider is the default no-key verification path.
         from md2video.tools.image.local_image_tool import LocalImageTool
         self.registry.register("stock_image", LocalImageTool())

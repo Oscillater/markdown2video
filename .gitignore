@@ -1,6 +1,4 @@
-
-
-# 蹇界暐浜х墿鐩綍
+# 忽略产物目录
 artifacts/
 example/
 voice_cache/
@@ -20,3 +18,11 @@ __pycache__/
 .env
 
 .claudeignore
+
+# Remotion render backend (A6)
+node_modules/
+md2video/tools/render/remotion_backend/public/
+md2video/tools/render/remotion_backend/remotion_build/
+
+# Chromium GPU shader cache from Remotion headless rendering
+GPUCache/

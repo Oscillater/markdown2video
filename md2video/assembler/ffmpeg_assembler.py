@@ -58,7 +58,8 @@ def ffprobe_resolution(path: Path) -> Tuple[int, int]:
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {p.stderr}")
-    width, height = map(int, p.stdout.strip().split("x"))
+    # Remotion 产出的 mp4 会多带一个尾部空字段（如 "480x854x"），只取前两段
+    width, height = (int(v) for v in p.stdout.strip().split("x")[:2])
     return width, height
 
 

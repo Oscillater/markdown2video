@@ -1,0 +1,15 @@
+{
+  "name": "md2video-remotion-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remotion render backend for markdown2video (A6 second backend). Renders a schedule payload produced by md2video.tools.render.remotion_schedule.",
+  "scripts": {
+    "render": "remotion render src/index.ts Md2VideoMain"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.220",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.220"
+  }
+}
