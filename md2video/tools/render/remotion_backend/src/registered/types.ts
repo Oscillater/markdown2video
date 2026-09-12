@@ -15,4 +15,17 @@ export type ComponentProps = {
   height: number;
   fps: number;
   segments: SegmentSlot[]; // 本 shot 的正文段（标题段与 section_header 不在其中）
+  // A8.1 场景画布（mount="scene" 的组件才有）：本场全部 shot 的起止与
+  // 正文段（按调度顺序 = 时间顺序；同场 shot 散开也按 scene_id 收拢在此）
+  // + 自己排第几。画面状态跨 shot 累积由组件从这份时间线纯函数推导。
+  scene_shots?: SceneShotSlot[];
+  scene_shot_index?: number;
+};
+
+// 场景画布时间线里的一个 shot（本场某次「访问」的窗口与正文段）
+export type SceneShotSlot = {
+  shot_id: string;
+  start: number;
+  end: number;
+  segments: SegmentSlot[];
 };

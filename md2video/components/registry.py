@@ -30,6 +30,12 @@ COMPONENTS_ENV = "MD2VIDEO_COMPONENTS"
 # v1 只开放 body 表现；标题卡与 section 堆叠字幕仍归引擎
 COMPONENT_KINDS = ("body",)
 
+# A8.1 挂载方式：shot = 逐 shot 窗口独立实例（默认，一镜一段完整演示）；
+# scene = 场景画布——组件拿整场镜头时间线 + 自己排第几，画面状态跨 shot
+# 累积（时间不连续、状态连续；同场 shot 散开是合法用法）。挂载方式记在
+# 组件注册表里，plan 格式不动：ScenePlan.component 仍只写 id@version。
+COMPONENT_MOUNT_MODES = ("shot", "scene")
+
 # 目前只有 Remotion 后端能消费表现组件；manim scene 声明组件 fail fast
 COMPONENT_CAPABLE_BACKENDS = ("remotion",)
 
@@ -45,6 +51,7 @@ class RegisteredComponent:
     id: str
     version: str
     kind: str
+    mount: str  # "shot"（逐镜独立）或 "scene"（场景画布，状态跨 shot 累积）
     component_file: str  # 解析后的绝对路径（.tsx 源码）
     content_hash: str  # sha256(component_file bytes)
 
@@ -61,6 +68,7 @@ def register_component(
     version: str,
     kind: str,
     component_file: str | Path,
+    mount: str = "shot",
 ) -> RegisteredComponent:
     """注册一个表现组件；相对路径按调用方模块所在目录解析（组件文件随
     注册模块走，与 cwd 无关）。重名同内容幂等，重名异内容 fail fast。"""
@@ -78,6 +86,11 @@ def register_component(
         raise ValueError(
             f"Unsupported component kind {kind!r}; v1 supports {COMPONENT_KINDS}"
         )
+    if mount not in COMPONENT_MOUNT_MODES:
+        raise ValueError(
+            f"Unsupported component mount {mount!r}; "
+            f"supported modes are {COMPONENT_MOUNT_MODES}"
+        )
 
     path = Path(component_file)
     if not path.is_absolute():
@@ -93,7 +106,11 @@ def register_component(
     ref = f"{component_id}@{version}"
     existing = _REGISTRY.get(ref)
     if existing is not None:
-        if existing.content_hash == content_hash and existing.kind == kind:
+        if (
+            existing.content_hash == content_hash
+            and existing.kind == kind
+            and existing.mount == mount
+        ):
             return existing
         raise ValueError(
             f"Component {ref} already registered with different content "
@@ -104,6 +121,7 @@ def register_component(
         id=component_id,
         version=version,
         kind=kind,
+        mount=mount,
         component_file=str(path),
         content_hash=content_hash,
     )
@@ -158,7 +176,13 @@ def _register_installed_components() -> None:
                 "`python -m md2video.check_component`"
             )
         component_id, _, version = entry["ref"].partition("@")
-        register_component(component_id, version, entry["kind"], path)
+        register_component(
+            component_id,
+            version,
+            entry["kind"],
+            path,
+            mount=entry.get("mount", "shot"),
+        )
 
 
 _register_installed_components()

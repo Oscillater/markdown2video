@@ -65,6 +65,53 @@ def _fixture_plan(ref: str) -> PlanManifest:
     )
 
 
+def _fixture_plan_scene_canvas(ref: str) -> PlanManifest:
+    """按场挂载（A8.1 场景画布）的固定验收计划。
+
+    与按 shot 夹具的关键差异：组件场被普通场隔开——plan.scenes 里
+    scene_001 复现（表示「回到这场」），shot_001 与 shot_003 在成片时间轴
+    上不邻接。画布在时间上不连续，状态必须连续：shot_003 的画面要包含
+    shot_001 累积的内容（由组件从 scene_shots 时间线纯函数推导）。
+    文本与结构永不改（改了会让已存档黄金帧失去可比性）。"""
+    return PlanManifest(
+        segments=[
+            SegmentPlan(id="t1", text="画布验收标题", segment_type="title_main"),
+            SegmentPlan(id="s1", text="画布第一笔：坐标系", segment_type="content"),
+            SegmentPlan(id="s2", text="中场休息：切到别的画面", segment_type="content"),
+            SegmentPlan(id="s3", text="画布第二笔：曲线", segment_type="content"),
+        ],
+        scenes=[
+            {
+                "id": "scene_001",
+                "visual_type": "text_only",
+                "visual_params": {},
+                "render_backend": "remotion",
+                "component": ref,
+                "shots": [{"id": "shot_001", "segment_ids": ["t1", "s1"]}],
+                "section_context": "check",
+            },
+            {
+                "id": "scene_002",
+                "visual_type": "text_only",
+                "visual_params": {},
+                "render_backend": "remotion",
+                "shots": [{"id": "shot_002", "segment_ids": ["s2"]}],
+                "section_context": "check",
+            },
+            {
+                # 回到 scene_001：同 id 复现，shot_003 是画布的第二次「访问」
+                "id": "scene_001",
+                "visual_type": "text_only",
+                "visual_params": {},
+                "render_backend": "remotion",
+                "component": ref,
+                "shots": [{"id": "shot_003", "segment_ids": ["s3"]}],
+                "section_context": "check",
+            },
+        ],
+    )
+
+
 def _framemd5_frame_lines(video_path: Path) -> list[str]:
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(video_path), "-f", "framemd5", "-"],
@@ -112,8 +159,10 @@ def verify_component(
     registered_refs: list[str] = []
     original_register = registry_module.register_component
 
-    def _spy(component_id, version, kind, component_file):
-        component = original_register(component_id, version, kind, component_file)
+    def _spy(component_id, version, kind, component_file, mount="shot"):
+        component = original_register(
+            component_id, version, kind, component_file, mount
+        )
         registered_refs.append(component.ref)
         return component
 
@@ -150,7 +199,11 @@ def verify_component(
     try:
         run_root = Path(artifacts_dir) / "component_check" / ref.replace("@", "_")
         run_root.mkdir(parents=True, exist_ok=True)
-        plan = _fixture_plan(ref)
+        plan = (
+            _fixture_plan_scene_canvas(ref)
+            if component.mount == "scene"
+            else _fixture_plan(ref)
+        )
         plan_path = run_root / "plan.json"
         plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         assets_path = run_root / "execution-assets.json"

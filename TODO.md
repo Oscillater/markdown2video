@@ -61,11 +61,11 @@ future harness preview/review/partial rerun
 - Track A 第二批已落地（2026-09-07）：A4 Runtime Inspectability（run 目录制 + `manifest_viewer.html`）+ A5 Layout 提案机制（`layout_regions` + 约束注册表 + 结构化 LayoutIssue + 子构图 region 化）+ 外部皮肤包文件加载（`MD2VIDEO_STYLE_PACK_FILE`）+ A6 前半（按 scene 多后端分发与合成基础设施）。
 - Track A 第三批已落地（2026-09-07 晚）：A9 OTIO 导出（`timeline.otio` 交付形态）+ A6 后半（Remotion 真实第二后端：Python 调度器 + Node composition，能力词汇声明与降级，混合 manim/remotion 出片，双跑 framemd5 逐帧一致）。
 - Track A 第三批补验（2026-09-08）：CLI 全链路真跑（rule planner + edge-tts 配音 + Remotion 渲染 + FFmpeg 装配）暴露并修复三个 mock 盖不住的集成 bug——①`remotion_tool` 子进程 cwd 切到 backend_dir 后相对路径错位（props 找不到/视频写错目录，先 `resolve()` 再传 CLI，补相对路径回归测试）；②`ffmpeg_assembler.ffprobe_resolution` 对 Remotion 容器多出的尾部空字段（`480x854x`）做 `int('')` 炸裂（只取前两段）；③调度器 before/after 锚点 cue（真实 markdown 的 `[image_start]`/`[music_*]` 全走这条路）挂上时间后从未 append 进 `markers_out`，时间闸门直接拒绝且图片/BGM 条目为空（锚前=段起点、锚后=段终点落盘；锚点段不在本 shot 时收敛到本 shot 末端）。修正早前错误结论：图片/BGM 不需要进 Remotion payload——正文由组件按 region 画，图片/Ken Burns 与 BGM 由后端无关的装配层按 timeline marker 叠加；marker 修复后带图+BGM 的 `example.md` 走 Remotion 完整出片（66.6s，抽帧验证 `image_top_text_bottom` 版式成立、窗口外无图）。
-- 最新验证：2026-09-12 运行 `python -m pytest -q`，结果是 `616 passed, 4 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
+- 最新验证：2026-09-13 运行 `python -m pytest -q`，结果是 `629 passed, 6 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
 - 近期主线已完成（2026-09-12）：~~「组件注册 + 口播 skill」~~ ✅——场景风格由注册组件承载（plan 引用 `id@version`），知识口播 craft 由 skill 承载（`skills/voiceover/SKILL.md`，agent 读结构化 markdown、经 `--plan` 直产 plan）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
-- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅、~~口播 skill v1~~ ✅（首片 71s，见 B2）；A7 维持挂起。下一批候选：组件「显示文本 ≠ 朗读文本」契约扩展、knowledge pack（按 B2 触发条件）。
+- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅、~~口播 skill v1~~ ✅（首片 71s，见 B2）、~~A8.1 场景画布~~ ✅（2026-09-13，`math_canvas@1.0.0` 入库）。A7 维持挂起。下一批候选：3b1b 式数学 showcase 片（公式只演不读）、组件「显示文本 ≠ 朗读文本」契约扩展、knowledge pack（按 B2 触发条件）。
 
 ## Phase 1-4: 基础架构 → 现有工具重构 - 已完成
 
@@ -229,6 +229,30 @@ layout 冻结：不再加模板、不加功能，新表现力一律走注册组�
 已完成部分验收（2026-09-12）：三个首批组件各经 `python -m md2video.check_component` 真验收通过（双跑 framemd5 逐帧一致、4 张黄金帧入库），step_list 另做像素级确认（自带深板岩底 ≠ 引擎黑底）；env-gated 冒烟覆盖三个组件的复核路径；全量 `621 passed, 5 skipped`（skip 均为 env-gated 真渲染）。
 
 另一议程（暂缓）：是否增列「内容识别插件」为第四类组件（即 A7 识别的组件化路线）——新 segment 类型流经 TTS/planner/renderer/assembler，契约宽度远超表现组件。
+
+### A8.1 场景画布（按场挂载的组件）—— 已落地
+
+动机（2026-09-12 拍板）：对标 3b1b 的画面累积感——单位圆画完，切走讲别的再切回来它还在，新镜头往上添一笔。现状做不到：组件逐 shot 挂载、每镜重启、画面清空，镜头之间画面是断的。这是数学 showcase 片的前置能力。
+
+核心语义：**场 = 画面状态的单位（画到哪了归场管），shot = 访问画面的时间片（什么时候看归 shot 管）**。同场 shot 允许散在片子的不同位置（既有语义不变）：画布在时间上不连续，但状态必须连续——切走期间画布不播，状态不丢。
+
+设计六点（2026-09-12 与 owner 对齐）：
+
+1. 挂载方式记在组件注册表里（注册时声明「按 shot 挂」或「按场挂」），plan 格式不动——`ScenePlan.component` 仍只写 `id@version`，planner 无感知，老 plan 全兼容；组件作者决定自己的生命周期。
+2. 输入升级：按 shot 挂的组件照旧只拿本镜窗口；按场挂的组件拿到**整场镜头时间线**（每个 shot 的起止 + 段落文本 + 声音起止）+ 自己排第几，演化节奏是组件内部逻辑，管线不管。
+3. 状态累积是纯函数推导，不靠运行时记忆：组件根据 cue 表算出「轮到我这个镜头时画布上该有什么」（此前镜头累积 + 本镜新增），每个 shot 窗口一个实例、各自渲染累积状态。确定性渲染，双跑逐帧一致，check-component 可验收。
+4. **不加任何连续性检查**——镜头散开是合法且预期的用法，恰好演示「切走再回来，画面还在」。（初版设计曾提「同场镜头须时间连续否则 warning」，已收回。）
+5. 画布只接管正文区：标题与 section_header 仍由引擎按 pack 画，组件不碰品牌一致性（与 A8 现有分工一致）。
+6. 渲染结构无新机器：仍是一个 shot 窗口一个实例、绝对时间定位，只是组件能「看到全场」。
+
+补充语义（实现时确立）：plan.scenes 允许**同一 scene id 复现**，表示「回到这场」——执行顺序是逐 scene 扁平化，复现条目的 shot 天然插进别场之间；调度器按 scene_id 把两次访问收拢成同一条画布时间线。plan schema 零改动（scenes 列表本无唯一性约束）。
+
+- [x] 契约落地：`register_component(..., mount="shot"|"scene")`（注册表声明，manifest 携带 mount、旧条目缺省 shot）；调度器 `_annotate_scene_canvases` 为按场挂 scene 的每个 shot 附 `scene_shots`（全场镜头时间线）+ `scene_shot_index`；Node wrapper/types 透传（`timeline` 事实保持精简不带画布字段）。
+- [x] check-component 按场模式验收夹具：组件场 → 普通场 → 组件场（scene id 复现，shot 不邻接），双跑逐帧一致 + 黄金帧。
+- [x] 试点组件 `math_canvas@1.0.0` 入库：坐标系底座 + 单位圆/正弦/余弦按访问次序叠加（SVG stroke 画线动效），4 张黄金帧。
+- [x] skill 文档补：组件货架加挂载列 + `math_canvas`；「切走再回来」写法（scene id 复现示例 JSON）；切镜规则加跨镜头累积一条。
+
+验收：✅（2026-09-13）`python -m md2video.check_component md2video.components.sources.math_canvas.register` 通过——按场夹具（scene_001 复现被 scene_002 隔开）双跑 framemd5 逐帧一致；黄金帧目检确认第二次访问（t=6.0s）画面包含第一次访问累积的单位圆 + 新增正弦曲线（时间不连续、状态连续）。单测：registry mount 校验/幂等/manifest roundtrip/旧条目缺省 shot（5 项）+ 调度器 scene_shots/复现收拢/按 shot 不带画布字段（3 项）。全量 `629 passed, 6 skipped`。普通按 shot 组件 payload 零变化（无 scene_shots 字段）。
 
 ### A9 OTIO 导出（交付形态，infra）
 

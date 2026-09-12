@@ -389,6 +389,7 @@ def build_remotion_schedule(
         }
 
     shots_out = [shots_by_id[unit.shot_id] for unit in units_all if unit.shot_id in shots_by_id]
+    _annotate_scene_canvases(shots_out, scene_components)
     timeline_facts = {
         "fps": fps,
         "text": text_facts,
@@ -446,6 +447,49 @@ def _scene_component_payloads(plan: PlanManifest) -> tuple[dict[str, str], list[
             continue
         refs[scene.id] = scene.component
     return refs, warnings
+
+
+def _annotate_scene_canvases(
+    shots_out: list[dict[str, Any]], scene_components: dict[str, str]
+) -> None:
+    """A8.1 场景画布：按场挂载的组件拿整场镜头时间线。
+
+    挂载方式记在组件注册表（mount="scene"）：该 scene 的每个 shot 仍是一个
+    独立挂载实例，但 payload 额外携带 `scene_shots`（本场全部 shot 的起止
+    与正文段，按调度顺序 = 时间顺序）与 `scene_shot_index`（自己排第几）。
+    画面状态跨 shot 累积由组件从这份时间线纯函数推导——时间不连续、状态
+    连续；同场 shot 散开（plan.scenes 里同一 scene id 复现，表示「回到这
+    场」）天然被这里按 scene_id 收拢，不加任何连续性检查。
+    """
+    from md2video.components.registry import get_component
+
+    canvas_shots_by_scene: dict[str, list[dict[str, Any]]] = {}
+    for shot in shots_out:
+        ref = scene_components.get(shot["scene_id"], "")
+        if not ref:
+            continue
+        component = get_component(ref)
+        if component is None or component.mount != "scene":
+            continue
+        canvas_shots_by_scene.setdefault(shot["scene_id"], []).append(shot)
+
+    for shots in canvas_shots_by_scene.values():
+        timeline = [
+            {
+                "shot_id": shot["shot_id"],
+                "start": shot["start"],
+                "end": shot["end"],
+                "segments": [
+                    seg
+                    for seg in shot["segments"]
+                    if seg["segment_type"] != "section_header"
+                ],
+            }
+            for shot in shots
+        ]
+        for index, shot in enumerate(shots):
+            shot["scene_shots"] = timeline
+            shot["scene_shot_index"] = index
 
 
 def _public_marker(entry: dict[str, Any]) -> dict[str, Any]:

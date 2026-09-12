@@ -27,6 +27,7 @@
 ## 切镜规则
 
 - **Shot = 一次连续拍摄**。画面需要连续演进的内容（推理链、演示过程、逐步展开的图示）必须放进**同一个 shot**（一个 shot 可以带多个 segment_ids）。
+- 画面要在**多个镜头之间累积**（一个图示逐步演化、切走再回来还在）→ 用**按场挂的组件**（如 `math_canvas`），把同图示的镜头写进同一个 scene id（可复现，见组件货架）。
 - 话题转折、演法更换 → 新 shot / 新 scene。
 - 不确定切不切时：内容能各自独立成立就切，需要前文铺垫才看懂就不切。
 
@@ -34,11 +35,30 @@
 
 场景级引用：`"render_backend": "remotion"` + `"component": "<id>@<version>"`。组件逐 shot 接管正文画面；**标题卡与 section 堆叠字幕归引擎——不要把 title/section_header 段放进组件场景**。
 
-| id | 适合的内容 | 显示规则 |
-|---|---|---|
-| `step_list@1.0.0` | 步骤、并列要点（每个 segment 一条，逐条浮现） | 圆形序号 + 文字 |
-| `code_display@1.0.0` | 配置、数据结构、短代码（GitHub 深色面板） | 行号 + 语法着色 |
-| `terminal@1.0.0` | 命令演示（黑窗口） | `$` 前缀 = 命令行，其余 = 灰色输出 |
+| id | 挂载 | 适合的内容 | 显示规则 |
+|---|---|---|---|
+| `step_list@1.0.0` | 按 shot | 步骤、并列要点（每个 segment 一条，逐条浮现） | 圆形序号 + 文字 |
+| `code_display@1.0.0` | 按 shot | 配置、数据结构、短代码（GitHub 深色面板） | 行号 + 语法着色 |
+| `terminal@1.0.0` | 按 shot | 命令演示（黑窗口） | `$` 前缀 = 命令行，其余 = 灰色输出 |
+| `math_canvas@1.0.0` | **按场** | 数学演示（3b1b 式：画面跨镜头累积，逐镜叠加一笔） | 坐标系底座 + 单位圆/正弦/余弦曲线按访问次序叠加 |
+
+**两种挂载方式**（记在组件注册表里，plan 无感）：
+
+- **按 shot**（默认）：一镜一段完整演示，镜头之间画面各自独立。
+- **按场（场景画布）**：组件拿整场镜头时间线，画面状态跨镜头累积——切走再回来，之前画的东西还在，新镜头往上添一笔。适合"同一个图示逐步演化讲透一件事"的内容。
+
+场景画布的"切走再回来"写法：**同一 scene id 在 scenes 里出现两次**（表示回到这场），中间插别的场。组件自己会把两次访问的镜头收拢成一条画布时间线，不需要你做任何额外标注；不加连续性检查，散开是合法用法。
+
+```json
+{"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
+ "component": "math_canvas@1.0.0",
+ "shots": [{"id": "shot_010", "segment_ids": ["content_010"]}]},
+{"id": "scene_005", "visual_type": "text_only", "render_backend": "remotion",
+ "shots": [{"id": "shot_011", "segment_ids": ["content_011"]}]},
+{"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
+ "component": "math_canvas@1.0.0",
+ "shots": [{"id": "shot_012", "segment_ids": ["content_012"]}]}
+```
 
 **硬约束：组件显示的文本就是朗读文本**（TTS 读的就是 segment 的 text）。所以：
 

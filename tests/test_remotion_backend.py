@@ -518,6 +518,139 @@ def test_schedule_omits_component_for_plain_scenes():
     assert warnings == []
 
 
+# ==================== A8.1 场景画布（按场挂载） ====================
+
+
+def _install_canvas_component(tmp_path, monkeypatch, mount="scene"):
+    """注册并安装一个临时组件，返回 ref；测试结束自动清理注册表。
+
+    id 随 mount 区分：注册表跨测试残留（reset 会在 monkeypatched 目录上
+    重载），同 id 异内容会 fail fast。"""
+    from md2video.components import install as install_mod
+    from md2video.components.registry import register_component
+
+    component_id = f"tmp_canvas_{mount}"
+    monkeypatch.setattr(install_mod, "REGISTERED_DIR", tmp_path)
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    tsx = src_dir / "tmp_canvas.tsx"
+    tsx.write_text("export default 1;\n", encoding="utf-8")
+    component = register_component(component_id, "1.0.0", "body", tsx, mount=mount)
+    install_mod.install_component(component)
+    return component.ref
+
+
+def test_scene_canvas_shots_carry_full_scene_timeline(tmp_path, monkeypatch):
+    """按场挂的组件：每个 shot 实例携带本场全部镜头时间线 + 自己排第几。"""
+    from md2video.components.registry import reset_components
+
+    ref = _install_canvas_component(tmp_path, monkeypatch, mount="scene")
+    try:
+        plan = _plan(
+            [_silent_segment("s1"), _silent_segment("s2")],
+            [{"id": "shot_001", "segment_ids": ["s1"]}, {"id": "shot_002", "segment_ids": ["s2"]}],
+        )
+        plan.scenes[0].component = ref
+        schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+        assert warnings == []
+        first, second = schedule["shots"]
+        assert first["scene_shot_index"] == 0
+        assert second["scene_shot_index"] == 1
+        assert [s["shot_id"] for s in first["scene_shots"]] == ["shot_001", "shot_002"]
+        # 时间线里的镜头窗口按调度顺序递增，且带各自的正文段
+        assert first["scene_shots"][0]["start"] < first["scene_shots"][1]["start"]
+        assert first["scene_shots"][1]["segments"][0]["segment_id"] == "s2"
+        # 第二个实例能看到第一个镜头的窗口事实（状态累积的输入）
+        assert second["scene_shots"][0]["shot_id"] == "shot_001"
+        # timeline 事实保持精简：不携带 scene_shots（那只是组件 props）
+        for shot in schedule["timeline"]["shots"]:
+            assert "scene_shots" not in shot
+    finally:
+        reset_components()
+
+
+def test_scene_canvas_spans_revisit_scenes(tmp_path, monkeypatch):
+    """scene 复现（同一 id 在 plan.scenes 出现两次 = 回到这场）：画布时间线
+    收拢两次访问的镜头，按时间排序；中间普通场不受影响。"""
+    from md2video.components.registry import reset_components
+
+    ref = _install_canvas_component(tmp_path, monkeypatch, mount="scene")
+    try:
+        plan = PlanManifest(
+            segments=[
+                _silent_segment("s1"),
+                _silent_segment("s2"),
+                _silent_segment("s3"),
+            ],
+            scenes=[
+                {
+                    "id": "scene_001",
+                    "visual_type": "text_only",
+                    "visual_params": {},
+                    "component": ref,
+                    "shots": [{"id": "shot_001", "segment_ids": ["s1"]}],
+                    "section_context": "test",
+                },
+                {
+                    "id": "scene_002",
+                    "visual_type": "text_only",
+                    "visual_params": {},
+                    "shots": [{"id": "shot_002", "segment_ids": ["s2"]}],
+                    "section_context": "test",
+                },
+                {
+                    # 回到 scene_001：散开镜头是合法用法，不加连续性检查
+                    "id": "scene_001",
+                    "visual_type": "text_only",
+                    "visual_params": {},
+                    "component": ref,
+                    "shots": [{"id": "shot_003", "segment_ids": ["s3"]}],
+                    "section_context": "test",
+                },
+            ],
+            media_declarations={},
+        )
+        schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+        assert warnings == []
+        assert len(schedule["shots"]) == 3
+        first_visit, middle, second_visit = schedule["shots"]
+        # 组件场：两个访问实例拿到同一条全场时间线（跨 scene 复现收拢）
+        assert [s["shot_id"] for s in first_visit["scene_shots"]] == ["shot_001", "shot_003"]
+        assert second_visit["scene_shots"] == first_visit["scene_shots"]
+        assert first_visit["scene_shot_index"] == 0
+        assert second_visit["scene_shot_index"] == 1
+        assert first_visit["start"] < second_visit["start"]  # 时间上被隔开
+        # 普通场：无组件字段、无场景画布字段
+        assert "component" not in middle
+        assert "scene_shots" not in middle
+    finally:
+        reset_components()
+
+
+def test_shot_mounted_component_gets_no_scene_timeline(tmp_path, monkeypatch):
+    """按 shot 挂的组件（默认）：payload 不带场景画布字段，行为与 A8 一致。"""
+    from md2video.components.registry import reset_components
+
+    ref = _install_canvas_component(tmp_path, monkeypatch, mount="shot")
+    try:
+        plan = _plan(
+            [_silent_segment("s1"), _silent_segment("s2")],
+            [{"id": "shot_001", "segment_ids": ["s1"]}, {"id": "shot_002", "segment_ids": ["s2"]}],
+        )
+        plan.scenes[0].component = ref
+        schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+        assert warnings == []
+        for shot in schedule["shots"]:
+            assert shot["component"] == ref
+            assert "scene_shots" not in shot
+            assert "scene_shot_index" not in shot
+    finally:
+        reset_components()
+
+
 def _pipeline_with_planner_stub(tmp_path: Path) -> Pipeline:
     with patch.object(Pipeline, "_create_planner"):
         return Pipeline(artifacts_dir=tmp_path, tool_config=ToolConfig())

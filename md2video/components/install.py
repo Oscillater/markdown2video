@@ -100,6 +100,7 @@ def install_component(
     entries.append({
         "ref": component.ref,
         "kind": component.kind,
+        "mount": component.mount,
         "file": relative,
         "content_hash": component.content_hash,
     })

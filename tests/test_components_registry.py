@@ -88,6 +88,70 @@ def test_multiple_versions_of_same_id_coexist(tmp_path):
     assert len([c for c in registered_components() if c.id == "demo"]) == 2
 
 
+# ==================== A8.1 挂载方式（shot / scene） ====================
+
+
+def test_mount_defaults_to_shot_and_validates(tmp_path):
+    tsx = _write_tsx(tmp_path)
+    component = register_component("demo", "1.0.0", "body", tsx)
+    assert component.mount == "shot"
+
+    with pytest.raises(ValueError, match="Unsupported component mount"):
+        register_component("demo2", "1.0.0", "body", tsx, mount="timeline")
+
+
+def test_scene_mount_roundtrip(tmp_path):
+    tsx = _write_tsx(tmp_path)
+    component = register_component("canvas_demo", "1.0.0", "body", tsx, mount="scene")
+    assert component.mount == "scene"
+    assert get_component("canvas_demo@1.0.0").mount == "scene"
+
+
+def test_same_content_different_mount_fails_fast(tmp_path):
+    tsx = _write_tsx(tmp_path)
+    register_component("demo", "1.0.0", "body", tsx)
+    with pytest.raises(ValueError, match="different content"):
+        register_component("demo", "1.0.0", "body", tsx, mount="scene")
+
+
+def test_install_roundtrip_preserves_mount(tmp_path, monkeypatch):
+    """安装 manifest 携带 mount；installed = registered 恢复后不丢。"""
+    import json
+
+    from md2video.components import install as install_mod
+
+    monkeypatch.setattr(install_mod, "REGISTERED_DIR", tmp_path)
+    tsx = _write_tsx(tmp_path / "src", name="canvas.tsx", body="export default 1;\n")
+    component = register_component("tmp_canvas", "1.0.0", "body", tsx, mount="scene")
+    install_mod.install_component(component)
+
+    manifest = json.loads((tmp_path / "installed.json").read_text(encoding="utf-8"))
+    assert manifest["components"][0]["mount"] == "scene"
+
+    reset_components()
+    assert get_component("tmp_canvas@1.0.0").mount == "scene"
+
+
+def test_legacy_manifest_entry_without_mount_defaults_to_shot(tmp_path, monkeypatch):
+    """旧 installed.json 没有 mount 字段（A8 首批三组件）→ 按 shot 挂载恢复。"""
+    import json
+
+    from md2video.components import install as install_mod
+
+    monkeypatch.setattr(install_mod, "REGISTERED_DIR", tmp_path)
+    tsx = _write_tsx(tmp_path / "src", name="legacy.tsx", body="export default 1;\n")
+    component = register_component("legacy_comp", "1.0.0", "body", tsx)
+    install_mod.install_component(component)
+
+    manifest_path = tmp_path / "installed.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["components"][0]["mount"]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    reset_components()
+    assert get_component("legacy_comp@1.0.0").mount == "shot"
+
+
 def test_unknown_ref_returns_none():
     assert get_component("nope@9.9.9") is None
 
@@ -173,6 +237,7 @@ def test_install_and_uninstall_roundtrip(tmp_path, monkeypatch):
     assert manifest["components"] == [{
         "ref": "tmp_step@1.0.0",
         "kind": "body",
+        "mount": "shot",
         "file": "components/tmp_step/tmp_step_1_0_0.tsx",
         "content_hash": component.content_hash,
     }]

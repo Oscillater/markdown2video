@@ -7,6 +7,13 @@
       "content_hash": "32fb91312b5927f1970fe420b8722b49509d61c49bee61c8961878702dcaf421"
     },
     {
+      "ref": "math_canvas@1.0.0",
+      "kind": "body",
+      "mount": "scene",
+      "file": "components/math_canvas/math_canvas_1_0_0.tsx",
+      "content_hash": "a964f63d408dfad1af8e6c354c7bc75d18d0aed041af9dd33543b06459087c90"
+    },
+    {
       "ref": "step_list@1.0.0",
       "kind": "body",
       "file": "components/step_list/step_list_1_0_0.tsx",

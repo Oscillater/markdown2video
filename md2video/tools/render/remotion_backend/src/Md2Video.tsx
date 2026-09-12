@@ -39,6 +39,10 @@ export type ShotSlot = {
   segments: SegmentSlot[];
   // A8：scene 声明且已注册的表现组件 ref；字段缺省 = 引擎默认渲染
   component?: string;
+  // A8.1 场景画布：按场挂的组件，调度器附带本场全部镜头时间线（含本镜
+  // 之外的镜头）与本镜在时间线里的序号；字段缺省 = 按 shot 挂的组件
+  scene_shots?: {shot_id: string; start: number; end: number; segments: SegmentSlot[]}[];
+  scene_shot_index?: number;
 };
 
 export type StylePayload = {
@@ -436,6 +440,11 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
             (seg) => seg.segment_type !== 'section_header',
           ),
         };
+        // A8.1 场景画布：调度器为按场挂的组件附带全场镜头时间线
+        if (shot.scene_shots) {
+          componentProps.scene_shots = shot.scene_shots;
+          componentProps.scene_shot_index = shot.scene_shot_index ?? 0;
+        }
         return <Comp key={`component:${shot.shot_id}`} {...componentProps} />;
       })}
 
