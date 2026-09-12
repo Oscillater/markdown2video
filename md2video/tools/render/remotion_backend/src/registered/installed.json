@@ -1,0 +1,22 @@
+{
+  "components": [
+    {
+      "ref": "code_display@1.0.0",
+      "kind": "body",
+      "file": "components/code_display/code_display_1_0_0.tsx",
+      "content_hash": "32fb91312b5927f1970fe420b8722b49509d61c49bee61c8961878702dcaf421"
+    },
+    {
+      "ref": "step_list@1.0.0",
+      "kind": "body",
+      "file": "components/step_list/step_list_1_0_0.tsx",
+      "content_hash": "57517743cdc9dfc5d39ab00d3aedff1f594bc2be0e131eb5b9280fc62091df31"
+    },
+    {
+      "ref": "terminal@1.0.0",
+      "kind": "body",
+      "file": "components/terminal/terminal_1_0_0.tsx",
+      "content_hash": "4ff314bcee1d45ba4b3b858f020f998d63e50967efec5b1d244529940409624e"
+    }
+  ]
+}

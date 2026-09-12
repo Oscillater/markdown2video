@@ -448,3 +448,133 @@ def test_pipeline_registers_remotion_backend(tmp_path):
     tool = pipeline.registry.get_tool("render", "remotion")
     assert isinstance(tool, RemotionRenderTool)
     assert tool.tool_type == "render"
+
+
+# ==================== A8 表现组件 ====================
+
+
+def test_schedule_carries_installed_component_ref(tmp_path, monkeypatch):
+    """scene 声明且已安装的组件 → 调度 payload 带 component 字段，无 warning。"""
+    from md2video.components import install as install_mod
+    from md2video.components.registry import (
+        register_component,
+        reset_components,
+    )
+
+    monkeypatch.setattr(install_mod, "REGISTERED_DIR", tmp_path)
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    tsx = src_dir / "tmp_step.tsx"
+    tsx.write_text("export default 1;\n", encoding="utf-8")
+    component = register_component("tmp_step", "1.0.0", "body", tsx)
+    install_mod.install_component(component)
+    try:
+        plan = _plan([_silent_segment("s1")], [{"id": "shot_001", "segment_ids": ["s1"]}])
+        plan.scenes[0].component = "tmp_step@1.0.0"
+        schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+        assert schedule["shots"][0]["component"] == "tmp_step@1.0.0"
+        assert warnings == []
+    finally:
+        reset_components()
+
+
+def test_schedule_degrades_registered_but_not_installed_component(tmp_path):
+    """已注册但未安装（env 开发期加载）→ 不下发 ref + warning，不静默落
+    到 Node 缺省。"""
+    from md2video.components.registry import register_component, reset_components
+
+    tsx = tmp_path / "demo.tsx"
+    tsx.write_text("export default 1;\n", encoding="utf-8")
+    register_component("demo_comp", "1.0.0", "body", tsx)
+    try:
+        plan = _plan([_silent_segment("s1")], [{"id": "shot_001", "segment_ids": ["s1"]}])
+        plan.scenes[0].component = "demo_comp@1.0.0"
+        schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+    finally:
+        reset_components()
+
+    assert "component" not in schedule["shots"][0]
+    assert any("demo_comp@1.0.0" in w and "not installed" in w for w in warnings)
+
+
+def test_schedule_degrades_unknown_component_with_warning():
+    """未知组件 id → payload 不带 component 字段（Node 走默认渲染）+ warning。"""
+    plan = _plan([_silent_segment("s1")], [{"id": "shot_001", "segment_ids": ["s1"]}])
+    plan.scenes[0].component = "ghost@1.0.0"
+
+    schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+    assert "component" not in schedule["shots"][0]
+    assert any("ghost@1.0.0" in w and "not registered" in w for w in warnings)
+
+
+def test_schedule_omits_component_for_plain_scenes():
+    """无组件 scene 的 payload 与既有形状完全一致（字段缺省，不改 props）。"""
+    plan = _plan([_silent_segment("s1")], [{"id": "shot_001", "segment_ids": ["s1"]}])
+    schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+    assert "component" not in schedule["shots"][0]
+    assert warnings == []
+
+
+def _pipeline_with_planner_stub(tmp_path: Path) -> Pipeline:
+    with patch.object(Pipeline, "_create_planner"):
+        return Pipeline(artifacts_dir=tmp_path, tool_config=ToolConfig())
+
+
+def test_pipeline_component_validation_fails_fast_on_wrong_backend(tmp_path):
+    """组件声明在 manim scene 上 = 显式选择无法满足 → fail fast，不静默丢弃。"""
+    plan = _plan([_silent_segment("s1")], [{"id": "shot_001", "segment_ids": ["s1"]}])
+    plan.scenes[0].component = "step_list@1.0.0"  # 未指定 render_backend → manim
+    pipeline = _pipeline_with_planner_stub(tmp_path)
+
+    with pytest.raises(ValueError, match="require remotion"):
+        pipeline._validate_plan_components(plan)
+
+
+def test_pipeline_component_validation_fails_fast_on_malformed_ref(tmp_path):
+    plan = _plan([_silent_segment("s1")], [{"id": "shot_001", "segment_ids": ["s1"]}])
+    plan.scenes[0].component = "step_list"  # 缺 @version
+    plan.scenes[0].render_backend = "remotion"
+    pipeline = _pipeline_with_planner_stub(tmp_path)
+
+    with pytest.raises(ValueError, match="Invalid component ref"):
+        pipeline._validate_plan_components(plan)
+
+
+def test_pipeline_component_validation_accepts_remotion_scene_with_unknown_id(tmp_path):
+    """格式合法 + remotion 后端 → 校验通过；未注册 id 的降级在渲染层 + warning。"""
+    plan = _plan([_silent_segment("s1")], [{"id": "shot_001", "segment_ids": ["s1"]}])
+    plan.scenes[0].component = "not_yet_registered@1.0.0"
+    plan.scenes[0].render_backend = "remotion"
+    pipeline = _pipeline_with_planner_stub(tmp_path)
+
+    pipeline._validate_plan_components(plan)
+
+
+def test_pipeline_loads_component_modules_on_init(tmp_path, monkeypatch):
+    """env MD2VIDEO_COMPONENTS 指向注册模块 → Pipeline 启动时显式加载；
+    模块不存在 → 启动即 fail fast，不带病开渲。"""
+    from md2video.components.registry import COMPONENTS_ENV, get_component
+
+    (tmp_path / "demo.tsx").write_text("export default 1;\n", encoding="utf-8")
+    (tmp_path / "cmp_reg_pipeline.py").write_text(
+        "from md2video.components.registry import register_component\n"
+        "register_component('demo', '1.0.0', 'body', 'demo.tsx')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv(COMPONENTS_ENV, "cmp_reg_pipeline")
+
+    with patch.object(Pipeline, "_create_planner"):
+        Pipeline(artifacts_dir=tmp_path / "artifacts", tool_config=ToolConfig())
+    assert get_component("demo@1.0.0") is not None
+
+    from md2video.components.registry import reset_components
+    reset_components()
+
+    monkeypatch.setenv(COMPONENTS_ENV, "no_such_component_module_xyz")
+    with patch.object(Pipeline, "_create_planner"):
+        with pytest.raises(ModuleNotFoundError):
+            Pipeline(artifacts_dir=tmp_path / "artifacts", tool_config=ToolConfig())

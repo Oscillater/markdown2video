@@ -219,3 +219,31 @@ def test_mixed_manim_remotion_plan_produces_one_video(tmp_path):
     )
     assert raw_result["status"] == "completed"
     assert raw_result["artifact_index"]["render_provider"] == "manim+remotion"
+
+
+def test_check_component_reverifies_installed_step_list(tmp_path):
+    """A8 验收入口端到端（已安装组件走复核路径）：staged 安装 → fixture
+    双跑渲染 → timeline 逐字节 + framemd5 逐帧一致 → 黄金帧逐字节比对。
+    另做像素断言：组件画面确实存在（自带深板岩底 #101418 ≠ 引擎纯黑底）。"""
+    from md2video.check_component import verify_component
+
+    goldens = verify_component(
+        "md2video.components.sources.step_list.register", tmp_path, timeout=600,
+    )
+    assert len(goldens) == 4 and all(g.is_file() for g in goldens)
+
+    component_bg = (16, 20, 24)  # step_list 自带底色 #101418
+    pixel = Image.open(goldens[-1]).convert("RGB").getpixel((WIDTH // 2, 10))
+    assert max(abs(c - t) for c, t in zip(pixel, component_bg)) <= 6, pixel
+
+
+def test_check_component_reverifies_code_display_and_terminal(tmp_path):
+    """A8 首批另外两个组件的验收入口复核路径：双跑一致 + 黄金帧逐字节比对。"""
+    from md2video.check_component import verify_component
+
+    for module in (
+        "md2video.components.sources.code_display.register",
+        "md2video.components.sources.terminal.register",
+    ):
+        goldens = verify_component(module, tmp_path, timeout=600)
+        assert len(goldens) == 4 and all(g.is_file() for g in goldens)

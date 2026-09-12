@@ -8,6 +8,8 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from 'remotion';
+import {REGISTERED_COMPONENTS} from './registered/index';
+import type {ComponentProps} from './registered/types';
 
 // md2video Remotion 后端 composition（A6 后半）。
 // 输入：Python 调度器（remotion_schedule.py）产出的确定性 schedule props。
@@ -35,6 +37,8 @@ export type ShotSlot = {
   regions: Record<string, [number, number, number, number]>;
   has_image_region: boolean;
   segments: SegmentSlot[];
+  // A8：scene 声明且已注册的表现组件 ref；字段缺省 = 引擎默认渲染
+  component?: string;
 };
 
 export type StylePayload = {
@@ -138,6 +142,17 @@ function dismissStyle(
     extrapolateRight: 'clamp',
   });
   return {opacity};
+}
+
+// A8：声明且已安装的 shot 由组件接管正文画面；未安装/未声明的 shot
+// 返回 null，走引擎默认渲染（缺省回退）。
+function resolveComponent(
+  shot: ShotSlot,
+): React.ComponentType<ComponentProps> | null {
+  if (!shot.component) {
+    return null;
+  }
+  return REGISTERED_COMPONENTS[shot.component] ?? null;
 }
 
 const OrbitDots: React.FC<{style: StylePayload}> = ({style}) => {
@@ -308,9 +323,12 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
         </div>
       ) : null}
 
-      {/* 正文：content/appendix 逐段按可见窗口渲染 */}
-      {schedule.shots.map((shot) =>
-        shot.segments
+      {/* 正文：content/appendix 逐段按可见窗口渲染（组件接管的 shot 跳过） */}
+      {schedule.shots.map((shot) => {
+        if (resolveComponent(shot)) {
+          return [];
+        }
+        return shot.segments
           .filter((seg) => seg.segment_type !== 'section_header')
           .map((seg) => {
             if (now < seg.start || now > seg.end) {
@@ -349,8 +367,8 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
                 />
               </div>
             );
-          }),
-      )}
+          });
+      })}
 
       {/* section header 堆叠字幕 */}
       {(() => {
@@ -398,6 +416,28 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
           </div>
         );
       })()}
+
+      {/* A8 表现组件：按 shot 窗口挂载。绝对时间语义（无 Sequence 包装，
+          组件内 useCurrentFrame 即绝对帧）；音频绑定留在下方 wrapper，
+          组件碰不到时间与音频。 */}
+      {schedule.shots.map((shot) => {
+        const Comp = resolveComponent(shot);
+        if (!Comp || now < shot.start || now > shot.end) {
+          return null;
+        }
+        const componentProps: ComponentProps = {
+          component: shot.component!,
+          shot_id: shot.shot_id,
+          scene_id: shot.scene_id,
+          width: schedule.width,
+          height: schedule.height,
+          fps,
+          segments: shot.segments.filter(
+            (seg) => seg.segment_type !== 'section_header',
+          ),
+        };
+        return <Comp key={`component:${shot.shot_id}`} {...componentProps} />;
+      })}
 
       {/* 音频绑定：每段一个 Audio 序列，起点 = 调度窗口起点 */}
       {schedule.shots.map((shot) =>

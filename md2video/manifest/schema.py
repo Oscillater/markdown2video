@@ -54,6 +54,9 @@ class ScenePlan(BaseModel):
     # A6 按 scene 多后端：空 = 用 ToolConfig.render_backend（现有行为）。
     # 相邻同后端 scene 组成极大组，按组切片渲染后在管线里拼接与合并 timeline。
     render_backend: str = ""
+    # A8 表现组件：空 = 引擎默认渲染（layout 模板路径）；否则为 `id@version`
+    # 完整引用，组件接管该 scene 的正文画面（自带视觉，仅 remotion 后端可消费）。
+    component: str = ""
     shots: List[ShotPlan] = Field(default_factory=list)
     section_context: str = ""
     # 向后兼容: 旧 JSON 含 segment_ids 时自动迁移为单 Shot

@@ -167,6 +167,8 @@ def build_remotion_schedule(
 ) -> tuple[dict[str, Any], list[str]]:
     """推导确定性调度（同 manim construct 时序语义），返回 (schedule, warnings)。"""
     style, warnings = style_payload(pack)
+    scene_components, component_warnings = _scene_component_payloads(plan)
+    warnings.extend(component_warnings)
     audio_by_segment = _audio_facts(assets)
 
     units_all = list(iter_shot_render_units(plan, include_title_segments=True))
@@ -203,6 +205,12 @@ def build_remotion_schedule(
                 "has_image_region": payload["has_image_region"],
                 "segments": [],
             }
+            # A8：scene 声明了已注册的表现组件时随 payload 下发（Node 侧按
+            # ref 查组件，查不到走引擎默认渲染）；字段缺省 = 无组件，不改动
+            # 无组件 run 的既有 props。
+            component_ref = scene_components.get(unit.scene_id, "")
+            if component_ref:
+                entry["component"] = component_ref
             shots_by_id[unit.shot_id] = entry
             return entry
         entry["start"] = min(entry["start"], start)
@@ -410,6 +418,34 @@ def build_remotion_schedule(
         "timeline": timeline_facts,
     }
     return schedule, warnings
+
+
+def _scene_component_payloads(plan: PlanManifest) -> tuple[dict[str, str], list[str]]:
+    """scene_id -> 组件 ref（A8）。未注册 / 已注册但未安装进 Remotion 工程
+    的组件都在这里降级 + warning：调度 payload 不带 component 字段，Node
+    侧走引擎默认渲染（与 pack 未知名同通道，不做静默降级）。"""
+    from md2video.components.registry import get_component, is_installed
+
+    refs: dict[str, str] = {}
+    warnings: list[str] = []
+    for scene in plan.scenes:
+        if not scene.component:
+            continue
+        if get_component(scene.component) is None:
+            warnings.append(
+                f"Component {scene.component!r} is not registered "
+                f"(scene {scene.id}); falling back to engine default rendering"
+            )
+            continue
+        if not is_installed(scene.component):
+            warnings.append(
+                f"Component {scene.component!r} is registered but not installed "
+                f"into the Remotion backend (scene {scene.id}); falling back to "
+                "engine default rendering"
+            )
+            continue
+        refs[scene.id] = scene.component
+    return refs, warnings
 
 
 def _public_marker(entry: dict[str, Any]) -> dict[str, Any]:

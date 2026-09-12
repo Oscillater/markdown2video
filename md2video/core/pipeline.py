@@ -22,6 +22,7 @@ from md2video.config import (
     load_planner_config,
     load_tool_config,
 )
+from md2video.components.registry import load_component_modules
 from md2video.core.multi_backend import RenderGroup, plan_render_groups
 from md2video.core.planner.rule_planner import (
     RulePlanner,
@@ -71,6 +72,9 @@ class Pipeline:
         # 显式加载外部 layout 约束模块（env MD2VIDEO_LAYOUT_CONSTRAINTS）；
         # 导入/注册失败在这里 fail fast，不带病开渲。
         load_constraint_modules()
+        # 显式加载表现组件注册模块（env MD2VIDEO_COMPONENTS，A8）；
+        # 导入/注册失败在这里 fail fast，不带病开渲。
+        load_component_modules()
         self.registry = ToolRegistry()
         self._register_default_tools()
         # 本次 run 的目录与 id（_open_run_dir 赋值）；产物只增不删
@@ -196,6 +200,7 @@ class Pipeline:
     ) -> Path:
         self._validate_plan_layouts(plan)
         self._validate_plan_visual_types(plan)
+        self._validate_plan_components(plan)
         plan_path = self._write_plan_manifest(plan, run_dir)
 
         print("[2/5] Preparing execution assets...")
@@ -607,6 +612,34 @@ class Pipeline:
                 )
             except ValueError as exc:
                 problems.append(f"Invalid layout for scene {scene.id}: {exc}")
+        if problems:
+            raise ValueError(" | ".join(problems))
+
+    def _validate_plan_components(self, plan: PlanManifest) -> None:
+        """A8 组件引用裁判：格式错误与跨后端使用 fail fast；未知 id 不在
+        这里挂——留给渲染层降级 + warning（与 pack 未知名同通道）。"""
+        from md2video.components.registry import (
+            COMPONENT_CAPABLE_BACKENDS,
+            is_valid_component_ref,
+        )
+
+        problems: list[str] = []
+        for scene in plan.scenes:
+            if not scene.component:
+                continue
+            if not is_valid_component_ref(scene.component):
+                problems.append(
+                    f"Invalid component ref for scene {scene.id}: "
+                    f"{scene.component!r} (expected 'id@MAJOR.MINOR.PATCH')"
+                )
+                continue
+            backend = scene.render_backend or self.tool_config.render_backend
+            if backend not in COMPONENT_CAPABLE_BACKENDS:
+                problems.append(
+                    f"Scene {scene.id} declares component {scene.component!r} but renders "
+                    f"on backend {backend!r}; presentation components require "
+                    f"{'/'.join(COMPONENT_CAPABLE_BACKENDS)}"
+                )
         if problems:
             raise ValueError(" | ".join(problems))
 
