@@ -186,14 +186,29 @@
           "segment_ids": [
             "title_main_001",
             "title_sub_001"
+          ],
+          "cues": [
+            {
+              "id": "cue_music_calm_start",
+              "cue_type": "marker_music",
+              "kind": "start",
+              "name": "calm",
+              "position": "start"
+            }
           ]
         }
       ]
     },
     {
       "id": "scene_002",
-      "visual_type": "text_only",
+      "visual_type": "gen_image",
+      "visual_params": {
+        "prompt": "开场概念图：深蓝夜色中一个发光的圆与环绕的轨道节点，数学概念氛围插画",
+        "style": "orbit",
+        "palette": "ink"
+      },
       "render_backend": "remotion",
+      "layout_type": "full_bleed_image_caption_bottom",
       "section_context": "开场",
       "shots": [
         {
@@ -329,8 +344,14 @@
     },
     {
       "id": "scene_011",
-      "visual_type": "text_only",
+      "visual_type": "gen_image",
+      "visual_params": {
+        "prompt": "收束插画：平静的声波曲线渐渐汇成一条圆融的闭合曲线，深夜色调",
+        "style": "waves",
+        "palette": "ink"
+      },
       "render_backend": "remotion",
+      "layout_type": "full_bleed_image_caption_bottom",
       "section_context": "结尾",
       "shots": [
         {
@@ -342,5 +363,10 @@
         }
       ]
     }
-  ]
+  ],
+  "media_declarations": {
+    "music": {
+      "calm": "assets/bgm_calm_pad.wav"
+    }
+  }
 }

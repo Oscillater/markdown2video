@@ -308,8 +308,8 @@ showcase 首片（2026-09-13）：`evals/trig_circle.md` 经 skill 产 plan 出�
 
 - [x] **代码生图 tool**：`GenImageTool`（provider="procedural"，visual_type `gen_image`）——PIL 确定性绘制四种母题（orbit/layers/waves/blocks），prompt 哈希作种子（跨运行逐字节一致），三套深底调色板，图内不渲染文字（文字归字幕与解说）；ToolCache 缓存（generator 版本号进 cache_key，改绘制即失效）；style/palette 拼错 fail fast 走既有「工具失败→warning+降级」通道；管线默认注册 + 优先级表 `gen_image: ["procedural"]`。AI 生图（text2image）留同一 visual_type 口子。验收：✅（2026-09-13）14 项单测（确定性逐字节/契约字段/缓存命中/校验 fail-fast/注册接线），四母题 480x854 样本目检通过；全量 `643 passed, 6 skipped`。
 - [x] **烧录字幕**：timeline text cue → ASS（libass）→ 装配器尾部叠加（字幕永不被图片遮挡）；定位为**文字的唯一载体**。关键事实与决策：①白名单 content/appendix（与 bundle SRT 一致），标题/header 不进字幕轨；②只上**真被朗读的段**（音频资产事实优先，缺位回退 plan audio_request）；③实测当前 libass（0.17.4 directwrite）对无空格中文长句**不断行、直接裁边**→构建期按像素宽度手动折行（行首避标点）；④任何字幕问题只降级不阻断成片；⑤`--subtitles` 旗标默认关（不破坏既有产物逐帧一致性），knowledge pack 接管样式后议默认开。附带修复：`math_canvas@1.0.1` 移除画布解说标签（与字幕物理重叠，字幕上位后标签退场）、水印挪顶部，check-component 重验收 4 张黄金帧。验收：✅（2026-09-13）10 项单测（含真 ffmpeg 像素级字幕验证）+ trig_circle 重渲 14 条字幕目检（三场型：画布/组件/文字）；抓到并修复折行清空 bug（11 字句字幕变空气）；全量 `653 passed, 6 skipped`。
-- [ ] **BGM 接线 + skill 套路升级**：marker/BGM infra 现成、两支成片从未用上——skill 结构套路补三件事：按段落配图（写生图 prompt 或素材词）、BGM 段落、字幕观感自查项。
-- [ ] **验收片**：出一 条真正的知识区格式片——解说 + 程序化插画 + 字幕 + BGM 四样齐，对着「陌生人刷到不划走」读片。
+- [x] **BGM 接线 + skill 套路升级**：marker/BGM infra 现成——skill 结构套路补三件事：按段落配图（`gen_image` 的 prompt/style/palette 写法）、BGM 段落（declaration + `music_start` cue）、字幕观感自查。踩坑写回：**plan 手写 cue 必须带 `id`**（闸门与装配器靠它对账，漏了报 `Timeline missing marker cue time`）。BGM 资产本身也走代码产：`evals/assets/make_bgm.py` 合成 20s 无缝循环垫乐（颤音周期整除循环时长，相位连续）。
+- [x] **验收片**：`artifacts/trig_circle_kf.mp4`（65.7s）——**解说 + 程序化插画 + 字幕 + BGM 四样齐**的知识区格式片：钩子/结尾两场 `gen_image` 满屏插图（orbit/waves，Ken Burns），三场 `math_canvas` 演算，一场 `step_list`，14 条烧录字幕，BGM 从标题后铺到片尾（自动压低成垫）。渲染中抓到并修复：`gen_image` 曾返回相对路径，`--plan` 场景装配器按 plan 目录解析导致图片被静默丢弃——工具改返回绝对路径（TTS 先例）+ 装配器相对路径解析加 cwd 回退 + 缺图从静默丢弃改为显式告警。
 
 推迟观察（不在本批动）：**文字层策略**——字幕上位后引擎正文大字卡与之重复，字幕上线抽帧看观感再定（正文卡退场 or 仅无图段保留）；**标题卡可见性**（正文场反复出现标题卡）同批核查。
 

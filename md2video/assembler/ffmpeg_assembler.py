@@ -569,9 +569,17 @@ class FFmpegAssembler:
             for img in image_entries:
                 src = img["src"]
                 if not Path(src).is_absolute():
-                    img["src"] = str((self.md_dir / src).resolve())
+                    # 相对路径按 md_dir 解析；工具产物也可能相对 cwd，依次回退
+                    candidates = [self.md_dir / src, Path.cwd() / src]
+                    resolved = next(
+                        (c.resolve() for c in candidates if c.exists()),
+                        (self.md_dir / src).resolve(),
+                    )
+                    img["src"] = str(resolved)
                 if Path(img["src"]).exists():
                     prepared_images.append(img)
+                else:
+                    print(f"  Image warning: src missing, overlay skipped: {img['src']}")
 
             # per-shot visual 按 scene 的 LayoutTemplate 摆放；无 layout 的条目保持旧行为
             attach_image_layout_regions(prepared_images, video_width, video_height)

@@ -1,6 +1,8 @@
 # 口播 skill：技术知识口播
 
-把一篇技术向知识 markdown 变成一份 `plan.json`，跑出一条**至少能看、不划走**的竖屏片。
+把一篇技术向知识 markdown 变成一份 `plan.json`，跑出一条**知识区格式的成片：画面（图/图示/演算）+ 烧录字幕 + 解说 + BGM**，做到不划走。
+
+**格式铁律**：图片是画面的主角，字幕是文字的唯一载体。不要产出"黑底文字卡"——每个叙事段落都要问一句"这一段画面上有什么？"（插图 / 演算 / 代码 / 终端，总得有一样）。
 
 ## 角色分工
 
@@ -66,6 +68,36 @@
 - 代码示例选"读出来也像人话"的内容；
 - "显示文本 ≠ 朗读文本"的诉求先记进交付说明，不要硬凑。
 
+## 配图：gen_image 程序化插画
+
+旁白段落没有现成演法（列表/代码/终端/演算）可用时，配一张程序化插画当画面主角：scene 写 `"visual_type": "gen_image"` + `visual_params`，图由代码确定性生成（同 prompt 永远同一张图，可复现）：
+
+```json
+{"id": "scene_002", "visual_type": "gen_image", "render_backend": "remotion",
+ "layout_type": "full_bleed_image_caption_bottom",
+ "visual_params": {"prompt": "开场概念图：深蓝夜色里的圆与轨道", "style": "orbit", "palette": "ink"},
+ "shots": [{"id": "shot_002", "segment_ids": ["content_001"]}]}
+```
+
+- `prompt`（必填）：用画面语言描述这张图该传达什么（具体名词 + 氛围），它决定构图的随机种子；
+- `style`：`orbit`（概念/系统）| `layers`（分层/架构）| `waves`（过程/信号）| `blocks`（结构/数据）——按段落语义挑，拼错会降级 + warning；
+- `palette`：`ink` | `moss` | `dusk`（深底色系，可省略）；
+- 图内**没有文字**——文字归字幕，别指望图上出现关键词。
+
+## BGM
+
+`media_declarations` 声明音乐文件，开头 shot 挂一个 `music_start` cue，BGM 从那里一直铺到片尾（音量自动压低成背景垫）：
+
+```json
+"media_declarations": {"music": {"calm": "assets/bgm_calm_pad.wav"}}
+```
+
+```json
+"cues": [{"id": "cue_music_calm_start", "cue_type": "marker_music", "kind": "start", "name": "calm", "position": "start"}]
+```
+
+**cue 必须带 `id`**（时间闸门与装配器靠它对账，漏了会报 `Timeline missing marker cue time`）。路径相对 plan 文件所在目录。全片一首垫乐即可；不要在段落间频繁切歌。
+
 ## plan 怎么写
 
 骨架：
@@ -102,9 +134,10 @@
 ## 跑管线
 
 ```text
-python -m md2video --plan <plan.json> -o <out.mp4>
+python -m md2video --plan <plan.json> -o <out.mp4> --subtitles
 ```
 
+- **`--subtitles` 知识区片必带**：把朗读段字幕烧进画面（字幕 = 文字的唯一载体；标题与 section header 不进字幕轨）。
 - 配音默认 edge-tts（zh-CN-YunxiNeural），需要网络；可在 segment 上用 `audio_request` 调 voice/speed。
 - 全部产物在 `artifacts/runs/<run_id>/`：`result.json`（warnings + artifact index）、`manifest_viewer.html`（人读的检查页）、`timeline.json`（时间事实）、`plan.json`、`execution-assets.json`。
 
@@ -120,7 +153,8 @@ python -m md2video --plan <plan.json> -o <out.mp4>
 2. **viewer**：shot 数量、每段时长、cue 落位是否合预期。
 3. **抽帧**：对组件 shot 抽 1~2 帧，确认画面挂上了（终端黑窗 / 步骤列表 / 代码面板），正文没掉回默认渲染：
    `ffmpeg -y -ss <秒> -i <成片> -frames:v 1 frame.png`
-4. **听感**（需要人）：命令句、代码句让用户听一遍，别扭的改写文本。
+   知识区片再抽三帧确认格式四样：插图场景真的有图、字幕在底部跟着解说走、没有字幕与画面文字打架。
+4. **听感**（需要人）：命令句、代码句让用户听一遍，别扭的改写文本；BGM 音量以"注意不到它在放，关掉觉得空"为准。
 
 ## 缺组件怎么办
 

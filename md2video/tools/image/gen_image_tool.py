@@ -118,15 +118,7 @@ class GenImageTool:
         meta = self._cache.read_json("image", cache_key + "_meta")
         img_path = self._cache.cache_path("image", cache_key, ext="png")
         if meta and img_path.exists():
-            return {
-                "path": str(img_path),
-                "width": meta["width"],
-                "height": meta["height"],
-                "source": "procedural",
-                "style": style,
-                "cache_key": cache_key,
-                "duration": 0.0,
-            }
+            return self._visual_result(img_path, cache_key, style, meta)
 
         image = _draw(style, PALETTES[palette], seed, width, height)
         buffer = io.BytesIO()
@@ -139,10 +131,20 @@ class GenImageTool:
             "palette": palette,
         })
 
+        return self._visual_result(img_path, cache_key, style, {
+            "width": width, "height": height,
+        })
+
+    @staticmethod
+    def _visual_result(
+        img_path: Path, cache_key: str, style: str, meta: dict[str, Any],
+    ) -> Dict[str, Any]:
+        # 绝对路径：装配器在 --plan 场景用 plan 所在目录解析相对路径，
+        # 工具产物的落盘位置与 plan 目录无关，必须自带完整定位（TTS 先例）
         return {
-            "path": str(img_path),
-            "width": width,
-            "height": height,
+            "path": str(Path(img_path).resolve()),
+            "width": meta["width"],
+            "height": meta["height"],
             "source": "procedural",
             "style": style,
             "cache_key": cache_key,

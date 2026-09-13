@@ -89,6 +89,8 @@ def test_visual_output_contract(tmp_path):
     assert visual["duration"] == 0.0
     assert visual["cache_key"]
     assert Path(visual["path"]).is_file()
+    # 绝对路径：装配器在 --plan 场景用 plan 目录解析相对路径，工具产物必须自带完整定位
+    assert Path(visual["path"]).is_absolute()
     with Image.open(visual["path"]) as image:
         assert image.size == (visual["width"], visual["height"])
         # 默认 9:16 双倍分辨率
