@@ -65,7 +65,7 @@ future harness preview/review/partial rerun
 - 近期主线已完成（2026-09-12）：~~「组件注册 + 口播 skill」~~ ✅——场景风格由注册组件承载（plan 引用 `id@version`），知识口播 craft 由 skill 承载（`skills/voiceover/SKILL.md`，agent 读结构化 markdown、经 `--plan` 直产 plan）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
-- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅、~~口播 skill v1~~ ✅（首片 71s，见 B2）、~~A8.1 场景画布~~ ✅（2026-09-13，`math_canvas@1.0.0` 入库 + showcase 首片 65.7s）。A7 维持挂起。**当前批次：成片质量冲刺（见「下一批」节）——P0 字幕/knowledge pack/标题核查 → P1 math_canvas 1.1.0 + 拆片 → P2 MCP/VLM 读片 → P3 配套。**
+- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅、~~口播 skill v1~~ ✅（首片 71s，见 B2）、~~A8.1 场景画布~~ ✅（2026-09-13，`math_canvas@1.0.0` 入库 + showcase 首片 65.7s）。A7 维持挂起。**当前批次：知识区格式冲刺（见「下一批」节，2026-09-13 owner 定调「画面+字幕+解说+BGM」格式）——P0 代码生图 tool/烧录字幕/BGM+skill 套路/验收片 → P1 math_canvas 1.1.0 + 拆知识区对标片 → P2 MCP/VLM 读片 → P3 配套。**
 
 ## Phase 1-4: 基础架构 → 现有工具重构 - 已完成
 
@@ -298,34 +298,40 @@ showcase 首片（2026-09-13）：`evals/trig_circle.md` 经 skill 产 plan 出�
 
 - [ ] 外部结构落地第二套 pack，验证"社区包与内置包零特权差别"。
 
-## 下一批：成片质量冲刺（2026-09-13 定调）
+## 下一批：成片质量冲刺——知识区格式（2026-09-13 定调，同日修订）
 
-背景：架构收官（两条零 warning 成片：git_internals 71s、trig_circle 65.7s），但**成片质量距离"能发出去"差距很大**——画布是死的、无字幕、正文 15px、无 BGM/配图、标题卡在正文场反复出现。竞品调研（2026-09-13：MoneyPrinterTurbo ~56K★、ShortGPT、markdown_video、TheoremExplainAgent）确认了缺口项都是竞品验证过的标配或已被解决的工程问题。原则：不再动架构；质量缺口分三类走既有通道——**引擎/pack 一改全片受益，组件货架逐个长，skill 套路用现成 infra**。
+背景：架构收官（两条零 warning 成片：git_internals 71s、trig_circle 65.7s），但**成片质量距离"能发出去"差距很大**。owner 读片定调（2026-09-13）：**知识区口播片的格式 = 画面（图/图示/演算）+ 烧录字幕 + 解说 + BGM**——图片是画面主角，字幕是文字的唯一载体；我们两条片本质是黑底文字卡，加字幕、调字号都是润色，**主线是换格式，不是润色**。
 
-### P0 快赢（引擎/装配层，一改全片受益）
+架构结论（已核）：**本批零架构改动**。图片在契约里是 execution-assets（scene `visual_type`+`visual_params` → 视觉工具产图 → 装配层按 timeline 叠加，Ken Burns 与图文模板现成，2026-09-08 带图+BGM 已真跑通）；BGM 走 marker；演算画面走组件货架。**代码生图与 AI 生图地位相同——都是注册一个视觉 tool**，产 execution-assets、不碰 timeline。唯一真正的新代码是烧录字幕（装配层叠加，四本账与闸门不动）。竞品调研（MoneyPrinterTurbo ~56K★、ShortGPT、markdown_video、TheoremExplainAgent）确认缺口项均为竞品验证过的标配；我们的差异化 = 确定性编译器 + 组件货架（"LLM 现写渲染代码"路线的反面）。
 
-- [ ] **烧录字幕**：timeline text cue → assembler 逐段叠加（样式 v1 从简：位置/字号/描边，具体归 pack 后续接管）。口播片标配（MoneyPrinterTurbo 默认行为，其时间戳对齐思路与我们"音频事实"同源）；字幕轨现成，纯装配层工作。
-- [ ] **knowledge pack 启动**（B2 触发条件已满足，转正）：字号梯度（正文 15px → 18~20px 一档）、口播静默节奏。纯 ThemeTokens 数据，两个 Realizer 已在消费 token。
-- [ ] **标题卡可见性语义核查**：引擎语义 = 标题全程可见（镜像 manim），竖屏口播片里正文场反复出现标题卡，观感存疑——先抽帧评估，确认难看再定改法（标题退场时机归调度语义，需小改）。
+### P0 知识区格式（本轮施工）
 
-### P1 主线（货架生长，把架构优势兑现成观感）
+- [ ] **代码生图 tool**：注册一个程序化插画视觉工具（PIL/几何绘图产 PNG → execution-assets，带 provider/cache_key，失败降级 + warning、沿用既有严格本地策略）；scene 引用方式与 stock_image 完全同构。AI 生图留同一口子（provider 待定，见 P3）。
+- [ ] **烧录字幕**：timeline text cue → assembler 逐段叠加；定位为**文字的唯一载体**（不只是加字幕）。样式 v1 从简（位置/字号/描边），后续归 knowledge pack 接管。
+- [ ] **BGM 接线 + skill 套路升级**：marker/BGM infra 现成、两支成片从未用上——skill 结构套路补三件事：按段落配图（写生图 prompt 或素材词）、BGM 段落、字幕观感自查项。
+- [ ] **验收片**：出一 条真正的知识区格式片——解说 + 程序化插画 + 字幕 + BGM 四样齐，对着「陌生人刷到不划走」读片。
+
+推迟观察（不在本批动）：**文字层策略**——字幕上位后引擎正文大字卡与之重复，字幕上线抽帧看观感再定（正文卡退场 or 仅无图段保留）；**标题卡可见性**（正文场反复出现标题卡）同批核查。
+
+### P1 主线（货架生长）
 
 - [ ] **math_canvas@1.1.0**：动点沿圆匀速转、半径线随点扫、曲线逐点描到动点当前位置（"波峰出现"与点转到位同步）；check-component 重验收入库（bump 版本，黄金帧重存档），trig_circle plan 改 ref 重渲读片对比。首片读片已确认：无动点是最大单点缺陷。
-- [ ] **拆 3~5 支对标片**（3b1b 单位圆/三角一支必拆 + 代码讲解 + 知识口播各一）：逐镜头拆演法 → 逐项问货架能否承接 → 产出组件候选清单（演法/原型草图/优先级），作为后续组件菜单。timebox：不发散到生成式视频赛道。
+- [ ] **拆 3~5 支知识区对标片**：专拆「**图-字-解**」节奏——每段解说配什么图、图上画什么、字幕怎么走（3b1b 单位圆/三角一支必拆）；演法逐项问货架能否承接，产出组件候选清单。timebox：不发散到生成式视频赛道。
 
 ### P2 差异化（AI 原生卖点，低成本高故事性）
 
 - [ ] **MCP 工具化**：plan 校验 / check_timeline / check_component 已是纯函数 CLI，包成 MCP server 让任意 coding agent 直调。markdown_video 的 MCP server（10 工具）验证了此路产品价值；"agent 自带验收工具箱"强化事前闸门故事。
 - [ ] **VLM 读片助手**：读片迭代先让视觉模型筛帧（错位/溢出/观感问题），人只看标记帧。借 TEA eval_suite 的多模态评审思路——只借评估，不借生成。
 
-### P3 配套（质感与门面）
+### P3 配套（排队）
 
-- [ ] **skill 套路升级**：BGM 段落与配图段落进结构套路——marker/BGM/stock_image infra 全部现成，两支成片从未用上，纯 skill 文档工作。
+- [ ] **AI 生图 provider**：text2image 注册为视觉 tool（同 P0 代码生图同一口子，产 execution-assets 不碰 timeline）；缓存与降级照抄既有模式。等 owner 手里有 key 的 provider（即梦/火山、通义万相、智谱、OpenAI 均可）。
+- [ ] **knowledge pack 重定义**：不再是"把文字卡调大"，而是「知识区观感」pack——字幕样式、图片处理（边距/柔影/圆角）、口播节奏；纯 ThemeTokens 数据。
 - [ ] **Kokoro 本地 TTS 备选 provider**：离线免费（TEA 在用），工具注册表已支持多 provider，加实现即可。
-- [ ] **README 定位重写**：确定性视频编译器 / agent 可操作 / 组件生态，正面对着"LLM 现写渲染代码不稳定"的赛道痛点讲；宣传片素材 = trig_circle 画布累积段。
+- [ ] **README 定位重写**：确定性视频编译器 / agent 可操作 / 组件生态，正面对着"LLM 现写渲染代码不稳定"的赛道痛点讲；宣传片素材 = trig_circle 画布累积段 + 知识区格式验收片。
 - [ ] 竞品调研落盘 `docs/competitive-research.md`（2026-09-13 调研已完成：四赛道/五问对比/借鉴清单，待归档）。
 
-验收口径：下一批做完，一条新片要做到"陌生人刷到不划走"——有字幕、字看得清、画面有动效、有 BGM。每项独立可验收，顺序即优先级。
+验收口径：本批做完出一条「解说 + 程序化插画 + 字幕 + BGM」四样齐的知识区格式片，做到"陌生人刷到不划走"。每项独立可验收，顺序即优先级。
 
 ## 里程碑与依赖
 
