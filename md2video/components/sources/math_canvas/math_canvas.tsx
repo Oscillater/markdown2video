@@ -74,6 +74,25 @@ function curvePath(
   return points.join(' ');
 }
 
+// 竖排余弦：从 (cx, topY) 垂直向下，横向摆动 = cos(s·2π)·amplitude。
+// 余弦是点的横坐标，只有竖排波头的横偏移才与动点的横偏移严格相等——
+// 连接两者的引导线是垂直的，构造无需观众做任何心理旋转。
+function verticalCosPath(
+  cx: number,
+  topY: number,
+  length: number,
+  amplitude: number,
+): string {
+  const points: string[] = [];
+  for (let i = 0; i <= CURVE_SAMPLES; i++) {
+    const t = i / CURVE_SAMPLES;
+    const x = cx + Math.cos(t * Math.PI * 2) * amplitude;
+    const y = topY + t * length;
+    points.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  return points.join(' ');
+}
+
 const MathCanvas: React.FC<ComponentProps> = ({
   scene_shots,
   visual_params,
@@ -180,81 +199,88 @@ const MathCanvas: React.FC<ComponentProps> = ({
     }
     const sweep = clamp01((tActive - lapStart) / Math.max(0.001, lapEnd - lapStart));
     const color = LAYER_COLORS[(j + 1) % LAYER_COLORS.length];
-    const phase = wave.kind === 'sine' ? 0 : Math.PI / 2;
     // 聚焦降杂：已描满的历史波层降到低亮度，当前正在描的波层满亮度
     const dimmed = sweep >= 1;
-    layerNodes.push(
-      <path
-        key={`wave${j}`}
-        d={curvePath(cx, cy, span, amplitude, phase)}
-        pathLength={1}
-        strokeDasharray={1}
-        strokeDashoffset={1 - sweep}
-        fill="none"
-        stroke={color}
-        strokeWidth={3}
-        strokeLinecap="round"
-        opacity={dimmed ? 0.3 : 1}
-      />,
-    );
-    if (sweep <= 0 || sweep >= 1) {
-      return;
-    }
-    const headX = cx - span / 2 + sweep * span;
-    // 波头高度用本章节角度：sin(θ) / cos(θ)——与动点投影严格同高/同位
-    const chapterAngle = sweep * TAU;
-    const headY =
-      cy -
-      (wave.kind === 'sine'
-        ? Math.sin(chapterAngle) * amplitude
-        : Math.cos(chapterAngle) * amplitude);
-    const guides: React.ReactNode[] = [];
+
     if (wave.kind === 'sine') {
-      // 水平投影虚线：波头与动点同高
-      guides.push(
-        <line
-          x1={dotX}
-          y1={dotY}
-          x2={headX}
-          y2={dotY}
+      // 正弦 = 点的高度 → 横排波，波头与动点严格同高（水平投影虚线）
+      layerNodes.push(
+        <path
+          key={`wave${j}`}
+          d={curvePath(cx, cy, span, amplitude, 0)}
+          pathLength={1}
+          strokeDasharray={1}
+          strokeDashoffset={1 - sweep}
+          fill="none"
           stroke={color}
-          strokeWidth={1.5}
-          strokeDasharray="6 6"
-          opacity={0.55}
+          strokeWidth={3}
+          strokeLinecap="round"
+          opacity={dimmed ? 0.3 : 1}
         />,
       );
-    } else {
-      // 半径三角：圆心→垂足横线段 = 点的水平位置；纵轴对应点→波头投影虚线
-      guides.push(
-        <g key={`tri${j}`}>
-          <line
-            x1={cx}
-            y1={cy}
-            x2={dotX}
-            y2={cy}
-            stroke={color}
-            strokeWidth={2.5}
-            opacity={0.7}
-          />
-          <line
-            x1={cx}
-            y1={headY}
-            x2={headX}
-            y2={headY}
-            stroke={color}
-            strokeWidth={1.5}
-            strokeDasharray="6 6"
-            opacity={0.55}
-          />
-        </g>,
-      );
+      if (sweep > 0 && sweep < 1) {
+        const headX = cx - span / 2 + sweep * span;
+        const headY = cy - Math.sin(sweep * TAU) * amplitude;
+        layerNodes.push(
+          <g key={`head${j}`}>
+            <line
+              x1={dotX}
+              y1={dotY}
+              x2={headX}
+              y2={dotY}
+              stroke={color}
+              strokeWidth={1.5}
+              strokeDasharray="6 6"
+              opacity={0.55}
+            />
+            <circle cx={headX} cy={headY} r={6} fill={color} />
+          </g>,
+        );
+      }
+      return;
     }
-    layerNodes.push(
-      <g key={`head${j}`}>
-        {guides}
-        <circle cx={headX} cy={headY} r={6} fill={color} />
-      </g>,
-    );
+
+    if (wave.kind === 'cosine') {
+      // 余弦 = 点的水平位置 → 波竖排：从圆心高度垂直向下，横向摆动与
+      // 动点同步（headX ≡ dotX），垂直投影虚线连接两者——点的横偏移
+      // 直接就是下方波的左右摆动，零心理旋转（3b1b 原始构造）
+      const waveLength = r * 2.3;
+      const topY = cy;
+      const headX = cx + Math.cos(sweep * TAU) * amplitude;
+      const headY = topY + sweep * waveLength;
+      layerNodes.push(
+        <path
+          key={`vcos${j}`}
+          d={verticalCosPath(cx, topY, waveLength, amplitude)}
+          pathLength={1}
+          strokeDasharray={1}
+          strokeDashoffset={1 - sweep}
+          fill="none"
+          stroke={color}
+          strokeWidth={3}
+          strokeLinecap="round"
+          opacity={dimmed ? 0.3 : 1}
+        />,
+      );
+      if (sweep > 0 && sweep < 1) {
+        layerNodes.push(
+          <g key={`cosGuide${j}`}>
+            <line
+              x1={dotX}
+              y1={dotY}
+              x2={headX}
+              y2={headY}
+              stroke={color}
+              strokeWidth={1.5}
+              strokeDasharray="6 6"
+              opacity={0.55}
+            />
+            <circle cx={headX} cy={headY} r={6} fill={color} />
+          </g>,
+        );
+      }
+      return;
+    }
   });
 
   const chapterCount = Math.max(1, boundsWall.length - 1);
