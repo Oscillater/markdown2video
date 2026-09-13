@@ -65,7 +65,7 @@ future harness preview/review/partial rerun
 - 近期主线已完成（2026-09-12）：~~「组件注册 + 口播 skill」~~ ✅——场景风格由注册组件承载（plan 引用 `id@version`），知识口播 craft 由 skill 承载（`skills/voiceover/SKILL.md`，agent 读结构化 markdown、经 `--plan` 直产 plan）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
-- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅、~~口播 skill v1~~ ✅（首片 71s，见 B2）、~~A8.1 场景画布~~ ✅（2026-09-13，`math_canvas@1.0.0` 入库）。A7 维持挂起。下一批候选：3b1b 式数学 showcase 片（公式只演不读）、组件「显示文本 ≠ 朗读文本」契约扩展、knowledge pack（按 B2 触发条件）。
+- 后续施工：~~LLM planner 前缀修复~~ ✅、~~A8 组件管线~~ ✅、~~口播 skill v1~~ ✅（首片 71s，见 B2）、~~A8.1 场景画布~~ ✅（2026-09-13，`math_canvas@1.0.0` 入库 + showcase 首片 65.7s）。A7 维持挂起。**当前批次：成片质量冲刺（见「下一批」节）——P0 字幕/knowledge pack/标题核查 → P1 math_canvas 1.1.0 + 拆片 → P2 MCP/VLM 读片 → P3 配套。**
 
 ## Phase 1-4: 基础架构 → 现有工具重构 - 已完成
 
@@ -297,6 +297,35 @@ showcase 首片（2026-09-13）：`evals/trig_circle.md` 经 skill 产 plan 出�
 ### B3（远期）第二套风格
 
 - [ ] 外部结构落地第二套 pack，验证"社区包与内置包零特权差别"。
+
+## 下一批：成片质量冲刺（2026-09-13 定调）
+
+背景：架构收官（两条零 warning 成片：git_internals 71s、trig_circle 65.7s），但**成片质量距离"能发出去"差距很大**——画布是死的、无字幕、正文 15px、无 BGM/配图、标题卡在正文场反复出现。竞品调研（2026-09-13：MoneyPrinterTurbo ~56K★、ShortGPT、markdown_video、TheoremExplainAgent）确认了缺口项都是竞品验证过的标配或已被解决的工程问题。原则：不再动架构；质量缺口分三类走既有通道——**引擎/pack 一改全片受益，组件货架逐个长，skill 套路用现成 infra**。
+
+### P0 快赢（引擎/装配层，一改全片受益）
+
+- [ ] **烧录字幕**：timeline text cue → assembler 逐段叠加（样式 v1 从简：位置/字号/描边，具体归 pack 后续接管）。口播片标配（MoneyPrinterTurbo 默认行为，其时间戳对齐思路与我们"音频事实"同源）；字幕轨现成，纯装配层工作。
+- [ ] **knowledge pack 启动**（B2 触发条件已满足，转正）：字号梯度（正文 15px → 18~20px 一档）、口播静默节奏。纯 ThemeTokens 数据，两个 Realizer 已在消费 token。
+- [ ] **标题卡可见性语义核查**：引擎语义 = 标题全程可见（镜像 manim），竖屏口播片里正文场反复出现标题卡，观感存疑——先抽帧评估，确认难看再定改法（标题退场时机归调度语义，需小改）。
+
+### P1 主线（货架生长，把架构优势兑现成观感）
+
+- [ ] **math_canvas@1.1.0**：动点沿圆匀速转、半径线随点扫、曲线逐点描到动点当前位置（"波峰出现"与点转到位同步）；check-component 重验收入库（bump 版本，黄金帧重存档），trig_circle plan 改 ref 重渲读片对比。首片读片已确认：无动点是最大单点缺陷。
+- [ ] **拆 3~5 支对标片**（3b1b 单位圆/三角一支必拆 + 代码讲解 + 知识口播各一）：逐镜头拆演法 → 逐项问货架能否承接 → 产出组件候选清单（演法/原型草图/优先级），作为后续组件菜单。timebox：不发散到生成式视频赛道。
+
+### P2 差异化（AI 原生卖点，低成本高故事性）
+
+- [ ] **MCP 工具化**：plan 校验 / check_timeline / check_component 已是纯函数 CLI，包成 MCP server 让任意 coding agent 直调。markdown_video 的 MCP server（10 工具）验证了此路产品价值；"agent 自带验收工具箱"强化事前闸门故事。
+- [ ] **VLM 读片助手**：读片迭代先让视觉模型筛帧（错位/溢出/观感问题），人只看标记帧。借 TEA eval_suite 的多模态评审思路——只借评估，不借生成。
+
+### P3 配套（质感与门面）
+
+- [ ] **skill 套路升级**：BGM 段落与配图段落进结构套路——marker/BGM/stock_image infra 全部现成，两支成片从未用上，纯 skill 文档工作。
+- [ ] **Kokoro 本地 TTS 备选 provider**：离线免费（TEA 在用），工具注册表已支持多 provider，加实现即可。
+- [ ] **README 定位重写**：确定性视频编译器 / agent 可操作 / 组件生态，正面对着"LLM 现写渲染代码不稳定"的赛道痛点讲；宣传片素材 = trig_circle 画布累积段。
+- [ ] 竞品调研落盘 `docs/competitive-research.md`（2026-09-13 调研已完成：四赛道/五问对比/借鉴清单，待归档）。
+
+验收口径：下一批做完，一条新片要做到"陌生人刷到不划走"——有字幕、字看得清、画面有动效、有 BGM。每项独立可验收，顺序即优先级。
 
 ## 里程碑与依赖
 
