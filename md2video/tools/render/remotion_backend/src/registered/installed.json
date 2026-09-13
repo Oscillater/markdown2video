@@ -49,6 +49,13 @@
       "content_hash": "84652bac39c5442ce953a5953fef5a24d3d416d774bb59c4999ccd94d0a52583"
     },
     {
+      "ref": "math_canvas@1.4.0",
+      "kind": "body",
+      "mount": "scene",
+      "file": "components/math_canvas/math_canvas_1_4_0.tsx",
+      "content_hash": "54546873354008fd928d1b129b2d8d0eb38d9476c5f0f4e53da5ea57f42c677d"
+    },
+    {
       "ref": "step_list@1.0.0",
       "kind": "body",
       "file": "components/step_list/step_list_1_0_0.tsx",
@@ -60,6 +67,13 @@
       "mount": "shot",
       "file": "components/step_list/step_list_1_0_1.tsx",
       "content_hash": "bb5715aae37ec2edb98f0354cbbe38a44bacb4121abe823c7869a8def8aa6e21"
+    },
+    {
+      "ref": "step_list@1.0.2",
+      "kind": "body",
+      "mount": "shot",
+      "file": "components/step_list/step_list_1_0_2.tsx",
+      "content_hash": "bb210ac62c7415768ae962ca6907b62087619e2f33714de7334c7819ba00318b"
     },
     {
       "ref": "terminal@1.0.0",

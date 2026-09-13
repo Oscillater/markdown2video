@@ -16,14 +16,27 @@ const StepList: React.FC<ComponentProps> = ({segments, width, height, fps}) => {
   const now = frame / fps;
   const steps = segments.filter((seg) => seg.segment_type === 'content');
   const left = Math.round(width * 0.12);
-  const rowHeight = Math.round(height * 0.09);
   // 首行下移让位章节牌（header 恒画在组件之上，牌占左上带）
   const top = Math.round(height * 0.42);
   const appearSeconds = 0.4;
 
+  // 行距按换行行数动态累计：固定行距会让两行文本与下一步重叠
+  const textWidth = width - left - 80;
+  const fontSize = 30;
+  const charsPerLine = Math.max(4, Math.floor(textWidth / fontSize));
+  const lineHeight = Math.round(fontSize * 1.5);
+  const stepGap = Math.round(height * 0.035);
+  let cursor = top;
+  const rows = steps.map((step) => {
+    const lines = Math.max(1, Math.ceil(step.text.length / charsPerLine));
+    const y = cursor;
+    cursor += lines * lineHeight + stepGap;
+    return {step, y};
+  });
+
   return (
     <div style={{position: 'absolute', inset: 0, backgroundColor: BACKGROUND}}>
-      {steps.map((step, index) => {
+      {rows.map(({step, y}, index) => {
         const appear = now - step.start;
         if (appear < 0) {
           return null;
@@ -35,7 +48,7 @@ const StepList: React.FC<ComponentProps> = ({segments, width, height, fps}) => {
             style={{
               position: 'absolute',
               left,
-              top: top + index * rowHeight,
+              top: y,
               opacity: progress,
               transform: `translateX(${(1 - progress) * 24}px)`,
               display: 'flex',

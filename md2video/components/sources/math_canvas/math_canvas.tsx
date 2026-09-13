@@ -181,6 +181,8 @@ const MathCanvas: React.FC<ComponentProps> = ({
     const sweep = clamp01((tActive - lapStart) / Math.max(0.001, lapEnd - lapStart));
     const color = LAYER_COLORS[(j + 1) % LAYER_COLORS.length];
     const phase = wave.kind === 'sine' ? 0 : Math.PI / 2;
+    // 聚焦降杂：已描满的历史波层降到低亮度，当前正在描的波层满亮度
+    const dimmed = sweep >= 1;
     layerNodes.push(
       <path
         key={`wave${j}`}
@@ -192,6 +194,7 @@ const MathCanvas: React.FC<ComponentProps> = ({
         stroke={color}
         strokeWidth={3}
         strokeLinecap="round"
+        opacity={dimmed ? 0.3 : 1}
       />,
     );
     if (sweep <= 0 || sweep >= 1) {
@@ -233,7 +236,6 @@ const MathCanvas: React.FC<ComponentProps> = ({
             strokeWidth={2.5}
             opacity={0.7}
           />
-          <circle cx={dotX} cy={cy} r={3.5} fill={color} opacity={0.9} />
           <line
             x1={cx}
             y1={headY}
