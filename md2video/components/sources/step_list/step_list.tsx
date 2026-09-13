@@ -17,7 +17,8 @@ const StepList: React.FC<ComponentProps> = ({segments, width, height, fps}) => {
   const steps = segments.filter((seg) => seg.segment_type === 'content');
   const left = Math.round(width * 0.12);
   const rowHeight = Math.round(height * 0.09);
-  const top = Math.round(height * 0.3);
+  // 首行下移让位章节牌（header 恒画在组件之上，牌占左上带）
+  const top = Math.round(height * 0.42);
   const appearSeconds = 0.4;
 
   return (

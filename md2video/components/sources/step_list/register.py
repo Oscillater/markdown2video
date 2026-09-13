@@ -17,7 +17,7 @@ from md2video.components.registry import register_component
 
 register_component(
     "step_list",
-    "1.0.0",
+    "1.0.1",
     "body",
     Path(__file__).parent / "step_list.tsx",
 )

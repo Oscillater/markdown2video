@@ -2,20 +2,24 @@ import React from 'react';
 import {useCurrentFrame} from 'remotion';
 import type {ComponentProps} from '../../types';
 
-// math_canvas@1.2.0 —— A8.1 场景画布组件（mount="scene"）。
-// 对标 3b1b 的核心语义：**波是点的高度投影**。动点从最右边出发逆时针转，
-// 转到哪、正弦画到哪——波头始终在动点的高度上（描线期间画出水平投影
-// 虚线）；余弦画的是点的**水平位置**：圆心到垂足的横线段就是它的长度，
-// 波头与纵轴上对应点等高，虚线相连（半径三角构造）。
+// math_canvas@1.3.0 —— A8.1 场景画布组件（mount="scene"）。
+// 对标 3b1b 的核心语义：**波是点的高度投影**，且**动画跨 shot 连续**。
+//
+// 章节化角度（1.3.0 的核心）：动点"一章转一圈"——
+//   章节 0：场起点 → 第一个波层锚点（底座章，只有圆和动点）
+//   章节 k：第 k 波层锚点 → 下一锚点（或场尾），该波的整条曲线只在
+//   自己的章节内随动点描出（描满永久保持）
+// 章边界恰好是切镜点，动点在边界上恰好回到最右（cos 2π = cos 0）→
+// 跨 shot 无跳变；章内多 shot 之间 θ 连续。描线与解说天然同步：
+// 波只在用它解说的章节里生长。
 //
 // 图层编排是 plan 作者的数据（visual_params.layers），组件不猜：
 //   "layers": [{"shot": "shot_005", "kind": "sine"},
 //              {"shot": "shot_007", "kind": "cosine"}]
-// 每层从锚点 shot 的窗口起点可见（把 header shot 写成锚点 = 动画从上一
-// 个 shot 起笔）；描线进度由动点角度 θ 驱动。θ 的基准：在正弦锚点窗口
-// 结束时恰好完成第一整圈（"回到起点，曲线归零"与画面逐帧同步）。切走
-// 的镜头角度冻结、回场续转（累积活跃时间，纯函数，确定性不变）。
-// 未声明 layers 时只画底座（坐标系 + 圆 + 动点），确定性降级。
+// 投影构造：正弦——波头与动点严格同高（水平投影虚线）；余弦——半径
+// 三角（圆心→垂足横线段 = 点的水平位置，纵轴对应点到波头投影虚线）。
+// 角度由累积活跃时间驱动（切走冻结/回场续转，纯函数，确定性不变）。
+// 未声明 layers 时只画底座，确定性降级。
 
 const BACKGROUND = '#0B0E14';
 const AXIS = '#7C8798';
@@ -26,6 +30,7 @@ const CURVE_SAMPLES = 96;
 const TAU = Math.PI * 2;
 
 type LayerPlan = {shot: string; kind: string};
+type Window = {shot_id: string; start: number; end: number; segments: unknown[]};
 
 function clamp01(value: number): number {
   if (value < 0) {
@@ -71,7 +76,6 @@ function curvePath(
 
 const MathCanvas: React.FC<ComponentProps> = ({
   scene_shots,
-  scene_shot_index,
   visual_params,
   width,
   height,
@@ -80,37 +84,53 @@ const MathCanvas: React.FC<ComponentProps> = ({
   const frame = useCurrentFrame();
   const now = frame / fps;
   const visits = scene_shots ?? [];
-  const current = scene_shot_index ?? 0;
-  const layers = parseLayers(visual_params);
+  const layers = parseLayers(visual_params).filter(
+    (l) => l.kind === 'sine' || l.kind === 'cosine',
+  );
 
   const cx = width / 2;
   const cy = height * 0.46;
   const r = Math.min(width, height) * 0.24;
   const span = Math.min(width * 0.86, r * 4.4);
-  const amplitude = r; // 波幅 = 半径：波头与动点/纵轴点严格同高（投影前提）
+  const amplitude = r; // 波幅 = 半径：波头与投影点严格同高（投影前提）
 
   const windowById = new Map(visits.map((v) => [v.shot_id, v]));
-
-  // θ 基准：正弦锚点窗口结束时 θ = 2π；锚点缺失时退化为最后一个窗口
-  const sineAnchor = layers.find((l) => l.kind === 'sine');
-  const refShot = sineAnchor
-    ? windowById.get(sineAnchor.shot)
-    : visits[visits.length - 1];
+  const lastEnd = visits.length > 0 ? visits[visits.length - 1].end : 0;
   const origin = visits.length > 0 ? visits[0].start : 0;
-  const refActive = refShot ? Math.max(0.001, refShot.end - origin) : 1;
 
-  // 累积活跃时间：起点到当前帧之间，落在各窗口内的部分求和
-  // （切走的镜头不在窗口内 → 角度冻结；回场续转）
-  let activeSeconds = 0;
-  for (const visit of visits) {
-    if (now <= visit.start) {
-      break;
+  // 活跃时间：起点到 wall 之间落在各窗口内的部分（切走冻结的语义）
+  const activeAt = (wall: number): number => {
+    let acc = 0;
+    for (const visit of visits) {
+      if (wall <= visit.start) {
+        break;
+      }
+      acc += Math.min(wall, visit.end) - visit.start;
     }
-    activeSeconds += Math.min(now, visit.end) - visit.start;
+    return acc;
+  };
+
+  // 章节：[origin→锚点1][锚点1→锚点2]…[锚点n→场尾]，一章一圈
+  const waveAnchors = layers
+    .map((l) => ({...l, win: windowById.get(l.shot)}))
+    .filter((l): l is LayerPlan & {win: Window} => !!l.win)
+    .sort((a, b) => a.win.start - b.win.start);
+  const boundsWall = [origin, ...waveAnchors.map((l) => l.win.start), lastEnd];
+  const boundsActive = boundsWall.map(activeAt);
+
+  const tActive = activeAt(now);
+  let chapterIndex = 0;
+  for (let i = 0; i < boundsActive.length - 1; i++) {
+    if (tActive >= boundsActive[i]) {
+      chapterIndex = i;
+    }
   }
-  const theta = (activeSeconds / refActive) * TAU;
-  const sweepSine = clamp01(theta / TAU);
-  const sweepCos = clamp01((theta - TAU) / TAU);
+  const chapterStart = boundsActive[chapterIndex];
+  const chapterEnd = boundsActive[chapterIndex + 1] ?? chapterStart + 1;
+  const chapterProgress = clamp01(
+    (tActive - chapterStart) / Math.max(0.001, chapterEnd - chapterStart),
+  );
+  const theta = TAU * (chapterIndex + chapterProgress);
   const dotX = cx + Math.cos(theta) * r;
   const dotY = cy - Math.sin(theta) * r;
 
@@ -145,112 +165,98 @@ const MathCanvas: React.FC<ComponentProps> = ({
           strokeWidth={2}
           opacity={0.8 * dotIn}
         />
-        <circle
-          cx={dotX}
-          cy={dotY}
-          r={8 * dotIn}
-          fill={LAYER_COLORS[0]}
-          opacity={dotIn}
-        />
+        <circle cx={dotX} cy={dotY} r={8 * dotIn} fill={LAYER_COLORS[0]} opacity={dotIn} />
       </g>,
     );
   }
 
-  // 图层：按声明锚点可见，描线进度由 θ 驱动
+  // 波层：第 j 个波层占据章节 j+1，描线进度 = 该章节进度；章末描满保持
   const layerNodes: React.ReactNode[] = [];
-  layers.forEach((layer, layerIndex) => {
-    const anchor = windowById.get(layer.shot);
-    if (!anchor || now < anchor.start) {
-      return; // 锚点窗口未到（未知 shot 的锚点确定性跳过）
+  waveAnchors.forEach((wave, j) => {
+    const lapStart = boundsActive[j + 1];
+    const lapEnd = boundsActive[j + 2] ?? lapStart + 1;
+    if (tActive < lapStart) {
+      return; // 章节未到
     }
-    const color = LAYER_COLORS[(layerIndex + 1) % LAYER_COLORS.length];
-    if (layer.kind === 'sine') {
-      const sweep = sweepSine;
-      layerNodes.push(
-        <path
-          key={`sine${layerIndex}`}
-          d={curvePath(cx, cy, span, amplitude, 0)}
-          pathLength={1}
-          strokeDasharray={1}
-          strokeDashoffset={1 - sweep}
-          fill="none"
+    const sweep = clamp01((tActive - lapStart) / Math.max(0.001, lapEnd - lapStart));
+    const color = LAYER_COLORS[(j + 1) % LAYER_COLORS.length];
+    const phase = wave.kind === 'sine' ? 0 : Math.PI / 2;
+    layerNodes.push(
+      <path
+        key={`wave${j}`}
+        d={curvePath(cx, cy, span, amplitude, phase)}
+        pathLength={1}
+        strokeDasharray={1}
+        strokeDashoffset={1 - sweep}
+        fill="none"
+        stroke={color}
+        strokeWidth={3}
+        strokeLinecap="round"
+      />,
+    );
+    if (sweep <= 0 || sweep >= 1) {
+      return;
+    }
+    const headX = cx - span / 2 + sweep * span;
+    // 波头高度用本章节角度：sin(θ) / cos(θ)——与动点投影严格同高/同位
+    const chapterAngle = sweep * TAU;
+    const headY =
+      cy -
+      (wave.kind === 'sine'
+        ? Math.sin(chapterAngle) * amplitude
+        : Math.cos(chapterAngle) * amplitude);
+    const guides: React.ReactNode[] = [];
+    if (wave.kind === 'sine') {
+      // 水平投影虚线：波头与动点同高
+      guides.push(
+        <line
+          x1={dotX}
+          y1={dotY}
+          x2={headX}
+          y2={dotY}
           stroke={color}
-          strokeWidth={3}
-          strokeLinecap="round"
+          strokeWidth={1.5}
+          strokeDasharray="6 6"
+          opacity={0.55}
         />,
       );
-      if (sweep > 0 && sweep < 1) {
-        const headX = cx - span / 2 + sweep * span;
-        const headY = cy - Math.sin(sweep * TAU) * amplitude;
-        layerNodes.push(
-          <g key={`sineHead${layerIndex}`}>
-            {/* 投影虚线：波头与动点严格同高 */}
-            <line
-              x1={dotX}
-              y1={dotY}
-              x2={headX}
-              y2={dotY}
-              stroke={color}
-              strokeWidth={1.5}
-              strokeDasharray="6 6"
-              opacity={0.55}
-            />
-            <circle cx={headX} cy={headY} r={6} fill={color} />
-          </g>,
-        );
-      }
-    } else if (layer.kind === 'cosine') {
-      const sweep = sweepCos;
-      layerNodes.push(
-        <path
-          key={`cos${layerIndex}`}
-          d={curvePath(cx, cy, span, amplitude, Math.PI / 2)}
-          pathLength={1}
-          strokeDasharray={1}
-          strokeDashoffset={1 - sweep}
-          fill="none"
-          stroke={color}
-          strokeWidth={3}
-          strokeLinecap="round"
-        />,
+    } else {
+      // 半径三角：圆心→垂足横线段 = 点的水平位置；纵轴对应点→波头投影虚线
+      guides.push(
+        <g key={`tri${j}`}>
+          <line
+            x1={cx}
+            y1={cy}
+            x2={dotX}
+            y2={cy}
+            stroke={color}
+            strokeWidth={2.5}
+            opacity={0.7}
+          />
+          <circle cx={dotX} cy={cy} r={3.5} fill={color} opacity={0.9} />
+          <line
+            x1={cx}
+            y1={headY}
+            x2={headX}
+            y2={headY}
+            stroke={color}
+            strokeWidth={1.5}
+            strokeDasharray="6 6"
+            opacity={0.55}
+          />
+        </g>,
       );
-      if (sweep > 0 && sweep < 1) {
-        const headX = cx - span / 2 + sweep * span;
-        const headY = cy - Math.sin(Math.PI / 2 + sweep * TAU) * amplitude;
-        // 半径三角：圆心→垂足的横线段 = 点的水平位置（cos θ），
-        // 其长度即波头高度；纵轴对应点到波头画投影虚线
-        layerNodes.push(
-          <g key={`cosProj${layerIndex}`}>
-            <line
-              x1={cx}
-              y1={cy}
-              x2={dotX}
-              y2={cy}
-              stroke={color}
-              strokeWidth={2.5}
-              opacity={0.7}
-            />
-            <circle cx={dotX} cy={cy} r={3.5} fill={color} opacity={0.9} />
-            <line
-              x1={cx}
-              y1={headY}
-              x2={headX}
-              y2={headY}
-              stroke={color}
-              strokeWidth={1.5}
-              strokeDasharray="6 6"
-              opacity={0.55}
-            />
-            <circle cx={headX} cy={headY} r={6} fill={color} />
-          </g>,
-        );
-      }
     }
-    // 未知 kind：确定性跳过（组件词汇表外不猜）
+    layerNodes.push(
+      <g key={`head${j}`}>
+        {guides}
+        <circle cx={headX} cy={headY} r={6} fill={color} />
+      </g>,
+    );
   });
-  void current; // 图层可见性由锚点决定；current 保留在 props 契约里
 
-  const watermark = `math_canvas · visit ${current + 1}/${visits.length || 1}`;
+  const chapterCount = Math.max(1, boundsWall.length - 1);
+  const watermark = `math_canvas · chapter ${chapterIndex + 1}/${chapterCount}`;
 
   return (
     <div style={{position: 'absolute', inset: 0, backgroundColor: BACKGROUND}}>

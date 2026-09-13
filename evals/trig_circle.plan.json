@@ -223,7 +223,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.2.0",
+      "component": "math_canvas@1.3.0",
       "visual_params": {
         "layers": [
           {"shot": "shot_005", "kind": "sine"},
@@ -251,7 +251,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.2.0",
+      "component": "math_canvas@1.3.0",
       "visual_params": {
         "layers": [
           {"shot": "shot_005", "kind": "sine"},
@@ -273,7 +273,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.2.0",
+      "component": "math_canvas@1.3.0",
       "visual_params": {
         "layers": [
           {"shot": "shot_005", "kind": "sine"},
@@ -295,7 +295,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.2.0",
+      "component": "math_canvas@1.3.0",
       "visual_params": {
         "layers": [
           {"shot": "shot_005", "kind": "sine"},
@@ -317,7 +317,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.2.0",
+      "component": "math_canvas@1.3.0",
       "visual_params": {
         "layers": [
           {"shot": "shot_005", "kind": "sine"},
@@ -353,7 +353,7 @@
       "id": "scene_010",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "step_list@1.0.0",
+      "component": "step_list@1.0.1",
       "section_context": "收进三句话",
       "shots": [
         {

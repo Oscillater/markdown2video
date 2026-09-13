@@ -42,10 +42,24 @@
       "content_hash": "203eb758ea2a56f8e4ad22620f0cd317082e5aeedaf6886de8248606a8cc13e4"
     },
     {
+      "ref": "math_canvas@1.3.0",
+      "kind": "body",
+      "mount": "scene",
+      "file": "components/math_canvas/math_canvas_1_3_0.tsx",
+      "content_hash": "84652bac39c5442ce953a5953fef5a24d3d416d774bb59c4999ccd94d0a52583"
+    },
+    {
       "ref": "step_list@1.0.0",
       "kind": "body",
       "file": "components/step_list/step_list_1_0_0.tsx",
       "content_hash": "57517743cdc9dfc5d39ab00d3aedff1f594bc2be0e131eb5b9280fc62091df31"
+    },
+    {
+      "ref": "step_list@1.0.1",
+      "kind": "body",
+      "mount": "shot",
+      "file": "components/step_list/step_list_1_0_1.tsx",
+      "content_hash": "bb5715aae37ec2edb98f0354cbbe38a44bacb4121abe823c7869a8def8aa6e21"
     },
     {
       "ref": "terminal@1.0.0",
