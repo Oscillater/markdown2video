@@ -61,7 +61,7 @@ future harness preview/review/partial rerun
 - Track A 第二批已落地（2026-09-07）：A4 Runtime Inspectability（run 目录制 + `manifest_viewer.html`）+ A5 Layout 提案机制（`layout_regions` + 约束注册表 + 结构化 LayoutIssue + 子构图 region 化）+ 外部皮肤包文件加载（`MD2VIDEO_STYLE_PACK_FILE`）+ A6 前半（按 scene 多后端分发与合成基础设施）。
 - Track A 第三批已落地（2026-09-07 晚）：A9 OTIO 导出（`timeline.otio` 交付形态）+ A6 后半（Remotion 真实第二后端：Python 调度器 + Node composition，能力词汇声明与降级，混合 manim/remotion 出片，双跑 framemd5 逐帧一致）。
 - Track A 第三批补验（2026-09-08）：CLI 全链路真跑（rule planner + edge-tts 配音 + Remotion 渲染 + FFmpeg 装配）暴露并修复三个 mock 盖不住的集成 bug——①`remotion_tool` 子进程 cwd 切到 backend_dir 后相对路径错位（props 找不到/视频写错目录，先 `resolve()` 再传 CLI，补相对路径回归测试）；②`ffmpeg_assembler.ffprobe_resolution` 对 Remotion 容器多出的尾部空字段（`480x854x`）做 `int('')` 炸裂（只取前两段）；③调度器 before/after 锚点 cue（真实 markdown 的 `[image_start]`/`[music_*]` 全走这条路）挂上时间后从未 append 进 `markers_out`，时间闸门直接拒绝且图片/BGM 条目为空（锚前=段起点、锚后=段终点落盘；锚点段不在本 shot 时收敛到本 shot 末端）。修正早前错误结论：图片/BGM 不需要进 Remotion payload——正文由组件按 region 画，图片/Ken Burns 与 BGM 由后端无关的装配层按 timeline marker 叠加；marker 修复后带图+BGM 的 `example.md` 走 Remotion 完整出片（66.6s，抽帧验证 `image_top_text_bottom` 版式成立、窗口外无图）。
-- 最新验证：2026-09-13 运行 `python -m pytest -q`，结果是 `653 passed, 6 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
+- 最新验证：2026-09-14 运行 `python -m pytest -q`，结果是 `657 passed, 6 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
 - 近期主线已完成（2026-09-12）：~~「组件注册 + 口播 skill」~~ ✅——场景风格由注册组件承载（plan 引用 `id@version`），知识口播 craft 由 skill 承载（`skills/voiceover/SKILL.md`，agent 读结构化 markdown、经 `--plan` 直产 plan）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
@@ -311,7 +311,9 @@ showcase 首片（2026-09-13）：`evals/trig_circle.md` 经 skill 产 plan 出�
 - [x] **BGM 接线 + skill 套路升级**：marker/BGM infra 现成——skill 结构套路补三件事：按段落配图（`gen_image` 的 prompt/style/palette 写法）、BGM 段落（declaration + `music_start` cue）、字幕观感自查。踩坑写回：**plan 手写 cue 必须带 `id`**（闸门与装配器靠它对账，漏了报 `Timeline missing marker cue time`）。BGM 资产本身也走代码产：`evals/assets/make_bgm.py` 合成 20s 无缝循环垫乐（颤音周期整除循环时长，相位连续）。
 - [x] **验收片**：`artifacts/trig_circle_kf.mp4`（65.7s）——**解说 + 程序化插画 + 字幕 + BGM 四样齐**的知识区格式片：钩子/结尾两场 `gen_image` 满屏插图（orbit/waves，Ken Burns），三场 `math_canvas` 演算，一场 `step_list`，14 条烧录字幕，BGM 从标题后铺到片尾（自动压低成垫）。渲染中抓到并修复：①`gen_image` 曾返回相对路径，`--plan` 场景装配器按 plan 目录解析导致图片被静默丢弃——工具改返回绝对路径（TTS 先例）+ 装配器相对路径解析加 cwd 回退 + 缺图从静默丢弃改为显式告警；②owner 读片指出插图 Ken Burns **持续抖动**——`zoompan` 按输入像素格点取整（第一层），且超采样后仍周期性顿挫（第二层，取整后每 3~4 帧才挪一格）。修复 = **超采样 4x → zoompan 保持超采样尺寸 → lanczos 缩回区域**（取整停在细格点、缩放插值保住亚像素运动）；像素级验证：连续 40 帧 0 对相同、帧差均匀 0.29~0.50（此前 md5 测量歧义曾误导，以解码像素比对为准）。
 
-推迟观察（不在本批动）：**文字层策略**——字幕上位后引擎正文大字卡与之重复，字幕上线抽帧看观感再定（正文卡退场 or 仅无图段保留）；**标题卡可见性**（正文场反复出现标题卡）同批核查。
+推迟观察两项已在文字层改版中落定（见下）；**标题卡可见性**与**文字层策略**均按读片结论转正实现。
+
+- [x] **文字层改版 A/B/C**（2026-09-14，仅 Remotion 后端，manim 记已记录差异）：**A 标题退场**——title payload 携带 `end`（= title_hold，第一个正文镜头开始），wrapper 淡出标题卡，标题只在片头出现一次（旧 payload 无 end 时退回全程可见，向后兼容）；**B 正文去重**——朗读段（有音频绑定）不再由引擎画正文，字幕是文字的唯一载体，静默段正文保留；**C 章节牌**——section header 从裸灰字升级为 accent 竖条 + 半透明底板的牌照式，且窗口改从 timeline text facts 取（开放到下一个 header，与 manim 堆叠语义一致——旧实现用 shot 段自身音频窗口，牌念完 2.5s 即消失立不住）。帧验证：t=3 钩子场标题已退、只剩插画+字幕；t=42 章节牌常驻带牌面。
 
 ### P1 主线（货架生长）
 

@@ -134,6 +134,25 @@ def test_title_card_leads_and_uses_title_hold():
     assert {seg["segment_id"] for seg in schedule["title"]["segments"]} == {"t1"}
 
 
+def test_title_payload_carries_retreat_end():
+    """标题退场（A）：title payload 携带 end = 第一个正文镜头的开始
+    （title_hold），wrapper 据此在片头淡出标题卡。"""
+    plan = _plan(
+        [
+            SegmentPlan(id="t1", text="主标题", segment_type="title_main", audio_request=None),
+            SegmentPlan(id="s1", text="正文", segment_type="content", audio_request=None),
+        ],
+        [
+            {"id": "shot_001", "segment_ids": ["t1", "s1"]},
+        ],
+    )
+    schedule, _ = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+    assert schedule["title"]["end"] == pytest.approx(1.0)
+    # 第一个正文镜头（含标题与正文的 shot）从 title_hold 开始
+    assert schedule["shots"][0]["start"] == 0.0
+
+
 def test_title_only_shot_closes_at_title_hold():
     plan = _plan(
         [SegmentPlan(id="t1", text="主标题", segment_type="title_main", audio_request=None)],

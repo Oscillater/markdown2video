@@ -11,6 +11,11 @@ timeline 事实（text / markers / shots），供同一道时间不变量闸门�
 - 动效不消耗时间窗口：manim 的 Write/FadeIn run_time 会推进 self.time，
   这里动效一律在可见窗口内完成，时间线只描述可见窗口本身。
 - 换行交给 CSS 宽度约束，不使用 manim 的 MAX_CHARS_PER_LINE 硬换行。
+- 标题卡片与标题 cue 全程可见（manim 中标题 mobject 同样存留到片尾）；
+  2026-09-14 起仅 Remotion 侧改为**标题退场**——标题卡在第一个正文镜头
+  开始时淡出（title payload 携带 end），manim 仍存留片尾，为已记录差异。
+- 朗读段正文文字 Remotion 侧不再由引擎绘制（字幕为文字的唯一载体），
+  静默段正文保留；manim 仍绘制全部正文，为已记录差异。
 - section header 的堆叠字幕闭合时机取近似：被下一个 header 顶掉时闭合，
   否则视频结束时闭合（manim 在堆叠溢出 FIFO 移除时闭合）。
 - 标题卡片与标题 cue 全程可见（manim 中标题 mobject 同样存留到片尾）。
@@ -385,11 +390,14 @@ def build_remotion_schedule(
         markers_out.append(_public_marker(marker))
 
     if title_segments:
+        # 标题退场时刻：标题 pass 从 t=0 开始、只吃 title_hold 的静默窗口，
+        # 第一个正文镜头即在该时刻开始 → 退场时刻 = title_hold
         title_payload = {
             "layout_type": title_unit.layout_type if title_unit is not None else "",
             "regions": title_regions.get("regions", {}),
             "has_image_region": title_regions.get("has_image_region", False),
             "segments": title_segments,
+            "end": pack.motion.silent.title_hold,
         }
 
     shots_out = [shots_by_id[unit.shot_id] for unit in units_all if unit.shot_id in shots_by_id]

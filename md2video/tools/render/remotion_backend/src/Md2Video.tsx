@@ -288,6 +288,14 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
     ({seg}) => now >= seg.start && now <= seg.end,
   );
 
+  // 标题退场（A）：标题卡只在片头出现，第一个正文镜头开始时淡出；
+  // end 缺省 = 旧 payload，退回全程可见的旧行为
+  const titleEnd = titlePayload?.end ?? null;
+  const titleVisible =
+    titleEnd === null || now <= (titleEnd as number) + 0.01;
+  const titleDismissIntent = titleEnd === null ? 'instant' : 'fade';
+  const titleWindowEnd = titleEnd === null ? schedule.duration : (titleEnd as number);
+
   return (
     <AbsoluteFill style={{backgroundColor: style.palette.background}}>
       <OrbitDots style={style} />
@@ -311,9 +319,9 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
             <SegmentedText
               text={titleMain.text}
               intent={style.motion.title_reveal}
-              dismissIntent="instant"
+              dismissIntent={titleDismissIntent}
               windowStart={titleMain.start}
-              windowEnd={schedule.duration}
+              windowEnd={titleWindowEnd}
               fontFamily={style.typography.font_family}
               fontSize={style.typography.sizes_px.title_main}
               color={style.palette.text}
@@ -325,9 +333,9 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
             <SegmentedText
               text={titleSub.text}
               intent={style.motion.title_reveal}
-              dismissIntent="instant"
+              dismissIntent={titleDismissIntent}
               windowStart={titleSub.start}
-              windowEnd={schedule.duration}
+              windowEnd={titleWindowEnd}
               fontFamily={style.typography.font_family}
               fontSize={style.typography.sizes_px.title_sub}
               color={style.palette.text}
@@ -338,13 +346,18 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
         </div>
       ) : null}
 
-      {/* 正文：content/appendix 逐段按可见窗口渲染（组件接管的 shot 跳过） */}
+      {/* 正文：静默段逐段按可见窗口渲染（组件接管的 shot 跳过）。
+          朗读段不画正文（B：字幕是文字的唯一载体，引擎正文只在
+          无字幕的静默段出现，避免同句两遍）。 */}
       {schedule.shots.map((shot) => {
         if (resolveComponent(shot)) {
           return [];
         }
         return shot.segments
-          .filter((seg) => seg.segment_type !== 'section_header')
+          .filter(
+            (seg) =>
+              seg.segment_type !== 'section_header' && !seg.audio_path,
+          )
           .map((seg) => {
             if (now < seg.start || now > seg.end) {
               return null;
@@ -444,19 +457,42 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
             }}
           >
             {visibleHeaders.map(({seg}) => (
-              <div key={seg.segment_id} style={{maxWidth: '100%'}}>
-                <SegmentedText
-                  text={seg.text}
-                  intent={style.motion.section_reveal}
-                  dismissIntent={style.motion.section_dismiss}
-                  windowStart={seg.start}
-                  windowEnd={seg.end}
-                  fontFamily={style.typography.font_family}
-                  fontSize={style.typography.sizes_px.section_header}
-                  color={style.palette.text}
-                  maxWidth={width}
-                  align="left"
+              <div
+                key={seg.segment_id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'stretch',
+                  gap: 10,
+                  maxWidth: '100%',
+                }}
+              >
+                <div
+                  style={{
+                    width: 4,
+                    borderRadius: 2,
+                    backgroundColor: style.palette.accent,
+                  }}
                 />
+                <div
+                  style={{
+                    background: 'rgba(255,255,255,0.07)',
+                    borderRadius: 6,
+                    padding: '6px 14px',
+                  }}
+                >
+                  <SegmentedText
+                    text={seg.text}
+                    intent={style.motion.section_reveal}
+                    dismissIntent={style.motion.section_dismiss}
+                    windowStart={seg.start}
+                    windowEnd={seg.end}
+                    fontFamily={style.typography.font_family}
+                    fontSize={style.typography.sizes_px.section_header}
+                    color={style.palette.text}
+                    maxWidth={Math.max(120, width - 80)}
+                    align="left"
+                  />
+                </div>
               </div>
             ))}
           </div>
