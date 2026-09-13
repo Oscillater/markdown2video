@@ -247,6 +247,20 @@ def extract_shot_visual_entries(result: ResultManifest) -> List[Dict]:
 
 # ========== ffmpeg 合成 ==========
 
+# Ken Burns 抖动治理：zoompan 的 x/y/zoom 按输入像素格点取整，直接在目标
+# 分辨率上做会逐帧跳变。先把图超采样放大再 zoompan（输出尺寸不变），
+# 亚像素运动才保得住。
+KB_SUPERSAMPLE = 4
+
+
+def _kb_supersample_size(region_w: int, region_h: int) -> Tuple[int, int]:
+    """zoompan 输入的超采样尺寸（4 倍，带上限防性能炸裂）。"""
+    return (
+        min(region_w * KB_SUPERSAMPLE, 3840),
+        min(region_h * KB_SUPERSAMPLE, 6144),
+    )
+
+
 def extract_shot_visual_entries_from_assets(
     plan: PlanManifest,
     execution_assets: ExecutionAssets,
@@ -404,31 +418,38 @@ def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
         region = img.get("region_px")
 
         if kb_enabled and duration > 1.0:
-            # Ken Burns: scale(cover) → zoompan → overlay
+            # Ken Burns: 超采样 scale(cover) → zoompan（保持超采样尺寸，取整
+            # 停留在细格点上）→ 缩回目标区域（插值保住亚像素运动）→ overlay
             region_w = region["width"] if region else video_width
             region_h = region["height"] if region else video_height
             scaled_stream = f"[img{i}_scaled]"
             zoomed_stream = f"[img{i}_zoomed]"
+            ss_w, ss_h = _kb_supersample_size(region_w, region_h)
             scale_filter = (
-                f"{img_input_stream}scale={region_w}:{region_h}:"
+                f"{img_input_stream}scale={ss_w}:{ss_h}:"
                 f"force_original_aspect_ratio=increase,setsar=1{scaled_stream}"
             )
             kb_filter = _build_ken_burns_filter(
                 scaled_stream, zoomed_stream, duration,
-                region_w, region_h,
+                ss_w, ss_h,
                 zoom_speed=ken_burns_config.zoom_speed,
                 zoom_direction=ken_burns_config.zoom_direction,
                 fps=ken_burns_config.fps,
+            )
+            down_stream = f"[img{i}_down]"
+            down_filter = (
+                f"{zoomed_stream}scale={region_w}:{region_h}:"
+                f"flags=lanczos,setsar=1{down_stream}"
             )
             if region:
                 overlay_pos = f"x='{region['left']}':y='{region['top']}'"
             else:
                 overlay_pos = "x='(W-w)/2':y='(H-h)/2'"
             overlay_filter = (
-                f"{video_label}{zoomed_stream}"
+                f"{video_label}{down_stream}"
                 f"overlay={overlay_pos}:enable='between(t,{start},{end})'{out_label}"
             )
-            vid_parts.extend([scale_filter, kb_filter, overlay_filter])
+            vid_parts.extend([scale_filter, kb_filter, down_filter, overlay_filter])
         else:
             # 静态 overlay：有 layout region 时 contain 进 region，否则用旧常量
             scaled_img_stream = f"[img{i}_scaled]"

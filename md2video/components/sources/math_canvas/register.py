@@ -21,7 +21,7 @@ from md2video.components.registry import register_component
 
 register_component(
     "math_canvas",
-    "1.1.0",
+    "1.1.1",
     "body",
     Path(__file__).parent / "math_canvas.tsx",
     mount="scene",

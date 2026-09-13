@@ -510,8 +510,10 @@ def test_build_and_run_ffmpeg_ken_burns_inside_layout_region(monkeypatch):
 
     filter_complex = _run_build_and_run_ffmpeg(monkeypatch, [img], KenBurnsConfig(enabled=True))
 
-    assert "scale=402:376:force_original_aspect_ratio=increase" in filter_complex
-    assert "s=402x376" in filter_complex
+    # 防抖链：超采样 scale → zoompan（保持超采样尺寸）→ lanczos 缩回区域
+    assert "scale=1608:1504:force_original_aspect_ratio=increase" in filter_complex
+    assert "s=1608x1504" in filter_complex
+    assert "scale=402:376:flags=lanczos" in filter_complex
     assert "overlay=x='38':y='51'" in filter_complex
 
 

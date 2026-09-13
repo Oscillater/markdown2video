@@ -1,5 +1,8 @@
 """Ken Burns 动效单元测试。"""
-from md2video.assembler.ffmpeg_assembler import _build_ken_burns_filter
+from md2video.assembler.ffmpeg_assembler import (
+    _build_ken_burns_filter,
+    _kb_supersample_size,
+)
 from md2video.config import KenBurnsConfig
 
 
@@ -32,3 +35,15 @@ class TestBuildKenBurnsFilter:
         """KenBurnsConfig(enabled=False) 时不应生成 zoompan。"""
         cfg = KenBurnsConfig(enabled=False)
         assert not cfg.enabled
+
+
+class TestKenBurnsSupersample:
+    """zoompan 亚像素取整抖动的超采样治理。"""
+
+    def test_supersample_is_four_times(self):
+        assert _kb_supersample_size(480, 854) == (1920, 3416)
+
+    def test_supersample_capped(self):
+        width, height = _kb_supersample_size(2000, 3000)
+        assert width == 3840
+        assert height == 6144
