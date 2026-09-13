@@ -20,6 +20,9 @@ export type ComponentProps = {
   // + 自己排第几。画面状态跨 shot 累积由组件从这份时间线纯函数推导。
   scene_shots?: SceneShotSlot[];
   scene_shot_index?: number;
+  // plan 作者写给组件的 scene 级编排数据（ScenePlan.visual_params 原样
+  // 透传，仅组件场下发）；词汇由组件自己声明并校验
+  visual_params?: Record<string, unknown>;
 };
 
 // 场景画布时间线里的一个 shot（本场某次「访问」的窗口与正文段）

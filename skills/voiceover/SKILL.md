@@ -35,14 +35,16 @@
 
 ## 组件货架
 
-场景级引用：`"render_backend": "remotion"` + `"component": "<id>@<version>"`。组件逐 shot 接管正文画面；**标题卡与 section 堆叠字幕归引擎——不要把 title/section_header 段放进组件场景**。
+场景级引用：`"render_backend": "remotion"` + `"component": "<id>@<version>"`。组件逐 shot 接管正文画面；**title_main/title_sub 段永远不进组件场景**（标题卡只属于标题场）。section_header 段**可以**写进组件场景——引擎把它画在最顶层当章节牌，组件画面在底下继续走：想让动画从某个 header 的旁白开始起笔，就把那个 header shot 写进组件场景（场复现），这是知识口播的标准手法。
 
 | id | 挂载 | 适合的内容 | 显示规则 |
 |---|---|---|---|
 | `step_list@1.0.0` | 按 shot | 步骤、并列要点（每个 segment 一条，逐条浮现） | 圆形序号 + 文字 |
 | `code_display@1.0.0` | 按 shot | 配置、数据结构、短代码（GitHub 深色面板） | 行号 + 语法着色 |
 | `terminal@1.0.0` | 按 shot | 命令演示（黑窗口） | `$` 前缀 = 命令行，其余 = 灰色输出 |
-| `math_canvas@1.0.0` | **按场** | 数学演示（3b1b 式：画面跨镜头累积，逐镜叠加一笔） | 坐标系底座 + 单位圆/正弦/余弦曲线按访问次序叠加 |
+| `math_canvas@1.2.0` | **按场** | 数学演示（3b1b 式：画面跨镜头累积，逐镜叠加一笔） | 动点绕圆 + 曲线按锚点逐点描出；编排写 `visual_params.layers` |
+
+**math_canvas 的图层编排**（`visual_params.layers`，数据驱动、组件不猜）：每层声明 `{shot, kind}`——`kind`：`sine` / `cosine`（底座圆和动点自动在场）；`shot` = 该层起笔的锚点 shot。**把 header shot 写成锚点 = 动画从 header 旁白开始起笔**。`θ` 的基准：动点在 sine 锚点窗口结束时恰好转完第一整圈（"回到起点，曲线归零"逐帧同步）。示例见下方场景画布 JSON。
 
 **两种挂载方式**（记在组件注册表里，plan 无感）：
 
@@ -53,14 +55,27 @@
 
 ```json
 {"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
- "component": "math_canvas@1.0.0",
- "shots": [{"id": "shot_010", "segment_ids": ["content_010"]}]},
-{"id": "scene_005", "visual_type": "text_only", "render_backend": "remotion",
- "shots": [{"id": "shot_011", "segment_ids": ["content_011"]}]},
+ "component": "math_canvas@1.2.0",
+ "visual_params": {"layers": [
+   {"shot": "shot_011", "kind": "sine"},
+   {"shot": "shot_013", "kind": "cosine"}]},
+ "shots": [{"id": "shot_010", "segment_ids": ["header_010"]},
+           {"id": "shot_011", "segment_ids": ["content_010", "content_011"]}]},
 {"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
- "component": "math_canvas@1.0.0",
- "shots": [{"id": "shot_012", "segment_ids": ["content_012"]}]}
+ "component": "math_canvas@1.2.0",
+ "visual_params": {"layers": [
+   {"shot": "shot_011", "kind": "sine"},
+   {"shot": "shot_013", "kind": "cosine"}]},
+ "shots": [{"id": "shot_012", "segment_ids": ["header_012", "content_012"]}]},
+{"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
+ "component": "math_canvas@1.2.0",
+ "visual_params": {"layers": [
+   {"shot": "shot_011", "kind": "sine"},
+   {"shot": "shot_013", "kind": "cosine"}]},
+ "shots": [{"id": "shot_013", "segment_ids": ["content_013"]}]}
 ```
+
+要点：header shot（shot_010、shot_012）写进组件场景 = 动画从 header 旁白起笔，引擎把 header 画在最顶层；每场的 `visual_params.layers` 必须完全一致（同一个场的编排声明只有一份）。
 
 **硬约束：组件显示的文本就是朗读文本**（TTS 读的就是 segment 的 text）。所以：
 

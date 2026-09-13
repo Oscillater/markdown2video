@@ -43,6 +43,8 @@ export type ShotSlot = {
   // 之外的镜头）与本镜在时间线里的序号；字段缺省 = 按 shot 挂的组件
   scene_shots?: {shot_id: string; start: number; end: number; segments: SegmentSlot[]}[];
   scene_shot_index?: number;
+  // plan 作者写给组件的 scene 级编排数据（ScenePlan.visual_params 透传）
+  visual_params?: Record<string, unknown>;
 };
 
 export type StylePayload = {
@@ -69,6 +71,16 @@ export type StylePayload = {
   motif: {kind: string};
 };
 
+export type TimelineTextFact = {
+  segment_id: string;
+  segment_type: string;
+  text: string;
+  start: number;
+  end: number;
+  scene_id: string;
+  shot_id: string;
+};
+
 // 组件的 props 就是调度器产出的 schedule dict 本体（CLI --props 直传）。
 export type Schedule = {
   version: string;
@@ -83,7 +95,7 @@ export type Schedule = {
     regions: Record<string, [number, number, number, number]>;
     segments: SegmentSlot[];
   } | null;
-  timeline: unknown;
+  timeline: {text?: TimelineTextFact[]} | unknown;
 };
 
 const TITLE_REGION_PREFERENCE = ['title', 'body', 'text', 'caption'];
@@ -262,15 +274,14 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
   const titleRegions = titlePayload?.regions ?? {};
   const titleRect = regionRect(titleRegions, TITLE_REGION_PREFERENCE);
 
-  // section headers：按窗口起点排序，堆叠在 section_stack（回退 body）区域
-  const headers: {seg: SegmentSlot; slotIndex: number}[] = [];
-  for (const shot of schedule.shots) {
-    for (const seg of shot.segments) {
-      if (seg.segment_type === 'section_header') {
-        headers.push({seg, slotIndex: headers.length});
-      }
-    }
-  }
+  // section headers：从 timeline text facts 取窗口（开放到下一个 header
+  // 出现，与 manim 堆叠语义一致——shot.segments 里的 header 窗口只有自身
+  // 音频时长，念完就消失，立不住章节牌）。章节牌 = 知识口播的常驻标注。
+  const timelineText: TimelineTextFact[] =
+    (schedule.timeline as {text?: TimelineTextFact[]} | null)?.text ?? [];
+  const headers: {seg: TimelineTextFact}[] = timelineText
+    .filter((fact) => fact.segment_type === 'section_header')
+    .map((fact) => ({seg: fact}));
   headers.sort((a, b) => a.seg.start - b.seg.start);
 
   const visibleHeaders = headers.filter(
@@ -374,7 +385,38 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
           });
       })}
 
-      {/* section header 堆叠字幕 */}
+      {/* A8 表现组件：按 shot 窗口挂载。绝对时间语义（无 Sequence 包装，
+          组件内 useCurrentFrame 即绝对帧）；音频绑定留在下方 wrapper，
+          组件碰不到时间与音频。组件画在 header 之前——section header
+          恒浮于组件画面之上（A8.1 预热窗口语义的前提）。 */}
+      {schedule.shots.map((shot) => {
+        const Comp = resolveComponent(shot);
+        if (!Comp || now < shot.start || now > shot.end) {
+          return null;
+        }
+        const componentProps: ComponentProps = {
+          component: shot.component!,
+          shot_id: shot.shot_id,
+          scene_id: shot.scene_id,
+          width: schedule.width,
+          height: schedule.height,
+          fps,
+          segments: shot.segments.filter(
+            (seg) => seg.segment_type !== 'section_header',
+          ),
+        };
+        // A8.1 场景画布：调度器为按场挂的组件附带全场镜头时间线
+        if (shot.scene_shots) {
+          componentProps.scene_shots = shot.scene_shots;
+          componentProps.scene_shot_index = shot.scene_shot_index ?? 0;
+        }
+        if (shot.visual_params) {
+          componentProps.visual_params = shot.visual_params;
+        }
+        return <Comp key={`component:${shot.shot_id}`} {...componentProps} />;
+      })}
+
+      {/* section header 堆叠字幕（画在组件之上） */}
       {(() => {
         if (visibleHeaders.length === 0) {
           return null;
@@ -420,33 +462,6 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
           </div>
         );
       })()}
-
-      {/* A8 表现组件：按 shot 窗口挂载。绝对时间语义（无 Sequence 包装，
-          组件内 useCurrentFrame 即绝对帧）；音频绑定留在下方 wrapper，
-          组件碰不到时间与音频。 */}
-      {schedule.shots.map((shot) => {
-        const Comp = resolveComponent(shot);
-        if (!Comp || now < shot.start || now > shot.end) {
-          return null;
-        }
-        const componentProps: ComponentProps = {
-          component: shot.component!,
-          shot_id: shot.shot_id,
-          scene_id: shot.scene_id,
-          width: schedule.width,
-          height: schedule.height,
-          fps,
-          segments: shot.segments.filter(
-            (seg) => seg.segment_type !== 'section_header',
-          ),
-        };
-        // A8.1 场景画布：调度器为按场挂的组件附带全场镜头时间线
-        if (shot.scene_shots) {
-          componentProps.scene_shots = shot.scene_shots;
-          componentProps.scene_shot_index = shot.scene_shot_index ?? 0;
-        }
-        return <Comp key={`component:${shot.shot_id}`} {...componentProps} />;
-      })}
 
       {/* 音频绑定：每段一个 Audio 序列，起点 = 调度窗口起点 */}
       {schedule.shots.map((shot) =>

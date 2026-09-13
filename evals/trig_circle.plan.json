@@ -220,9 +220,16 @@
       ]
     },
     {
-      "id": "scene_003",
+      "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
+      "component": "math_canvas@1.2.0",
+      "visual_params": {
+        "layers": [
+          {"shot": "shot_005", "kind": "sine"},
+          {"shot": "shot_007", "kind": "cosine"}
+        ]
+      },
       "section_context": "从一个圆开始",
       "shots": [
         {
@@ -230,16 +237,7 @@
           "segment_ids": [
             "circle_header_001"
           ]
-        }
-      ]
-    },
-    {
-      "id": "scene_004",
-      "visual_type": "text_only",
-      "render_backend": "remotion",
-      "component": "math_canvas@1.1.1",
-      "section_context": "从一个圆开始",
-      "shots": [
+        },
         {
           "id": "shot_004",
           "segment_ids": [
@@ -250,9 +248,16 @@
       ]
     },
     {
-      "id": "scene_005",
+      "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
+      "component": "math_canvas@1.2.0",
+      "visual_params": {
+        "layers": [
+          {"shot": "shot_005", "kind": "sine"},
+          {"shot": "shot_007", "kind": "cosine"}
+        ]
+      },
       "section_context": "正弦是高度",
       "shots": [
         {
@@ -268,7 +273,13 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.1.1",
+      "component": "math_canvas@1.2.0",
+      "visual_params": {
+        "layers": [
+          {"shot": "shot_005", "kind": "sine"},
+          {"shot": "shot_007", "kind": "cosine"}
+        ]
+      },
       "section_context": "正弦是高度",
       "shots": [
         {
@@ -281,9 +292,16 @@
       ]
     },
     {
-      "id": "scene_007",
+      "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
+      "component": "math_canvas@1.2.0",
+      "visual_params": {
+        "layers": [
+          {"shot": "shot_005", "kind": "sine"},
+          {"shot": "shot_007", "kind": "cosine"}
+        ]
+      },
       "section_context": "余弦是水平位置",
       "shots": [
         {
@@ -299,7 +317,13 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.1.1",
+      "component": "math_canvas@1.2.0",
+      "visual_params": {
+        "layers": [
+          {"shot": "shot_005", "kind": "sine"},
+          {"shot": "shot_007", "kind": "cosine"}
+        ]
+      },
       "section_context": "余弦是水平位置",
       "shots": [
         {

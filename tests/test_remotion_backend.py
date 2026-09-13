@@ -479,6 +479,55 @@ def test_schedule_carries_installed_component_ref(tmp_path, monkeypatch):
         reset_components()
 
 
+def test_schedule_passes_visual_params_to_component_scene(tmp_path, monkeypatch):
+    """plan 作者的 scene 级编排数据（visual_params）随组件场下发，
+    非组件场不带该字段（既有 payload 形状零变化）。"""
+    from md2video.components import install as install_mod
+    from md2video.components.registry import (
+        register_component,
+        reset_components,
+    )
+
+    monkeypatch.setattr(install_mod, "REGISTERED_DIR", tmp_path)
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    tsx = src_dir / "tmp_step.tsx"
+    tsx.write_text("export default 1;\n", encoding="utf-8")
+    component = register_component("tmp_step", "1.0.0", "body", tsx)
+    install_mod.install_component(component)
+    try:
+        plan = PlanManifest(
+            segments=[_silent_segment("s1"), _silent_segment("s2")],
+            scenes=[
+                {
+                    "id": "scene_001",
+                    "visual_type": "text_only",
+                    "visual_params": {"layers": [{"shot": "shot_001", "kind": "sine"}]},
+                    "component": "tmp_step@1.0.0",
+                    "shots": [{"id": "shot_001", "segment_ids": ["s1"]}],
+                    "section_context": "test",
+                },
+                {
+                    "id": "scene_002",
+                    "visual_type": "text_only",
+                    "visual_params": {"unrelated": True},
+                    "shots": [{"id": "shot_002", "segment_ids": ["s2"]}],
+                    "section_context": "test",
+                },
+            ],
+            media_declarations={},
+        )
+        schedule, warnings = build_remotion_schedule(plan, ExecutionAssets(), get_pack())
+
+        assert warnings == []
+        assert schedule["shots"][0]["visual_params"] == {
+            "layers": [{"shot": "shot_001", "kind": "sine"}]
+        }
+        assert "visual_params" not in schedule["shots"][1]
+    finally:
+        reset_components()
+
+
 def test_schedule_degrades_registered_but_not_installed_component(tmp_path):
     """已注册但未安装（env 开发期加载）→ 不下发 ref + warning，不静默落
     到 Node 缺省。"""

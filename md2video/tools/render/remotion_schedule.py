@@ -167,7 +167,7 @@ def build_remotion_schedule(
 ) -> tuple[dict[str, Any], list[str]]:
     """推导确定性调度（同 manim construct 时序语义），返回 (schedule, warnings)。"""
     style, warnings = style_payload(pack)
-    scene_components, component_warnings = _scene_component_payloads(plan)
+    scene_components, scene_component_params, component_warnings = _scene_component_payloads(plan)
     warnings.extend(component_warnings)
     audio_by_segment = _audio_facts(assets)
 
@@ -207,10 +207,14 @@ def build_remotion_schedule(
             }
             # A8：scene 声明了已注册的表现组件时随 payload 下发（Node 侧按
             # ref 查组件，查不到走引擎默认渲染）；字段缺省 = 无组件，不改动
-            # 无组件 run 的既有 props。
+            # 无组件 run 的既有 props。visual_params 是 plan 作者写给组件的
+            # scene 级编排数据（A8.1），仅随组件场下发。
             component_ref = scene_components.get(unit.scene_id, "")
             if component_ref:
                 entry["component"] = component_ref
+                entry["visual_params"] = dict(
+                    scene_component_params.get(unit.scene_id, {})
+                )
             shots_by_id[unit.shot_id] = entry
             return entry
         entry["start"] = min(entry["start"], start)
@@ -421,13 +425,16 @@ def build_remotion_schedule(
     return schedule, warnings
 
 
-def _scene_component_payloads(plan: PlanManifest) -> tuple[dict[str, str], list[str]]:
-    """scene_id -> 组件 ref（A8）。未注册 / 已注册但未安装进 Remotion 工程
-    的组件都在这里降级 + warning：调度 payload 不带 component 字段，Node
-    侧走引擎默认渲染（与 pack 未知名同通道，不做静默降级）。"""
+def _scene_component_payloads(plan: PlanManifest) -> tuple[dict[str, str], dict[str, dict], list[str]]:
+    """scene_id -> (组件 ref, visual_params)。未注册 / 已注册但未安装进
+    Remotion 工程的组件都在这里降级 + warning：调度 payload 不带 component
+    字段，Node 侧走引擎默认渲染（与 pack 未知名同通道，不做静默降级）。
+    visual_params 随 ref 一起下发——它是 plan 作者写给组件的编排数据
+    （A8.1：图层锚点等），组件自己声明并校验词汇。"""
     from md2video.components.registry import get_component, is_installed
 
     refs: dict[str, str] = {}
+    params: dict[str, dict] = {}
     warnings: list[str] = []
     for scene in plan.scenes:
         if not scene.component:
@@ -446,7 +453,8 @@ def _scene_component_payloads(plan: PlanManifest) -> tuple[dict[str, str], list[
             )
             continue
         refs[scene.id] = scene.component
-    return refs, warnings
+        params[scene.id] = dict(scene.visual_params or {})
+    return refs, params, warnings
 
 
 def _annotate_scene_canvases(
