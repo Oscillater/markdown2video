@@ -2,21 +2,21 @@ import React from 'react';
 import {useCurrentFrame} from 'remotion';
 import type {ComponentProps} from '../../types';
 
-// math_canvas@1.0.0 —— A8.1 场景画布试点组件（mount="scene"）。
-// 对标 3b1b 的画面累积感：坐标系是底座，第一次访问画单位圆，第二次访问
-// 叠加正弦曲线，第三次叠加余弦曲线，再往后每次访问在圆上补一条半径线。
-// 关键语义：画面状态跨 shot 累积由组件从 scene_shots 时间线纯函数推导——
-// 第 N 次访问的实例画出图层 0..N（每个图层在自己的访问窗口内画完并永久
-// 保持），时间不连续、状态连续。
-// 自带视觉（契约：不消费 pack token）；确定性：一切画面都是 props 与当前
-// 帧的纯函数。
+// math_canvas@1.1.0 —— A8.1 场景画布组件（mount="scene"），动点版。
+// 对标 3b1b：坐标系底座上，动点从最右边出发沿单位圆逆时针匀速转，半径线
+// 跟随；第二次访问正弦曲线逐点描出，第三次余弦。曲线在各自访问窗口内
+// 从 0 描到满（"波峰出现"与解说同步），画完永久保持。
+// 关键语义：**动点角度由累积活跃时间驱动**——切走的镜头里画布不在播，
+// 角度冻结；回到本场从离开的角度继续转。这是纯函数（cue 表 + 当前帧），
+// 确定性与跨镜头状态连续兼得。
+// 自带视觉（契约：不消费 pack token）；字幕承担文字（v1.0.1 起画布无标签）。
 
 const BACKGROUND = '#0B0E14';
 const AXIS = '#7C8798';
 const LABEL = '#9AA7B8';
 const LAYER_COLORS = ['#4FC3F7', '#FFB86C', '#FF7A9E', '#9DE37D', '#C792EA'];
-const DRAW_SECONDS = 1.2;
-// 曲线采样点数（确定性数值积分的近似，纯几何）
+const BASE_DRAW_SECONDS = 1.2;
+const ORBIT_SECONDS = 8; // 动点每 8 秒（活跃时间）转一整圈
 const CURVE_SAMPLES = 96;
 
 function clamp01(value: number): number {
@@ -64,59 +64,123 @@ const MathCanvas: React.FC<ComponentProps> = ({
   const span = Math.min(width * 0.86, r * 4.4);
   const amplitude = r * 0.92;
 
+  // 动点角度：累积活跃时间（此前访问全额 + 当前访问内经过的时间）
+  let activeSeconds = 0;
+  for (let i = 0; i < visits.length; i++) {
+    const visit = visits[i];
+    if (now <= visit.start) {
+      break;
+    }
+    activeSeconds += Math.min(now, visit.end) - visit.start;
+  }
+  const theta = (activeSeconds / ORBIT_SECONDS) * Math.PI * 2;
+  const dotX = cx + Math.cos(theta) * r;
+  const dotY = cy - Math.sin(theta) * r;
+
   const layers: React.ReactNode[] = [];
   for (let i = 0; i <= current; i++) {
     const visit = visits[i];
     const start = visit ? visit.start : 0;
-    const progress = clamp01((now - start) / DRAW_SECONDS);
     const color = LAYER_COLORS[i % LAYER_COLORS.length];
-    const drawProps = {
-      pathLength: 1,
-      strokeDasharray: 1,
-      strokeDashoffset: 1 - progress,
-      fill: 'none',
-      stroke: color,
-      strokeWidth: 3,
-      strokeLinecap: 'round' as const,
-    };
     if (i === 0) {
-      layers.push(<circle key="layer0" cx={cx} cy={cy} r={r} {...drawProps} />);
-    } else if (i === 1) {
+      // 单位圆先画出，随后动点与半径线登场
+      const progress = clamp01((now - start) / BASE_DRAW_SECONDS);
       layers.push(
-        <path
-          key="layer1"
-          d={curvePath(cx, cy, span, amplitude, 0)}
-          {...drawProps}
+        <circle
+          key="layer0"
+          cx={cx}
+          cy={cy}
+          r={r}
+          pathLength={1}
+          strokeDasharray={1}
+          strokeDashoffset={1 - progress}
+          fill="none"
+          stroke={color}
+          strokeWidth={3}
         />,
       );
-    } else if (i === 2) {
-      layers.push(
-        <path
-          key="layer2"
-          d={curvePath(cx, cy, span, amplitude, Math.PI / 2)}
-          {...drawProps}
-        />,
-      );
-    } else {
-      const angle = ((i - 2) * Math.PI) / 4;
-      const x = cx + Math.cos(angle) * r;
-      const y = cy - Math.sin(angle) * r;
-      layers.push(
-        <g key={`layer${i}`}>
-          <line x1={cx} y1={cy} x2={x} y2={y} {...drawProps} />
-          <circle
-            cx={x}
-            cy={y}
-            r={6 * progress}
-            fill={color}
-            stroke="none"
-          />
-        </g>,
-      );
+      const dotProgress = clamp01((now - start - BASE_DRAW_SECONDS) / 0.4);
+      if (dotProgress > 0) {
+        const dotRadius = 8 * dotProgress;
+        layers.push(
+          <g key="orbit">
+            <line
+              x1={cx}
+              y1={cy}
+              x2={dotX}
+              y2={dotY}
+              stroke={color}
+              strokeWidth={2}
+              opacity={0.8 * dotProgress}
+            />
+            <circle cx={dotX} cy={dotY} r={dotRadius} fill={color} opacity={dotProgress} />
+          </g>,
+        );
+      }
+      continue;
     }
+    if (i === 1 || i === 2) {
+      // 曲线在本次访问窗口内逐点描出（描满永久保持），带波头节点
+      const visitDuration = visit ? Math.max(0.001, visit.end - visit.start) : 1;
+      const progress = clamp01((now - start) / visitDuration);
+      const phase = i === 1 ? 0 : Math.PI / 2;
+      const drawProps = {
+        pathLength: 1,
+        strokeDasharray: 1,
+        strokeDashoffset: 1 - progress,
+        fill: 'none',
+        stroke: color,
+        strokeWidth: 3,
+        strokeLinecap: 'round' as const,
+      };
+      layers.push(
+        <path
+          key={`layer${i}`}
+          d={curvePath(cx, cy, span, amplitude, phase)}
+          {...drawProps}
+        />,
+      );
+      if (progress > 0 && progress < 1) {
+        const headX = cx - span / 2 + progress * span;
+        const headY = cy - Math.sin(phase + progress * Math.PI * 2) * amplitude;
+        layers.push(
+          <circle
+            key={`head${i}`}
+            cx={headX}
+            cy={headY}
+            r={6}
+            fill={color}
+          />,
+        );
+      }
+      continue;
+    }
+    // 更晚的访问：圆上按 45° 步进补半径线（词汇表扩展位）
+    const visitStart = start;
+    const progress = clamp01((now - visitStart) / BASE_DRAW_SECONDS);
+    const angle = ((i - 2) * Math.PI) / 4;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy - Math.sin(angle) * r;
+    layers.push(
+      <g key={`layer${i}`}>
+        <line
+          x1={cx}
+          y1={cy}
+          x2={x}
+          y2={y}
+          pathLength={1}
+          strokeDasharray={1}
+          strokeDashoffset={1 - progress}
+          stroke={color}
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+        <circle cx={x} cy={y} r={6 * progress} fill={color} stroke="none" />
+      </g>,
+    );
   }
 
-  // 知识区格式：文字归烧录字幕，画布不再渲染解说标签（曾与字幕物理重叠）
+  // 知识区格式：文字归烧录字幕，画布不再渲染解说标签（v1.0.1）
   const watermark = `math_canvas · visit ${current + 1}/${visits.length || 1}`;
 
   return (

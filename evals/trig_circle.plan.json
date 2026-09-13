@@ -237,7 +237,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.0.1",
+      "component": "math_canvas@1.1.0",
       "section_context": "从一个圆开始",
       "shots": [
         {
@@ -268,7 +268,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.0.1",
+      "component": "math_canvas@1.1.0",
       "section_context": "正弦是高度",
       "shots": [
         {
@@ -299,7 +299,7 @@
       "id": "scene_004",
       "visual_type": "text_only",
       "render_backend": "remotion",
-      "component": "math_canvas@1.0.1",
+      "component": "math_canvas@1.1.0",
       "section_context": "余弦是水平位置",
       "shots": [
         {

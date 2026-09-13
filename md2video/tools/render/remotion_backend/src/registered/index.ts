@@ -6,6 +6,7 @@ import type {ComponentProps} from './types';
 import code_display_1_0_0 from './components/code_display/code_display_1_0_0.tsx';
 import math_canvas_1_0_0 from './components/math_canvas/math_canvas_1_0_0.tsx';
 import math_canvas_1_0_1 from './components/math_canvas/math_canvas_1_0_1.tsx';
+import math_canvas_1_1_0 from './components/math_canvas/math_canvas_1_1_0.tsx';
 import step_list_1_0_0 from './components/step_list/step_list_1_0_0.tsx';
 import terminal_1_0_0 from './components/terminal/terminal_1_0_0.tsx';
 
@@ -13,6 +14,7 @@ export const REGISTERED_COMPONENTS: Record<string, ComponentType<ComponentProps>
   'code_display@1.0.0': code_display_1_0_0,
   'math_canvas@1.0.0': math_canvas_1_0_0,
   'math_canvas@1.0.1': math_canvas_1_0_1,
+  'math_canvas@1.1.0': math_canvas_1_1_0,
   'step_list@1.0.0': step_list_1_0_0,
   'terminal@1.0.0': terminal_1_0_0,
 };
