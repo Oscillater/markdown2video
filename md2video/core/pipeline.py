@@ -99,6 +99,14 @@ class Pipeline:
         from md2video.tools.image.local_image_tool import LocalImageTool
         self.registry.register("stock_image", LocalImageTool())
 
+        # Procedural illustration (code-gen): deterministic, zero-API image
+        # supply for the knowledge-format pipeline. AI text2image later
+        # registers to the same visual_type as another provider.
+        from md2video.tools.image.gen_image_tool import GenImageTool
+        self.registry.register("gen_image", GenImageTool(
+            cache_dir=self.artifacts_dir / "images",
+        ))
+
         # Pexels is optional and registered only when a key is configured.
         pexels_cfg = load_pexels_config()
         if pexels_cfg.api_key:

@@ -71,6 +71,7 @@ def load_planner_config() -> PlannerConfig:
 DEFAULT_TOOL_PRIORITY: dict[str, list[str]] = {
     "tts": ["edge-tts"],
     "stock_image": ["pexels", "local", "pixabay", "_text_only"],
+    "gen_image": ["procedural"],
 }
 
 # These names identify render backends, not scene-level visual providers.

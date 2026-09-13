@@ -61,7 +61,7 @@ future harness preview/review/partial rerun
 - Track A 第二批已落地（2026-09-07）：A4 Runtime Inspectability（run 目录制 + `manifest_viewer.html`）+ A5 Layout 提案机制（`layout_regions` + 约束注册表 + 结构化 LayoutIssue + 子构图 region 化）+ 外部皮肤包文件加载（`MD2VIDEO_STYLE_PACK_FILE`）+ A6 前半（按 scene 多后端分发与合成基础设施）。
 - Track A 第三批已落地（2026-09-07 晚）：A9 OTIO 导出（`timeline.otio` 交付形态）+ A6 后半（Remotion 真实第二后端：Python 调度器 + Node composition，能力词汇声明与降级，混合 manim/remotion 出片，双跑 framemd5 逐帧一致）。
 - Track A 第三批补验（2026-09-08）：CLI 全链路真跑（rule planner + edge-tts 配音 + Remotion 渲染 + FFmpeg 装配）暴露并修复三个 mock 盖不住的集成 bug——①`remotion_tool` 子进程 cwd 切到 backend_dir 后相对路径错位（props 找不到/视频写错目录，先 `resolve()` 再传 CLI，补相对路径回归测试）；②`ffmpeg_assembler.ffprobe_resolution` 对 Remotion 容器多出的尾部空字段（`480x854x`）做 `int('')` 炸裂（只取前两段）；③调度器 before/after 锚点 cue（真实 markdown 的 `[image_start]`/`[music_*]` 全走这条路）挂上时间后从未 append 进 `markers_out`，时间闸门直接拒绝且图片/BGM 条目为空（锚前=段起点、锚后=段终点落盘；锚点段不在本 shot 时收敛到本 shot 末端）。修正早前错误结论：图片/BGM 不需要进 Remotion payload——正文由组件按 region 画，图片/Ken Burns 与 BGM 由后端无关的装配层按 timeline marker 叠加；marker 修复后带图+BGM 的 `example.md` 走 Remotion 完整出片（66.6s，抽帧验证 `image_top_text_bottom` 版式成立、窗口外无图）。
-- 最新验证：2026-09-13 运行 `python -m pytest -q`，结果是 `629 passed, 6 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
+- 最新验证：2026-09-13 运行 `python -m pytest -q`，结果是 `643 passed, 6 skipped, 2 warnings`；skip 的是 env-gated 真渲染用例（`MD2VIDEO_RENDER_SMOKE=1` 像素 smoke、multi_backend 真渲染验收、remotion 单后端与混合后端真渲染），warnings 是上游第三方 deprecation（cloup/pydub，见 Maintenance）。
 - 近期主线已完成（2026-09-12）：~~「组件注册 + 口播 skill」~~ ✅——场景风格由注册组件承载（plan 引用 `id@version`），知识口播 craft 由 skill 承载（`skills/voiceover/SKILL.md`，agent 读结构化 markdown、经 `--plan` 直产 plan）。
 - 已有旧的 Markdown -> MP4 流程：`python -m md2video example/example.md -o artifacts/output.mp4`；中间产物按 run 落在 `artifacts/runs/<run_id>/`（永不覆盖），附 `manifest_viewer.html` 检查页。
 - 已知问题：LLM planner API key 401（配置问题，Rule planner fallback 正常）。
@@ -306,7 +306,7 @@ showcase 首片（2026-09-13）：`evals/trig_circle.md` 经 skill 产 plan 出�
 
 ### P0 知识区格式（本轮施工）
 
-- [ ] **代码生图 tool**：注册一个程序化插画视觉工具（PIL/几何绘图产 PNG → execution-assets，带 provider/cache_key，失败降级 + warning、沿用既有严格本地策略）；scene 引用方式与 stock_image 完全同构。AI 生图留同一口子（provider 待定，见 P3）。
+- [x] **代码生图 tool**：`GenImageTool`（provider="procedural"，visual_type `gen_image`）——PIL 确定性绘制四种母题（orbit/layers/waves/blocks），prompt 哈希作种子（跨运行逐字节一致），三套深底调色板，图内不渲染文字（文字归字幕与解说）；ToolCache 缓存（generator 版本号进 cache_key，改绘制即失效）；style/palette 拼错 fail fast 走既有「工具失败→warning+降级」通道；管线默认注册 + 优先级表 `gen_image: ["procedural"]`。AI 生图（text2image）留同一 visual_type 口子。验收：✅（2026-09-13）14 项单测（确定性逐字节/契约字段/缓存命中/校验 fail-fast/注册接线），四母题 480x854 样本目检通过；全量 `643 passed, 6 skipped`。
 - [ ] **烧录字幕**：timeline text cue → assembler 逐段叠加；定位为**文字的唯一载体**（不只是加字幕）。样式 v1 从简（位置/字号/描边），后续归 knowledge pack 接管。
 - [ ] **BGM 接线 + skill 套路升级**：marker/BGM infra 现成、两支成片从未用上——skill 结构套路补三件事：按段落配图（写生图 prompt 或素材词）、BGM 段落、字幕观感自查项。
 - [ ] **验收片**：出一 条真正的知识区格式片——解说 + 程序化插画 + 字幕 + BGM 四样齐，对着「陌生人刷到不划走」读片。
