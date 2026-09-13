@@ -340,7 +340,8 @@ def attach_image_layout_regions(
 def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
                          base_has_audio: bool, out_path: Path,
                          video_duration: float, video_width: int, video_height: int,
-                         gain: float = None, ken_burns_config=None):
+                         gain: float = None, ken_burns_config=None,
+                         subtitle_filter: str = None):
 
     REL_MAX_WIDTH = 0.6
     REL_MAX_HEIGHT = 0.7
@@ -456,6 +457,11 @@ def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
             vid_parts.extend([scale_filter, overlay_filter])
         video_label = out_label
 
+    # 烧录字幕：叠加在全部视频滤镜之后（字幕永不被图片遮挡）
+    if subtitle_filter:
+        vid_parts.append(f"{video_label}{subtitle_filter}[vsub]")
+        video_label = "[vsub]"
+
     has_filter = audio_filter_parts or vid_parts
     if has_filter:
         filter_parts = audio_filter_parts + vid_parts
@@ -482,7 +488,8 @@ class FFmpegAssembler:
                  bg_scale: float = 0.2, vol: float = 0.8,
                  fade: float = 2.0, trim_silence: bool = False, gain: float = None,
                  md_dir: Path = None, timeline_path: Path = None,
-                 ken_burns_config=None, execution_assets: ExecutionAssets = None):
+                 ken_burns_config=None, execution_assets: ExecutionAssets = None,
+                 burn_subtitles: bool = False):
         self.plan = plan
         self.result = result
         self.video_path = video_path
@@ -496,6 +503,7 @@ class FFmpegAssembler:
         self.timeline_path = Path(timeline_path) if timeline_path else None
         self.ken_burns_config = ken_burns_config
         self.execution_assets = execution_assets
+        self.burn_subtitles = burn_subtitles
 
     def assemble(self) -> Path:
         video_width, video_height = ffprobe_resolution(self.video_path)
@@ -574,11 +582,38 @@ class FFmpegAssembler:
                 from md2video.config import load_ken_burns_config
                 kb_config = load_ken_burns_config()
 
+            # 烧录字幕：任何字幕问题都只降级（warning + 无字幕），不阻断成片
+            subtitle_filter = None
+            if self.burn_subtitles:
+                try:
+                    from md2video.assembler.subtitles import (
+                        build_ass_file,
+                        escape_filter_path,
+                        extract_subtitle_entries,
+                    )
+                    entries = extract_subtitle_entries(
+                        self.plan, timeline_path, self.execution_assets,
+                    )
+                    if entries:
+                        ass_path = build_ass_file(
+                            entries, video_width, video_height,
+                            tmpdir / "subtitles.ass",
+                        )
+                        subtitle_filter = (
+                            f"subtitles=filename='{escape_filter_path(ass_path)}'"
+                        )
+                        print(f"Subtitles: {len(entries)} entries")
+                    else:
+                        print("Subtitles: 0 narrated entries (skipped)")
+                except Exception as exc:
+                    print(f"  Subtitle warning (skipped): {exc}")
+
             build_and_run_ffmpeg(
                 self.video_path, prepared_music, prepared_images,
                 base_has_audio, self.output_path,
                 video_duration, video_width, video_height, gain=self.gain,
                 ken_burns_config=kb_config,
+                subtitle_filter=subtitle_filter,
             )
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)

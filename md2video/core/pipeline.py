@@ -55,7 +55,8 @@ from md2video.tools.tts.edge_tts import EdgeTTSTool
 
 class Pipeline:
     def __init__(self, artifacts_dir=None, voice=None, speed=None, planner=None,
-                 tool_config=None, layout_registry=None, export_bundle=False):
+                 tool_config=None, layout_registry=None, export_bundle=False,
+                 burn_subtitles=False):
         self.artifacts_dir = Path(artifacts_dir or ARTIFACTS_DIR)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self._warnings: list[str] = []
@@ -66,6 +67,8 @@ class Pipeline:
         self.planner = self._create_planner(planner)
         # 解法 4：随 run 额外产出混剪素材包（clips/SRT/EDL/assets）
         self.export_bundle = export_bundle
+        # 知识区格式：把朗读段字幕烧进成片（装配层叠加，默认关）
+        self.burn_subtitles = burn_subtitles
 
         self.tool_config = tool_config or load_tool_config()
         self.layout_registry = layout_registry or create_default_layout_registry()
@@ -265,6 +268,7 @@ class Pipeline:
             md_dir=base_dir,
             timeline_path=timeline_path,
             execution_assets=assets,
+            burn_subtitles=self.burn_subtitles,
         )
         assembler.assemble()
         print(f"  Output: {output_path}")

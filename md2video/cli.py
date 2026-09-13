@@ -19,6 +19,10 @@ def main():
         "--bundle", action="store_true",
         help="Also export an edit-ready media bundle (clips/SRT/EDL/assets) into the run dir",
     )
+    p.add_argument(
+        "--subtitles", action="store_true",
+        help="Burn narration subtitles (content/appendix with audio) into the video",
+    )
     args = p.parse_args()
 
     kwargs = {}
@@ -32,6 +36,8 @@ def main():
         kwargs["planner"] = args.planner
     if args.bundle:
         kwargs["export_bundle"] = True
+    if args.subtitles:
+        kwargs["burn_subtitles"] = True
 
     if bool(args.input) == bool(args.plan):
         p.error("provide exactly one input: markdown path or --plan plan.json")

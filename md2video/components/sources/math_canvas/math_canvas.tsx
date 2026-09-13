@@ -13,7 +13,6 @@ import type {ComponentProps} from '../../types';
 
 const BACKGROUND = '#0B0E14';
 const AXIS = '#7C8798';
-const TEXT = '#E8EDF4';
 const LABEL = '#9AA7B8';
 const LAYER_COLORS = ['#4FC3F7', '#FFB86C', '#FF7A9E', '#9DE37D', '#C792EA'];
 const DRAW_SECONDS = 1.2;
@@ -117,11 +116,8 @@ const MathCanvas: React.FC<ComponentProps> = ({
     }
   }
 
-  // 当前访问的解说首句作为画布标签（跟着本次访问的窗口淡入）
-  const visit = visits[current];
-  const label = visit && visit.segments.length > 0 ? visit.segments[0].text : '';
-  const labelStart = visit ? visit.start : 0;
-  const labelOpacity = clamp01((now - labelStart) / 0.4);
+  // 知识区格式：文字归烧录字幕，画布不再渲染解说标签（曾与字幕物理重叠）
+  const watermark = `math_canvas · visit ${current + 1}/${visits.length || 1}`;
 
   return (
     <div style={{position: 'absolute', inset: 0, backgroundColor: BACKGROUND}}>
@@ -131,36 +127,19 @@ const MathCanvas: React.FC<ComponentProps> = ({
         <line x1={cx} y1={cy - r * 1.5} x2={cx} y2={cy + r * 1.5} stroke={AXIS} strokeWidth={1.5} />
         {layers}
       </svg>
-      {label ? (
-        <div
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            bottom: height * 0.08,
-            textAlign: 'center',
-            color: TEXT,
-            fontSize: 22,
-            fontFamily: 'sans-serif',
-            opacity: labelOpacity,
-          }}
-        >
-          {label}
-        </div>
-      ) : null}
       <div
         style={{
           position: 'absolute',
           left: 0,
           right: 0,
-          bottom: height * 0.03,
+          top: height * 0.03,
           textAlign: 'center',
           color: LABEL,
           fontSize: 14,
           fontFamily: 'sans-serif',
         }}
       >
-        {`math_canvas · visit ${current + 1}/${visits.length || 1}`}
+        {watermark}
       </div>
     </div>
   );
