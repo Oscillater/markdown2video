@@ -367,7 +367,7 @@ showcase 首片（2026-09-13）：`evals/trig_circle.md` 经 skill 产 plan 出�
 - [ ] **knowledge pack 重定义**（字幕样式 / 图片柔影圆角 / 口播节奏）：字幕已是文字唯一载体，样式权重升高；P0 若需要可先拆字幕样式最小版。
 - [ ] **Kokoro 本地 TTS 备选**：先做半天「音色/语速对比实验」评估 edge-tts 机器味伤不伤，再决定投不投。
 - [ ] **ghost_transform / area_fill / 画布内镜头控制**：做几何样例片时触发（题材向，不排通用队）。
-- [x] ~~竞品调研落盘~~ ✅（已归档 `docs/competitive-research.md`，commit 2348f36）。
+- [x] ~~竞品调研落盘~~ ✅（已归档 `docs/competitive-research.md`，commit 6876f29）。
 - [x] ~~VLM 读片助手~~ → **取消立工具项**：读片回路由 coding agent 抽帧承担（本批体检即首例）；将来片量大再议最小筛帧脚本。
 
 验收口径：P0 验收 = `trig_circle_kf` 重渲后 agent 复检、逐项销账；P2 验收 = MCP live demo + README + GIF + 门面片可对外演示。顺序即优先级。

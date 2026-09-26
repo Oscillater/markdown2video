@@ -26,3 +26,10 @@ md2video/tools/render/remotion_backend/remotion_build/
 
 # Chromium GPU shader cache from Remotion headless rendering
 GPUCache/
+
+# Component golden frames: acceptance baselines stay local (check_component archives on first run)
+md2video/tools/render/remotion_backend/src/registered/golden/
+
+# Stray read-back / encoder test outputs at repo root
+/_enc_test_*.mp4
+/fg*.png
