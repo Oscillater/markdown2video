@@ -202,3 +202,210 @@ def test_real_ffmpeg_burns_subtitle_pixels(tmp_path: Path, _tiny_video: Path):
     during = _frame(0.7).crop((40, 480, 280, 560))  # 字幕区（底部中央）
     after = _frame(3.8).crop((40, 480, 280, 560))  # 字幕已消失
     assert list(during.getdata()) != list(after.getdata())
+
+
+# ========== P0-1 字幕/组件文字去重（第三条选段规则）==========
+
+
+def _component_plan(component_ref: str) -> PlanManifest:
+    """带组件场的 plan：s1/s2 在组件场内且被朗读，s3 是场外 appendix。"""
+    return PlanManifest(
+        segments=[
+            SegmentPlan(id="s1", text="单位圆上，一个点转圈。", segment_type="content",
+                        audio_request=AudioRequest()),
+            SegmentPlan(id="s2", text="点的高度，画出来是正弦。", segment_type="content",
+                        audio_request=AudioRequest()),
+            SegmentPlan(id="s3", text="结尾一句。", segment_type="appendix",
+                        audio_request=AudioRequest()),
+        ],
+        scenes=[{
+            "id": "scene_010",
+            "visual_type": "text_only",
+            "visual_params": {},
+            "render_backend": "remotion",
+            "component": component_ref,
+            "shots": [{"id": "shot_010", "segment_ids": ["s1", "s2"]}],
+            "section_context": "总结",
+        }],
+    )
+
+
+def _component_timeline(tmp_path: Path) -> Path:
+    data = {
+        "text": [
+            {"segment_id": "s1", "segment_type": "content",
+             "text": "单位圆上，一个点转圈。", "start": 0.0, "end": 3.0,
+             "scene_id": "scene_010", "shot_id": "shot_010"},
+            {"segment_id": "s2", "segment_type": "content",
+             "text": "点的高度，画出来是正弦。", "start": 3.0, "end": 6.0,
+             "scene_id": "scene_010", "shot_id": "shot_010"},
+            {"segment_id": "s3", "segment_type": "appendix",
+             "text": "结尾一句。", "start": 6.0, "end": 8.0,
+             "scene_id": "", "shot_id": ""},
+        ],
+    }
+    path = tmp_path / "component_timeline.json"
+    path.write_text(__import__("json").dumps(data), encoding="utf-8")
+    return path
+
+
+def _fake_component(monkeypatch, *, registered=True, installed=True,
+                    displayed=None):
+    """桩掉组件注册表：控制 registered / installed / displayed_texts 三态。"""
+    import md2video.components.registry as reg
+
+    class _Comp:
+        pass
+
+    comp = _Comp() if registered else None
+    if comp is not None:
+        comp.displayed_texts = (
+            (lambda payload, d=list(displayed): [
+                s["text"] for s in payload
+                if s.get("segment_type") == "content" and s["text"] in d
+            ]) if displayed is not None else None
+        )
+        comp.register_module = "stub"
+
+    monkeypatch.setattr(reg, "get_component", lambda ref: comp)
+    monkeypatch.setattr(reg, "is_installed", lambda ref: installed)
+    if displayed is not None:
+        monkeypatch.setattr(
+            reg, "displayed_texts_for",
+            lambda ref, payload: [
+                s["text"] for s in payload
+                if s.get("segment_type") == "content" and s["text"] in displayed
+            ],
+        )
+    else:
+        monkeypatch.setattr(reg, "displayed_texts_for", lambda ref, payload: None)
+
+
+def test_dedup_skips_component_displayed_text(tmp_path, monkeypatch):
+    """组件显示且被朗读 → 字幕让位（体检问题 1 的修复口径）。"""
+    _fake_component(
+        monkeypatch, displayed=["单位圆上，一个点转圈。", "点的高度，画出来是正弦。"],
+    )
+    entries = extract_subtitle_entries(
+        _component_plan("step_list@1.0.2"),
+        _component_timeline(tmp_path),
+        _assets("s1", "s2", "s3"),
+    )
+    # s1/s2 被组件画上屏 → 跳过；场外 s3 不受影响
+    assert [e["segment_id"] for e in entries] == ["s3"]
+
+
+def test_dedup_keeps_subtitle_when_component_displays_nothing(
+    tmp_path, monkeypatch,
+):
+    """math_canvas 型组件（displayed=[]）：字幕一个都不让位。"""
+    _fake_component(monkeypatch, displayed=[])
+    entries = extract_subtitle_entries(
+        _component_plan("math_canvas@1.5.1"),
+        _component_timeline(tmp_path),
+        _assets("s1", "s2", "s3"),
+    )
+    assert [e["segment_id"] for e in entries] == ["s1", "s2", "s3"]
+
+
+def test_dedup_keeps_subtitle_when_component_unresolved(tmp_path, monkeypatch):
+    """组件未注册 / 已注册未安装 / 未声明 → 一律保留字幕（宁重勿丢）。"""
+    # 未注册
+    _fake_component(monkeypatch, registered=False)
+    entries = extract_subtitle_entries(
+        _component_plan("ghost@1.0.0"), _component_timeline(tmp_path),
+        _assets("s1", "s2", "s3"),
+    )
+    assert [e["segment_id"] for e in entries] == ["s1", "s2", "s3"]
+    # 已注册未安装（降级引擎默认渲染，字幕是唯一文字载体）
+    _fake_component(monkeypatch, registered=True, installed=False)
+    entries = extract_subtitle_entries(
+        _component_plan("step_list@1.0.2"), _component_timeline(tmp_path),
+        _assets("s1", "s2", "s3"),
+    )
+    assert [e["segment_id"] for e in entries] == ["s1", "s2", "s3"]
+    # 未声明 displayed_texts（displayed_texts_for → None = 无法回答）
+    _fake_component(monkeypatch, displayed=None)
+    entries = extract_subtitle_entries(
+        _component_plan("step_list@1.0.2"), _component_timeline(tmp_path),
+        _assets("s1", "s2", "s3"),
+    )
+    assert [e["segment_id"] for e in entries] == ["s1", "s2", "s3"]
+
+
+def test_dedup_partial_display_only_skips_displayed(tmp_path, monkeypatch):
+    """组件只显示其中一句 → 只跳过那句，另一句字幕保留。"""
+    _fake_component(monkeypatch, displayed=["单位圆上，一个点转圈。"])
+    entries = extract_subtitle_entries(
+        _component_plan("step_list@1.0.2"), _component_timeline(tmp_path),
+        _assets("s1", "s2", "s3"),
+    )
+    assert [e["segment_id"] for e in entries] == ["s2", "s3"]
+
+
+def test_dedup_no_component_plan_unchanged(tmp_path):
+    """无组件 plan：第三条规则是 no-op，既有行为零变化。"""
+    entries = extract_subtitle_entries(_plan(), _timeline(tmp_path),
+                                       _assets("s1", "s3", "hdr1"))
+    assert [e["segment_id"] for e in entries] == ["s1", "s3"]
+
+
+# ========== P0-4 CJK 折行升级（禁则 + 均分 + ASCII 原子）==========
+
+
+def _wrap(text: str) -> list[str]:
+    from md2video.assembler.subtitles import _wrap_cjk_text
+    return _wrap_cjk_text(text, 480, 38).split("\\N")
+
+
+_CLOSING = set("，。、；：？！）】》…")
+_OPENING = set("（【《「『")
+
+
+def test_wrap_invariants_corpus():
+    """折行四不变量：零丢失 / 无空行 / 行首零收尾标点+零弱字 /
+    末行不孤（≥3 字）。语料覆盖体检现场 + ASCII 混排。"""
+    from md2video.assembler.subtitles import _WEAK_LINE_START
+
+    corpus = [
+        "单位圆上，一个点转圈。",
+        "公式背了又忘？今天不背公式，只看一张图。",
+        "想象圆上有一个点，从最右边出发，逆时针转圈。",
+        "点的高度，画出来是正弦。点转到最高处，波峰出现；回到起点，曲线归零。",
+        "点的水平位置，画出来是余弦。",
+        "下次忘了公式，就想想这个转圈的点。三角函数不是公式，是一个圆。",
+        "用 ffmpeg 480x854 渲染视频，-c:v libx264 输出。",
+        "圈。",
+        "零。",
+        "收进三句话：单位圆上一个点转圈。",
+    ]
+    for text in corpus:
+        lines = _wrap(text)
+        joined = "".join(lines)
+        assert joined == text, f"zero-loss violated: {text!r} -> {joined!r}"
+        assert all(lines), f"empty line: {text!r}"
+        for line in lines[1:]:
+            assert line[0] not in _CLOSING, f"closing at line start: {line!r}"
+            assert line[0] not in _WEAK_LINE_START, f"weak at line start: {line!r}"
+        for line in lines[:-1]:
+            assert line[-1] not in _OPENING, f"opening at line end: {line!r}"
+        if len(lines) > 1:
+            assert len(lines[-1]) >= 3, f"orphan last line: {lines!r}"
+
+
+def test_wrap_ascii_token_never_split():
+    """ASCII 词/数字/路径原子化：ffmpeg、480x854、libx264 不从中间断开。"""
+    lines = _wrap("用 ffmpeg 480x854 渲染并用 libx264 编码输出到 artifacts 目录")
+    joined_tokens = " ".join("".join(lines).split())
+    assert "ffmpeg" in "".join(lines)
+    for token in ("ffmpeg", "480x854", "libx264"):
+        # 每个 token 完整出现在某一行内（不是被 \N 劈开的两半）
+        assert any(token in line for line in lines), f"{token} split: {lines!r}"
+    assert joined_tokens == " ".join("".join(lines).split())
+
+
+def test_wrap_short_text_single_line():
+    """≤ 每行字数：单行返回，无换行符（保持旧行为）。"""
+    from md2video.assembler.subtitles import _wrap_cjk_text
+
+    assert _wrap_cjk_text("单位圆上，一个点转圈。", 480, 38) == "单位圆上，一个点转圈。"

@@ -103,6 +103,9 @@ def install_component(
         "mount": component.mount,
         "file": relative,
         "content_hash": component.content_hash,
+        # P0 字幕去重：displayed_texts 是 Python callable 、不可序列化，
+        # 清单只记提供它的注册模块，消费方按需显式 import（JSON 永不执行）
+        "register_module": component.register_module,
     })
     _write_manifest(root, entries)
     _write_barrel(root, entries)

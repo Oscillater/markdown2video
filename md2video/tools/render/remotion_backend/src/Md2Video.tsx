@@ -296,6 +296,22 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
   const titleDismissIntent = titleEnd === null ? 'instant' : 'fade';
   const titleWindowEnd = titleEnd === null ? schedule.duration : (titleEnd as number);
 
+  // P0 标题卡版式：整块（主+副+装饰）垂直居中于全画幅，摆脱 title
+  // region 的顶部 20% 横带（旧版标题挤顶部 1/4、下方 3/4 空黑）。
+  // 水平方向仍受 title region 约束（安全区宽度）。装饰条与文字同
+  // 进退（同一 reveal/dismiss 窗口）。
+  const titleAnchor = titleMain ?? titleSub;
+  const decorReveal = titleAnchor
+    ? interpolate(now - titleAnchor.start, [0, REVEAL_SECONDS], [0, 1], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp',
+      })
+    : 1;
+  const decorDismiss = titleAnchor
+    ? dismissStyle(titleDismissIntent, titleWindowEnd - now).opacity
+    : 1;
+  const decorOpacity = decorReveal * decorDismiss;
+
   return (
     <AbsoluteFill style={{backgroundColor: style.palette.background}}>
       <OrbitDots style={style} />
@@ -305,9 +321,9 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
           style={{
             position: 'absolute',
             left: titleRect ? titleRect[0] : 0,
-            top: titleRect ? titleRect[1] : 0,
+            top: 0,
             width: titleRect ? titleRect[2] : '100%',
-            height: titleRect ? titleRect[3] : '100%',
+            height: '100%',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -343,6 +359,43 @@ export const Md2Video: React.FC<Schedule> = (schedule) => {
               align="center"
             />
           ) : null}
+          {/* 标题下方装饰条：accent 横线 + 母题圆点，填掉纯黑断层 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              marginTop: 16,
+              opacity: decorOpacity,
+            }}
+          >
+            <div
+              style={{
+                width: 56,
+                height: 2,
+                borderRadius: 1,
+                backgroundColor: style.palette.accent,
+                opacity: 0.7,
+              }}
+            />
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: style.palette.accent,
+              }}
+            />
+            <div
+              style={{
+                width: 56,
+                height: 2,
+                borderRadius: 1,
+                backgroundColor: style.palette.accent,
+                opacity: 0.7,
+              }}
+            />
+          </div>
         </div>
       ) : null}
 

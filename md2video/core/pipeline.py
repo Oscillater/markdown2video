@@ -210,6 +210,7 @@ class Pipeline:
         run_dir: Path,
     ) -> Path:
         self._validate_plan_layouts(plan)
+        self._validate_plan_text_overflow(plan)
         self._validate_plan_visual_types(plan)
         self._validate_plan_components(plan)
         plan_path = self._write_plan_manifest(plan, run_dir)
@@ -626,6 +627,175 @@ class Pipeline:
                 problems.append(f"Invalid layout for scene {scene.id}: {exc}")
         if problems:
             raise ValueError(" | ".join(problems))
+
+    def _validate_plan_text_overflow(self, plan: PlanManifest) -> None:
+        """P0-3B 文本溢出闸门：引擎画的字 vs 目标 region 容量，渲染前两级裁决。
+
+        范围只覆盖**引擎画的字**（标题卡 / section header / 引擎正文）；
+        组件场的正文排版归 check-component 黄金帧验收（A8 边界），
+        Remotion 朗读段不画正文（文字层 B，字幕是文字载体），都不在此查。
+        差 ≤1 行 → warning（记入 run warnings，viewer 可见）；差 >1 行 →
+        与 layout 闸门同风格 fail fast，一次报全部。纯估算、渲染前跑，
+        失败代价是改 plan 重跑几秒，不浪费渲染（见 layout/textfit.py）。
+        """
+        from md2video.config import MANIM_HEIGHT, MANIM_WIDTH
+        from md2video.layout.mapping import box_pixel_rect
+        from md2video.layout.resolve import resolve_scene_layout
+        from md2video.layout.textfit import (
+            LEVEL_OK,
+            LEVEL_ERROR,
+            LEVEL_WARN,
+            LINE_HEIGHT_RATIO,
+            TextFitResult,
+            check_text_fit,
+            classify_overflow,
+            estimate_wrapped_lines,
+        )
+        from md2video.style.packs import active_pack
+        from md2video.tools.render.manim_renderer_inputs import (
+            TITLE_SEGMENT_TYPES,
+            segment_uses_voiceover,
+        )
+        import math
+
+        _, pack = active_pack()
+        typo = pack.typography
+        px = lambda ratio: max(1, round(ratio * MANIM_HEIGHT))
+        font_title_main = px(typo.size_title_main)
+        font_title_sub = px(typo.size_title_sub)
+        font_header = px(typo.size_section_header)
+        font_body = px(typo.size_body)
+
+        # 与 Md2Video.tsx 标题卡构图对齐（P0-3A）：整块垂直居中于全画幅，
+        # 主副标题之间 gap 12px、下方装饰条 ~40px；manim 侧标题仍在
+        # title region 内（已记录差异，按各自真实消费的框估算）。
+        TITLE_GAP_PX = 12
+        TITLE_DECOR_PX = 56
+        BODY_REGION_PREF = ("body", "text", "caption")
+        TITLE_REGION_PREF = ("title", "body", "text", "caption")
+
+        segment_by_id = {seg.id: seg for seg in plan.segments}
+
+        def pick_region(regions, names):
+            for name in names:
+                if name in regions:
+                    return name, regions[name]
+            return None, None
+
+        problems: list[str] = []
+        warnings: list[str] = []
+
+        def record(result, context: str):
+            if result.level == LEVEL_ERROR:
+                problems.append(f"{context}: {result.message}")
+            elif result.level == LEVEL_WARN:
+                warnings.append(f"Text fit {context}: {result.message}")
+
+        for scene in plan.scenes:
+            try:
+                computed = resolve_scene_layout(
+                    scene.layout_type,
+                    scene.layout_params,
+                    scene.layout_regions,
+                    MANIM_WIDTH,
+                    MANIM_HEIGHT,
+                    registry=self.layout_registry,
+                )
+            except ValueError:
+                continue  # 布局闸门已报，不在这里重复
+            regions = {
+                name: box_pixel_rect(box, MANIM_WIDTH, MANIM_HEIGHT)
+                for name, box in computed.regions.items()
+            }
+            backend = scene.render_backend or self.tool_config.render_backend
+            segments = [
+                segment_by_id[sid]
+                for shot in scene.shots
+                for sid in shot.segment_ids
+                if sid in segment_by_id
+            ]
+
+            # ---- 标题卡（整块：主 + 副 + 装饰，按后端真实消费的框）----
+            title_main = next(
+                (s for s in segments if s.segment_type == "title_main"), None
+            )
+            title_sub = next(
+                (s for s in segments if s.segment_type == "title_sub"), None
+            )
+            if title_main is not None or title_sub is not None:
+                _, title_box = pick_region(regions, TITLE_REGION_PREF)
+                if title_box is not None:
+                    _, _, box_w, box_h = title_box
+                    if backend == "remotion":
+                        # P0-3A 新版式：垂直居中于全画幅，可用高 = 安全区高
+                        box_h = int(MANIM_HEIGHT * 0.88)
+                    # 整块高度 = 主行数×行高 + 副行数×行高 + 间距 + 装饰条
+                    needed = 0.0
+                    if title_main is not None:
+                        main_lines = estimate_wrapped_lines(
+                            title_main.text, font_title_main, box_w,
+                        )
+                        needed += main_lines * font_title_main * LINE_HEIGHT_RATIO
+                    if title_sub is not None:
+                        sub_lines = estimate_wrapped_lines(
+                            title_sub.text, font_title_sub, box_w,
+                        )
+                        needed += sub_lines * font_title_sub * LINE_HEIGHT_RATIO
+                        needed += TITLE_GAP_PX
+                        if backend == "remotion":
+                            # 装饰条是 Md2Video.tsx 专属（P0-3A），manim
+                            # 标题卡无装饰 → 不计入，避免 manim 侧误报
+                            needed += TITLE_DECOR_PX
+                    level = classify_overflow(
+                        needed, float(box_h), font_title_main * LINE_HEIGHT_RATIO,
+                    )
+                    if level != LEVEL_OK:
+                        line_h = font_title_main * LINE_HEIGHT_RATIO
+                        result = TextFitResult(
+                            region="title",
+                            text=(
+                                (title_main.text if title_main else "")
+                                + " + "
+                                + (title_sub.text if title_sub else "")
+                            ),
+                            needed_lines=math.ceil(needed / line_h),
+                            capacity_lines=int(box_h // line_h),
+                            font_size=font_title_main,
+                            level=level,
+                        )
+                        record(result, f"scene {scene.id} title card")
+
+            # ---- 逐段：header 与引擎正文 ----
+            for seg in segments:
+                st = seg.segment_type
+                if st in TITLE_SEGMENT_TYPES:
+                    continue  # 标题卡整块已在上面判过
+                if st == "section_header":
+                    names = ("section_stack",) + BODY_REGION_PREF
+                    font = font_header
+                elif st in ("content", "appendix"):
+                    if scene.component:
+                        continue  # 组件排版归 check-component（A8 边界）
+                    if backend == "remotion" and segment_uses_voiceover(seg):
+                        continue  # 文字层 B：朗读段引擎不画，字幕是载体
+                    names = BODY_REGION_PREF
+                    font = font_body
+                else:
+                    continue  # marker / title 等不走正文渲染
+                region_name, box = pick_region(regions, names)
+                if box is None or not str(seg.text).strip():
+                    continue
+                _, _, box_w, box_h = box
+                result = check_text_fit(seg.text, font, box_w, box_h, region_name)
+                if result.level != "ok":
+                    record(result, f"scene {scene.id} segment {seg.id} ({st})")
+
+        if warnings:
+            self._warnings.extend(warnings)
+        if problems:
+            raise ValueError(
+                f"{len(problems)} text overflow issue(s): " + " | ".join(problems)
+            )
 
     def _validate_plan_components(self, plan: PlanManifest) -> None:
         """A8 组件引用裁判：格式错误与跨后端使用 fail fast；未知 id 不在

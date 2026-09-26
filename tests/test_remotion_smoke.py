@@ -155,8 +155,11 @@ def test_remotion_smoke_contract_and_determinism(tmp_path):
 
     # 落位断言：黑底白字 → 在目标区域内找亮像素
     frame_title = _extract_frame(video_a, 0.5, tmp_path / "title.png")
-    assert _bright_in_rect(frame_title, props_shots["shot_001"]["regions"]["title"]), \
-        "title text not found in title region"
+    # P0 标题卡版式：整块垂直居中于全画幅（不再挤顶部 title 横带），
+    # 水平仍受 title region 宽度约束 → 断言画面中央带出现标题文字
+    title_center_rect = [0, int(HEIGHT * 0.35), WIDTH, int(HEIGHT * 0.30)]
+    assert _bright_in_rect(frame_title, title_center_rect), \
+        "title text not found in frame center"
 
     frame_body = _extract_frame(
         video_a, shots["shot_003"]["start"] + 0.5, tmp_path / "body.png"

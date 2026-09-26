@@ -110,6 +110,7 @@ Runtime contract 定义 planner、tools、renderer 和 assembler 对 Manifest �
 - duration 分配不是全局固定规则，而是由 segment type 加设计包节奏共同决定。有声 content 通常跟随 audio duration；静默可见 content/header 使用 pack 静默节奏；marker 默认是 0 duration 的时间点事件；animation duration 必须计入 segment/shot 预算。
 - `timeline.json` 是 renderer 输出的最终时间事实。`shots` 是主时间轴，必须由 renderer 显式写出 `start/end`；`text` 是可见文本 cue；`markers` 是时间点事件 cue。
 - assembler 以 `timeline.json` 为时间源，但消费前必须校验它覆盖当前 plan 的 shots、可见文本 cue 和 marker cue。缺失、过期或不一致的 timeline 必须 fail fast。
+- 烧录字幕选段三条规则（同层同性质）：①白名单 content/appendix（标题与 section header 有自己的屏上位置）；②只上真被朗读的段（音频资产事实优先，缺位回退 plan `audio_request`）；③**文字载体归组件时，字幕让位**——组件场里被朗读且被组件 `displayed_texts(payload)` 声明画上屏的段跳过字幕（组件文字即该段载体；与文字层 B 的分工：引擎画正文时字幕让位是同一条原则的装配层延伸）。组件未注册/未安装/未声明一律保留字幕（宁重勿丢：降级路径下引擎默认渲染的朗读段不画正文，字幕是唯一文字载体）。timeline text facts 保留不删（组件显示它也是可见事实），只在装配消费时跳过；bundle SRT 是给剪辑软件的可编辑全量轨，不做此跳过。
 
 ## Runtime Artifacts
 

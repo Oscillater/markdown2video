@@ -3,8 +3,10 @@
     {
       "ref": "code_display@1.0.0",
       "kind": "body",
+      "mount": "shot",
       "file": "components/code_display/code_display_1_0_0.tsx",
-      "content_hash": "32fb91312b5927f1970fe420b8722b49509d61c49bee61c8961878702dcaf421"
+      "content_hash": "32fb91312b5927f1970fe420b8722b49509d61c49bee61c8961878702dcaf421",
+      "register_module": "md2video.components.sources.code_display.register"
     },
     {
       "ref": "math_canvas@1.0.0",
@@ -63,6 +65,14 @@
       "content_hash": "2e2e15283641c7890545a9a5ca3621ab6d442bb7029014a947855b66e849c863"
     },
     {
+      "ref": "math_canvas@1.5.1",
+      "kind": "body",
+      "mount": "scene",
+      "file": "components/math_canvas/math_canvas_1_5_1.tsx",
+      "content_hash": "c1e3faa1e5ad03da38ecef9222db4ff95fb7869211c5d4797d46909af8b92219",
+      "register_module": "md2video.components.sources.math_canvas.register"
+    },
+    {
       "ref": "step_list@1.0.0",
       "kind": "body",
       "file": "components/step_list/step_list_1_0_0.tsx",
@@ -80,13 +90,16 @@
       "kind": "body",
       "mount": "shot",
       "file": "components/step_list/step_list_1_0_2.tsx",
-      "content_hash": "bb210ac62c7415768ae962ca6907b62087619e2f33714de7334c7819ba00318b"
+      "content_hash": "bb210ac62c7415768ae962ca6907b62087619e2f33714de7334c7819ba00318b",
+      "register_module": "md2video.components.sources.step_list.register"
     },
     {
       "ref": "terminal@1.0.0",
       "kind": "body",
+      "mount": "shot",
       "file": "components/terminal/terminal_1_0_0.tsx",
-      "content_hash": "4ff314bcee1d45ba4b3b858f020f998d63e50967efec5b1d244529940409624e"
+      "content_hash": "4ff314bcee1d45ba4b3b858f020f998d63e50967efec5b1d244529940409624e",
+      "register_module": "md2video.components.sources.terminal.register"
     }
   ]
 }

@@ -284,7 +284,8 @@ const MathCanvas: React.FC<ComponentProps> = ({
   });
 
   const chapterCount = Math.max(1, boundsWall.length - 1);
-  const watermark = `math_canvas · chapter ${chapterIndex + 1}/${chapterCount}`;
+  // P0 水印退场：组件 id 不进成片（调试信息感）；章节指示改纯数字牌
+  const chapterBadge = `${chapterIndex + 1} / ${chapterCount}`;
 
   return (
     <div style={{position: 'absolute', inset: 0, backgroundColor: BACKGROUND}}>
@@ -302,9 +303,10 @@ const MathCanvas: React.FC<ComponentProps> = ({
           color: LABEL,
           fontSize: 14,
           fontFamily: 'sans-serif',
+          letterSpacing: 2,
         }}
       >
-        {watermark}
+        {chapterBadge}
       </div>
     </div>
   );

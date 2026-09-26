@@ -19,10 +19,19 @@ from pathlib import Path
 
 from md2video.components.registry import register_component
 
+
+def displayed_texts(payload: list[dict]) -> list[str]:
+    """P0 字幕去重契约：math_canvas 只画图形，不把任何 segment 文本上屏
+    （画布解说标签已在 1.0.1 退场）→ 空表 = 字幕一个都不让位。"""
+    return []
+
+
 register_component(
     "math_canvas",
-    "1.5.0",
+    "1.5.1",
     "body",
     Path(__file__).parent / "math_canvas.tsx",
     mount="scene",
+    displayed_texts=displayed_texts,
+    register_module=__name__,
 )

@@ -159,9 +159,9 @@ def verify_component(
     registered_refs: list[str] = []
     original_register = registry_module.register_component
 
-    def _spy(component_id, version, kind, component_file, mount="shot"):
+    def _spy(component_id, version, kind, component_file, mount="shot", **kwargs):
         component = original_register(
-            component_id, version, kind, component_file, mount
+            component_id, version, kind, component_file, mount, **kwargs
         )
         registered_refs.append(component.ref)
         return component
@@ -182,6 +182,21 @@ def verify_component(
     ref = registered_refs[0]
     component = get_component(ref)
     assert component is not None
+
+    # P0 字幕去重契约：注册模块必须声明 displayed_texts 纯函数（装配层
+    # 靠它决定字幕让位；缺声明 = 无法回答 = 字幕重复风险回归）
+    if component.displayed_texts is None:
+        reset_components()
+        raise RuntimeError(
+            f"Component {ref} does not declare displayed_texts(payload); "
+            "subtitle dedup requires a deterministic display declaration"
+        )
+    if not component.register_module:
+        reset_components()
+        raise RuntimeError(
+            f"Component {ref} has no register_module; displayed_texts must "
+            "live in the register module so the assembler can import it"
+        )
 
     print(f"[1/6] Static scan: {component.component_file}")
     source = Path(component.component_file).read_text(encoding="utf-8")

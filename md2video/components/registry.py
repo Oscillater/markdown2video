@@ -22,8 +22,9 @@ import importlib
 import inspect
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any, Callable
 
 COMPONENTS_ENV = "MD2VIDEO_COMPONENTS"
 
@@ -46,7 +47,13 @@ _COMPONENT_REF_RE = re.compile(r"^[a-z][a-z0-9_-]*@\d+\.\d+\.\d+$")
 
 @dataclass(frozen=True)
 class RegisteredComponent:
-    """一个已注册的表现组件：身份、版本与内容哈希（供应链审计用）。"""
+    """一个已注册的表现组件：身份、版本与内容哈希（供应链审计用）。
+
+    `displayed_texts` 是 P0 字幕去重的契约声明（纯函数：payload → 组件画
+    在画面上的文本列表）；它住在注册模块（Python）里、不可序列化，
+    installed.json 只记 `register_module`，消费方按需显式 import 补全
+    （A5 模式：代码只经显式 import，JSON 永不执行）。
+    """
 
     id: str
     version: str
@@ -54,6 +61,8 @@ class RegisteredComponent:
     mount: str  # "shot"（逐镜独立）或 "scene"（场景画布，状态跨 shot 累积）
     component_file: str  # 解析后的绝对路径（.tsx 源码）
     content_hash: str  # sha256(component_file bytes)
+    displayed_texts: Callable[[list[dict[str, Any]]], list[str]] | None = None
+    register_module: str = ""  # 提供 displayed_texts 的注册模块（惰性 import 用）
 
     @property
     def ref(self) -> str:
@@ -69,6 +78,9 @@ def register_component(
     kind: str,
     component_file: str | Path,
     mount: str = "shot",
+    *,
+    displayed_texts: Callable[[list[dict[str, Any]]], list[str]] | None = None,
+    register_module: str = "",
 ) -> RegisteredComponent:
     """注册一个表现组件；相对路径按调用方模块所在目录解析（组件文件随
     注册模块走，与 cwd 无关）。重名同内容幂等，重名异内容 fail fast。"""
@@ -91,6 +103,10 @@ def register_component(
             f"Unsupported component mount {mount!r}; "
             f"supported modes are {COMPONENT_MOUNT_MODES}"
         )
+    if displayed_texts is not None and not callable(displayed_texts):
+        raise ValueError("displayed_texts must be a callable (pure function)")
+    if not isinstance(register_module, str):
+        raise ValueError("register_module must be a module path string")
 
     path = Path(component_file)
     if not path.is_absolute():
@@ -111,6 +127,16 @@ def register_component(
             and existing.kind == kind
             and existing.mount == mount
         ):
+            # 同内容幂等 + 契约补全：清单路径先注册（无 callable），注册
+            # 模块随后被 import 时把 displayed_texts/register_module 补上
+            if displayed_texts is not None and existing.displayed_texts is None:
+                enriched = replace(
+                    existing,
+                    displayed_texts=displayed_texts,
+                    register_module=register_module or existing.register_module,
+                )
+                _REGISTRY[ref] = enriched
+                return enriched
             return existing
         raise ValueError(
             f"Component {ref} already registered with different content "
@@ -124,6 +150,8 @@ def register_component(
         mount=mount,
         component_file=str(path),
         content_hash=content_hash,
+        displayed_texts=displayed_texts,
+        register_module=register_module,
     )
     _REGISTRY[ref] = component
     return component
@@ -132,6 +160,48 @@ def register_component(
 def get_component(ref: str) -> RegisteredComponent | None:
     """按完整 `id@version` 查找；不认识返回 None（调用方降级 + warning）。"""
     return _REGISTRY.get(ref)
+
+
+def displayed_texts_for(
+    ref: str, payload: list[dict[str, Any]]
+) -> list[str] | None:
+    """P0 字幕去重：组件声明画面上呈现的文本（纯函数调用）。
+
+    返回 None = 无法回答（组件未注册 / 未声明 / 声明模块不可加载）
+    ——调用方必须回退到「保留字幕」（宁可重复，不可丢字）。注册表条目
+    来自 installed.json 时没有 callable：按 `register_module` 显式 import
+    补全（A5 模式）；模块已缓存但注册表被 reset 过时 reload 一次再取。
+    声明函数抛错按字幕侧降级约定处理：打印警告、返回 None，不阻断成片。
+    """
+    component = get_component(ref)
+    if component is None:
+        return None
+    fn = component.displayed_texts
+    if fn is None and component.register_module:
+        try:
+            importlib.import_module(component.register_module)
+            component = get_component(ref) or component
+            fn = component.displayed_texts
+            if fn is None:
+                # 模块在本次进程早前已被 import（缓存不重跑）而注册表被
+                # reset 过 → reload 一次让 register 调用重新执行
+                import sys
+
+                module = sys.modules.get(component.register_module)
+                if module is not None:
+                    importlib.reload(module)
+                    component = get_component(ref) or component
+                    fn = component.displayed_texts
+        except Exception as exc:  # noqa: BLE001 - 字幕问题只降级不阻断
+            print(f"  Component warning ({ref}): displayed_texts unavailable: {exc}")
+            return None
+    if fn is None:
+        return None
+    try:
+        return [str(text) for text in fn(payload)]
+    except Exception as exc:  # noqa: BLE001 - 声明违约回退到保留字幕
+        print(f"  Component warning ({ref}): displayed_texts raised: {exc}")
+        return None
 
 
 def registered_components() -> list[RegisteredComponent]:
@@ -182,6 +252,7 @@ def _register_installed_components() -> None:
             entry["kind"],
             path,
             mount=entry.get("mount", "shot"),
+            register_module=entry.get("register_module", ""),
         )
 
 

@@ -1,0 +1,551 @@
+{
+  "version": "2",
+  "segments": [
+    {
+      "id": "title_main_001",
+      "text": "三角函数不用背",
+      "segment_type": "title_main",
+      "audio_request": null,
+      "explicit": false,
+      "section_context": "",
+      "marker_data": null
+    },
+    {
+      "id": "title_sub_001",
+      "text": "一个圆，讲透正弦和余弦",
+      "segment_type": "title_sub",
+      "audio_request": null,
+      "explicit": false,
+      "section_context": "",
+      "marker_data": null
+    },
+    {
+      "id": "hook_001",
+      "text": "公式背了又忘？今天不背公式，只看一张图。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "开场",
+      "marker_data": null
+    },
+    {
+      "id": "circle_header_001",
+      "text": "从一个圆开始",
+      "segment_type": "section_header",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "从一个圆开始",
+      "marker_data": null
+    },
+    {
+      "id": "circle_draw_001",
+      "text": "先画一个单位圆，半径等于一。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "从一个圆开始",
+      "marker_data": null
+    },
+    {
+      "id": "circle_point_001",
+      "text": "想象圆上有一个点，从最右边出发，逆时针转圈。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "从一个圆开始",
+      "marker_data": null
+    },
+    {
+      "id": "sine_header_001",
+      "text": "正弦：点的高度",
+      "segment_type": "section_header",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "正弦是高度",
+      "marker_data": null
+    },
+    {
+      "id": "sine_watch_001",
+      "text": "现在，盯住这个点的高度。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "正弦是高度",
+      "marker_data": null
+    },
+    {
+      "id": "sine_draw_001",
+      "text": "把高度画成曲线，这就是正弦。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "正弦是高度",
+      "marker_data": null
+    },
+    {
+      "id": "sine_peak_001",
+      "text": "点转到最高处，波峰出现；回到起点，曲线归零。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "正弦是高度",
+      "marker_data": null
+    },
+    {
+      "id": "cos_header_001",
+      "text": "余弦：水平的位置",
+      "segment_type": "section_header",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "余弦是水平位置",
+      "marker_data": null
+    },
+    {
+      "id": "cos_watch_001",
+      "text": "换个方向，这次盯住点的水平位置。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "余弦是水平位置",
+      "marker_data": null
+    },
+    {
+      "id": "cos_draw_001",
+      "text": "把水平位置画成曲线，这就是余弦。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "余弦是水平位置",
+      "marker_data": null
+    },
+    {
+      "id": "cos_shift_001",
+      "text": "它和正弦形状一样，只是向左挪了四分之一个圆。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "余弦是水平位置",
+      "marker_data": null
+    },
+    {
+      "id": "sum_header_001",
+      "text": "收进三句话",
+      "segment_type": "section_header",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "收进三句话",
+      "marker_data": null
+    },
+    {
+      "id": "sum_001",
+      "text": "单位圆上，一个点转圈。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "收进三句话",
+      "marker_data": null
+    },
+    {
+      "id": "sum_002",
+      "text": "点的高度，画出来是正弦。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "收进三句话",
+      "marker_data": null
+    },
+    {
+      "id": "sum_003",
+      "text": "点的水平位置，画出来是余弦。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "收进三句话",
+      "marker_data": null
+    },
+    {
+      "id": "end_001",
+      "text": "下次忘了公式，就想想这个转圈的点。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "结尾",
+      "marker_data": null
+    },
+    {
+      "id": "end_002",
+      "text": "三角函数不是公式，是一个圆。",
+      "segment_type": "content",
+      "audio_request": {
+        "voice": "zh-CN-YunxiNeural",
+        "speed": 1.0,
+        "format": "wav"
+      },
+      "explicit": false,
+      "section_context": "结尾",
+      "marker_data": null
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_001",
+      "visual_type": "text_only",
+      "visual_params": {},
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "",
+      "shots": [
+        {
+          "id": "shot_001",
+          "segment_ids": [
+            "title_main_001",
+            "title_sub_001"
+          ],
+          "cues": [
+            {
+              "id": "cue_music_calm_start",
+              "cue_type": "marker_music",
+              "kind": "start",
+              "name": "calm",
+              "position": "start"
+            }
+          ]
+        }
+      ],
+      "section_context": "开场"
+    },
+    {
+      "id": "scene_002",
+      "visual_type": "gen_image",
+      "visual_params": {
+        "prompt": "开场概念图：深蓝夜色中一个发光的圆与环绕的轨道节点，数学概念氛围插画",
+        "style": "orbit",
+        "palette": "ink"
+      },
+      "layout_type": "full_bleed_image_caption_bottom",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "",
+      "shots": [
+        {
+          "id": "shot_002",
+          "segment_ids": [
+            "hook_001"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "开场"
+    },
+    {
+      "id": "scene_004",
+      "visual_type": "text_only",
+      "visual_params": {
+        "layers": [
+          {
+            "shot": "shot_005",
+            "kind": "sine"
+          },
+          {
+            "shot": "shot_007",
+            "kind": "cosine"
+          }
+        ]
+      },
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "math_canvas@1.5.1",
+      "shots": [
+        {
+          "id": "shot_003",
+          "segment_ids": [
+            "circle_header_001"
+          ],
+          "cues": []
+        },
+        {
+          "id": "shot_004",
+          "segment_ids": [
+            "circle_draw_001",
+            "circle_point_001"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "从一个圆开始"
+    },
+    {
+      "id": "scene_004",
+      "visual_type": "text_only",
+      "visual_params": {
+        "layers": [
+          {
+            "shot": "shot_005",
+            "kind": "sine"
+          },
+          {
+            "shot": "shot_007",
+            "kind": "cosine"
+          }
+        ]
+      },
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "math_canvas@1.5.1",
+      "shots": [
+        {
+          "id": "shot_005",
+          "segment_ids": [
+            "sine_header_001",
+            "sine_watch_001"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "正弦是高度"
+    },
+    {
+      "id": "scene_004",
+      "visual_type": "text_only",
+      "visual_params": {
+        "layers": [
+          {
+            "shot": "shot_005",
+            "kind": "sine"
+          },
+          {
+            "shot": "shot_007",
+            "kind": "cosine"
+          }
+        ]
+      },
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "math_canvas@1.5.1",
+      "shots": [
+        {
+          "id": "shot_006",
+          "segment_ids": [
+            "sine_draw_001",
+            "sine_peak_001"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "正弦是高度"
+    },
+    {
+      "id": "scene_004",
+      "visual_type": "text_only",
+      "visual_params": {
+        "layers": [
+          {
+            "shot": "shot_005",
+            "kind": "sine"
+          },
+          {
+            "shot": "shot_007",
+            "kind": "cosine"
+          }
+        ]
+      },
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "math_canvas@1.5.1",
+      "shots": [
+        {
+          "id": "shot_007",
+          "segment_ids": [
+            "cos_header_001",
+            "cos_watch_001"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "余弦是水平位置"
+    },
+    {
+      "id": "scene_004",
+      "visual_type": "text_only",
+      "visual_params": {
+        "layers": [
+          {
+            "shot": "shot_005",
+            "kind": "sine"
+          },
+          {
+            "shot": "shot_007",
+            "kind": "cosine"
+          }
+        ]
+      },
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "math_canvas@1.5.1",
+      "shots": [
+        {
+          "id": "shot_008",
+          "segment_ids": [
+            "cos_draw_001",
+            "cos_shift_001"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "余弦是水平位置"
+    },
+    {
+      "id": "scene_009",
+      "visual_type": "text_only",
+      "visual_params": {},
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "",
+      "shots": [
+        {
+          "id": "shot_009",
+          "segment_ids": [
+            "sum_header_001"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "收进三句话"
+    },
+    {
+      "id": "scene_010",
+      "visual_type": "text_only",
+      "visual_params": {},
+      "layout_type": "center_title_body",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "step_list@1.0.2",
+      "shots": [
+        {
+          "id": "shot_010",
+          "segment_ids": [
+            "sum_001",
+            "sum_002",
+            "sum_003"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "收进三句话"
+    },
+    {
+      "id": "scene_011",
+      "visual_type": "gen_image",
+      "visual_params": {
+        "prompt": "收束插画：平静的声波曲线渐渐汇成一条圆融的闭合曲线，深夜色调",
+        "style": "waves",
+        "palette": "ink"
+      },
+      "layout_type": "full_bleed_image_caption_bottom",
+      "layout_params": {},
+      "layout_regions": null,
+      "render_backend": "remotion",
+      "component": "",
+      "shots": [
+        {
+          "id": "shot_011",
+          "segment_ids": [
+            "end_001",
+            "end_002"
+          ],
+          "cues": []
+        }
+      ],
+      "section_context": "结尾"
+    }
+  ],
+  "media_declarations": {
+    "music": {
+      "calm": "assets/bgm_calm_pad.wav"
+    }
+  }
+}

@@ -42,7 +42,7 @@
 | `step_list@1.0.0` | 按 shot | 步骤、并列要点（每个 segment 一条，逐条浮现） | 圆形序号 + 文字 |
 | `code_display@1.0.0` | 按 shot | 配置、数据结构、短代码（GitHub 深色面板） | 行号 + 语法着色 |
 | `terminal@1.0.0` | 按 shot | 命令演示（黑窗口） | `$` 前缀 = 命令行，其余 = 灰色输出 |
-| `math_canvas@1.2.0` | **按场** | 数学演示（3b1b 式：画面跨镜头累积，逐镜叠加一笔） | 动点绕圆 + 曲线按锚点逐点描出；编排写 `visual_params.layers` |
+| `math_canvas@1.5.1` | **按场** | 数学演示（3b1b 式：画面跨镜头累积，逐镜叠加一笔） | 动点绕圆 + 曲线按锚点逐点描出；编排写 `visual_params.layers` |
 
 **math_canvas 的图层编排**（`visual_params.layers`，数据驱动、组件不猜）：每层声明 `{shot, kind}`——`kind`：`sine` / `cosine`（底座圆和动点自动在场）；`shot` = 该层起笔的锚点 shot。**把 header shot 写成锚点 = 动画从 header 旁白开始起笔**。`θ` 的基准：动点在 sine 锚点窗口结束时恰好转完第一整圈（"回到起点，曲线归零"逐帧同步）。示例见下方场景画布 JSON。
 
@@ -55,20 +55,20 @@
 
 ```json
 {"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
- "component": "math_canvas@1.2.0",
+ "component": "math_canvas@1.5.1",
  "visual_params": {"layers": [
    {"shot": "shot_011", "kind": "sine"},
    {"shot": "shot_013", "kind": "cosine"}]},
  "shots": [{"id": "shot_010", "segment_ids": ["header_010"]},
            {"id": "shot_011", "segment_ids": ["content_010", "content_011"]}]},
 {"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
- "component": "math_canvas@1.2.0",
+ "component": "math_canvas@1.5.1",
  "visual_params": {"layers": [
    {"shot": "shot_011", "kind": "sine"},
    {"shot": "shot_013", "kind": "cosine"}]},
  "shots": [{"id": "shot_012", "segment_ids": ["header_012", "content_012"]}]},
 {"id": "scene_004", "visual_type": "text_only", "render_backend": "remotion",
- "component": "math_canvas@1.2.0",
+ "component": "math_canvas@1.5.1",
  "visual_params": {"layers": [
    {"shot": "shot_011", "kind": "sine"},
    {"shot": "shot_013", "kind": "cosine"}]},
@@ -168,7 +168,7 @@ python -m md2video --plan <plan.json> -o <out.mp4> --subtitles
 2. **viewer**：shot 数量、每段时长、cue 落位是否合预期。
 3. **抽帧**：对组件 shot 抽 1~2 帧，确认画面挂上了（终端黑窗 / 步骤列表 / 代码面板），正文没掉回默认渲染：
    `ffmpeg -y -ss <秒> -i <成片> -frames:v 1 frame.png`
-   知识区片再抽三帧确认格式四样：插图场景真的有图、字幕在底部跟着解说走、没有字幕与画面文字打架。
+   知识区片再抽三帧确认格式四样：插图场景真的有图、字幕在底部跟着解说走、没有字幕与画面文字打架。**防误报：组件场里被朗读的段不上字幕是预期**（文字载体归组件，字幕让位，见 architecture「字幕让位」）——别把它当字幕丢失报。
 4. **听感**（需要人）：命令句、代码句让用户听一遍，别扭的改写文本；BGM 音量以"注意不到它在放，关掉觉得空"为准。
 
 ## 缺组件怎么办

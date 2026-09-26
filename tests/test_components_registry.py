@@ -240,6 +240,8 @@ def test_install_and_uninstall_roundtrip(tmp_path, monkeypatch):
         "mount": "shot",
         "file": "components/tmp_step/tmp_step_1_0_0.tsx",
         "content_hash": component.content_hash,
+        # P0 字幕去重：未声明 displayed_texts 的组件清单带空模块名
+        "register_module": "",
     }]
     assert (tmp_path / "index.ts").read_text(encoding="utf-8") == install_mod.render_barrel(
         manifest["components"]
@@ -284,3 +286,84 @@ def test_installed_component_drift_fails_fast(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="content hash mismatch"):
         registry_mod.reset_components()
+
+
+# ========== P0 字幕去重契约：displayed_texts / register_module ==========
+
+
+def test_register_displayed_texts_roundtrip(tmp_path):
+    tsx = _write_tsx(tmp_path, name="dedup.tsx", body="export default 1;\n")
+
+    def displayed(payload):
+        return [s["text"] for s in payload if s.get("segment_type") == "content"]
+
+    component = register_component(
+        "dedup_demo", "1.0.0", "body", tsx,
+        displayed_texts=displayed, register_module=__name__,
+    )
+    assert component.displayed_texts is displayed
+    assert component.register_module == __name__
+    assert get_component("dedup_demo@1.0.0") is component
+
+
+def test_register_rejects_non_callable_displayed_texts(tmp_path):
+    tsx = _write_tsx(tmp_path, name="bad.tsx", body="export default 1;\n")
+    with pytest.raises(ValueError, match="callable"):
+        register_component(
+            "bad_display", "1.0.0", "body", tsx, displayed_texts=["not", "callable"],
+        )
+
+
+def test_idempotent_registration_enriches_displayed_texts(tmp_path):
+    """清单路径先注册（无 callable），注册模块随后 import → 契约补全。"""
+    tsx = _write_tsx(tmp_path, name="enrich.tsx", body="export default 1;\n")
+    first = register_component("enrich_demo", "1.0.0", "body", tsx)
+
+    def displayed(payload):
+        return []
+
+    second = register_component(
+        "enrich_demo", "1.0.0", "body", tsx,
+        displayed_texts=displayed, register_module="some.register",
+    )
+    assert second is not first  # 条目被替换为补全后的版本
+    assert second.content_hash == first.content_hash
+    assert second.displayed_texts is displayed
+    assert second.register_module == "some.register"
+    # 幂等：再注册（带同一 callable）不再替换
+    third = register_component(
+        "enrich_demo", "1.0.0", "body", tsx,
+        displayed_texts=displayed, register_module="some.register",
+    )
+    assert third is second
+
+
+def test_displayed_texts_for_answers_from_register_module(tmp_path, monkeypatch):
+    """注册表条目缺 callable → 按 register_module 显式 import 补全后作答。"""
+    from md2video.components import registry as reg
+
+    tsx = _write_tsx(tmp_path, name="lazy.tsx", body="export default 1;\n")
+    reg.register_component(
+        "lazy_demo", "1.0.0", "body", tsx, register_module="",
+    )
+    # 无模块可 import → 无法回答（None，调用方保留字幕）
+    assert reg.displayed_texts_for("lazy_demo@1.0.0", []) is None
+    # 未注册 ref → None
+    assert reg.displayed_texts_for("ghost@9.9.9", []) is None
+
+
+def test_manifest_roundtrip_preserves_register_module(tmp_path, monkeypatch):
+    """installed.json 记住 register_module，清单重注册后可追溯声明来源。"""
+    import json
+
+    from md2video.components import install as install_mod
+
+    monkeypatch.setattr(install_mod, "REGISTERED_DIR", tmp_path)
+    tsx = _write_tsx(tmp_path / "src", name="mod.tsx", body="export default 1;\n")
+    component = register_component(
+        "mod_demo", "1.0.0", "body", tsx,
+        displayed_texts=lambda payload: [], register_module="pkg.mod.register",
+    )
+    install_mod.install_component(component)
+    manifest = json.loads((tmp_path / "installed.json").read_text(encoding="utf-8"))
+    assert manifest["components"][0]["register_module"] == "pkg.mod.register"
