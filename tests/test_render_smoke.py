@@ -26,6 +26,8 @@ from md2video.assembler.ffmpeg_assembler import (
     attach_image_layout_regions,
 )
 from md2video.manifest.schema import (
+    AudioAsset,
+    AudioRequest,
     ExecutionAssets,
     PlanManifest,
     ScenePlan,
@@ -110,6 +112,41 @@ def _has_bright(im: Image.Image, x0, x1, y0, y1, step=2, threshold=400) -> bool:
             if sum(im.getpixel((x, y))) > threshold:
                 return True
     return False
+
+
+def test_voiced_render_uses_ledger_for_mislabeled_mp3(tmp_path):
+    """Default Manim must not re-probe .wav-named MP3 via mutagen."""
+    audio = tmp_path / "legacy-mp3.wav"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+        "sine=frequency=440:duration=1.5", "-f", "mp3", str(audio),
+    ], check=True, capture_output=True)
+    probe = subprocess.run([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1", str(audio),
+    ], check=True, capture_output=True, text=True)
+    duration = float(probe.stdout.strip())
+    plan = PlanManifest(
+        segments=[SegmentPlan(
+            id="body", text="Cached narration", segment_type="content", audio_request=AudioRequest(),
+        )],
+        scenes=[ScenePlan(id="main", shots=[ShotPlan(id="shot", segment_ids=["body"])])],
+    )
+    assets = ExecutionAssets(audio_assets=[
+        AudioAsset(segment_id="body", path=str(audio), duration=duration),
+    ])
+    plan_path, assets_path = tmp_path / "plan.json", tmp_path / "execution-assets.json"
+    plan_path.write_text(plan.model_dump_json(), encoding="utf-8")
+    assets_path.write_text(assets.model_dump_json(), encoding="utf-8")
+    timeline = tmp_path / "timeline.json"
+    output = ManimRenderTool().execute({
+        "plan_path": str(plan_path), "execution_assets_path": str(assets_path),
+        "timeline_path": str(timeline), "output_dir": str(tmp_path), "timeout": 180,
+    })
+    assert Path(output["video_path"]).is_file()
+    text = json.loads(timeline.read_text(encoding="utf-8"))["text"][0]
+    assert text["end"] - text["start"] == pytest.approx(duration, abs=0.1)
+    assert not output["warnings"]
 
 
 def test_render_smoke_places_text_and_images_by_layout(tmp_path):

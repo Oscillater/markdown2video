@@ -87,7 +87,9 @@ class ToolConfig:
     后改这一项即可整条切换，管线代码不变。
     """
     priority: dict[str, list[str]] = field(
-        default_factory=lambda: dict(DEFAULT_TOOL_PRIORITY)
+        default_factory=lambda: {
+            kind: list(providers) for kind, providers in DEFAULT_TOOL_PRIORITY.items()
+        }
     )
     render_backend: str = "manim"
 

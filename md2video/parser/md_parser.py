@@ -134,7 +134,7 @@ def _parse_markdown_sections(text: str) -> dict:
         else:
             (sections["appendix"] if is_appendix else current_text_block).append(stripped)
 
-    if current_h3 and current_text_block:
+    if current_h3:
         sections["contents"].append({
             "h3": current_h3,
             "text": [custom_sentence_split(p) for p in current_text_block]
@@ -242,7 +242,6 @@ def parse_to_plan_manifest(md_path: str) -> "PlanManifest":
         media_declarations["images"] = sections["images"]
 
     return PlanManifest(
-        version="1",
         segments=segments,
         media_declarations=media_declarations,
     )

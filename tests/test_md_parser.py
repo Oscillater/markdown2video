@@ -193,6 +193,11 @@ class TestParseMarkdownSections:
         assert any("[music_start bgm]" in line
                     for para in s["contents"][0]["text"] for line in para)
 
+    def test_trailing_header_is_preserved(self):
+        s = _parse_markdown_sections("### First\nBody\n### Last")
+        assert [section["h3"] for section in s["contents"]] == ["First", "Last"]
+        assert s["contents"][-1]["text"] == []
+
     def test_empty_markdown(self):
         s = _parse_markdown_sections("")
         assert s["h1"] is None
@@ -240,7 +245,16 @@ class TestParseToPlanManifest:
 
     def test_version_default(self, minimal_md):
         manifest = parse_to_plan_manifest(str(minimal_md))
-        assert manifest.version == "1"
+        assert manifest.version == "2"
+
+    def test_header_only_input_is_narrated(self, tmp_path):
+        path = tmp_path / "header.md"
+        path.write_text("### Only section\n", encoding="utf-8")
+        manifest = parse_to_plan_manifest(str(path))
+        assert [(s.text, s.segment_type) for s in manifest.segments] == [
+            ("Only section", "section_header"),
+        ]
+        assert manifest.segments[0].audio_request is not None
 
     def test_marker_data_structure(self, full_md):
         manifest = parse_to_plan_manifest(str(full_md))

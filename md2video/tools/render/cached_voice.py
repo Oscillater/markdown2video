@@ -1,20 +1,31 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Dict
 
 from md2video.manifest.schema import ResultManifest
 
 
-class CachedVoiceService:
-    """
-    模拟 manim-voiceover SpeechService 接口。
-    不生成音频，直接返回预生成的音频文件路径。
+@dataclass
+class CachedVoiceTracker:
+    """只消费音频账本；动画已推进的时间不得再等待一次。"""
 
-    注意: 由于 manim 当前环境有 typing_extensions 冲突无法直接 import VoiceService，
-    我们实现相同的接口约定。Demo class 的 voiceover() 调用 _wrap_generate_from_text(text)，
-    只需要返回 {"final_audio": path, "original_audio": path, "text": text} 即可。
+    scene: object
+    duration: float
+    start_t: float
+
+    def get_remaining_duration(self, buff: float = 0.0) -> float:
+        return max(self.start_t + self.duration - self.scene.time + buff, 0.0)
+
+
+class CachedVoiceService:
+    """绑定预生成音频与账本时长，不重新生成或探测音频。
+
+    ``voiceover`` 替代第三方 VoiceoverTracker 的重新 probe 路径；
+    保留路径查找接口供旧调用方使用。
     """
 
     def __init__(self, result_manifest: ResultManifest, project_root: str | Path = None,
@@ -48,6 +59,18 @@ class CachedVoiceService:
             yield
         finally:
             self._current_segment_id = previous_segment_id
+
+    @contextmanager
+    def voiceover(self, scene, segment_id: str, text: str):
+        """按 segment 绑定声音，退出时只等待剩余的朗读窗口。"""
+        with self.use_segment(segment_id):
+            data = self._wrap_generate_from_text(text)
+            tracker = CachedVoiceTracker(scene, data["duration"], float(scene.time))
+            scene.add_sound(data["final_audio"])
+            try:
+                yield tracker
+            finally:
+                scene.safe_wait(tracker.get_remaining_duration())
 
     def _resolve_path(self, audio_path: str) -> str:
         """将相对路径解析为绝对路径（manim 从 anim/ 运行，但音频在项目根目录下）。"""
@@ -94,10 +117,14 @@ class CachedVoiceService:
             raise FileNotFoundError(
                 f"预生成音频不存在 for segment_id {segment_id}: {audio_path}"
             )
+        duration = float(seg.audio.duration)
+        if not math.isfinite(duration) or duration <= 0:
+            raise ValueError(f"Invalid audio duration for segment_id {segment_id}: {duration}")
         return {
-            "final_audio": audio_path,
-            "original_audio": audio_path,
+            "final_audio": str(Path(audio_path).resolve()),
+            "original_audio": str(Path(audio_path).resolve()),
             "text": text,
+            "duration": duration,
         }
 
     def _audio_by_sequence(self, text: str) -> dict:
@@ -111,14 +138,6 @@ class CachedVoiceService:
             if self._voiced_ids is not None and seg.id not in self._voiced_ids:
                 continue
             if seg.audio and seg.audio.path:
-                audio_path = seg.audio.path
-                audio_path = self._resolve_path(seg.audio.path)
-                if not Path(audio_path).exists():
-                    raise FileNotFoundError(f"预生成音频不存在: {audio_path}")
-                return {
-                    "final_audio": audio_path,
-                    "original_audio": audio_path,
-                    "text": text,
-                }
+                return self._audio_for_segment(seg.id, text)
         # fallback: 如果没有预生成的音频，抛错
         raise RuntimeError(f"CachedVoiceService: 没有更多预生成音频可用 (text={text[:20]})")

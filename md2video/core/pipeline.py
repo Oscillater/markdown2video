@@ -63,7 +63,7 @@ class Pipeline:
         self._voice_override = voice is not None
         self._speed_override = speed is not None
         self.voice = voice or DEFAULT_VOICE
-        self.speed = speed or DEFAULT_SPEED
+        self.speed = DEFAULT_SPEED if speed is None else speed
         self.planner = self._create_planner(planner)
         # 解法 4：随 run 额外产出混剪素材包（clips/SRT/EDL/assets）
         self.export_bundle = export_bundle

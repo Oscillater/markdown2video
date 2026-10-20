@@ -1,9 +1,11 @@
-"""Tests for md2video.tools.tts.edge_tts (fully mocked)."""
+"""Edge TTS: cache contracts, truthful formats, rates and duration failures."""
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from pathlib import Path
+import shutil
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,143 +13,174 @@ import pytest
 from md2video.tools.tts.edge_tts import EdgeTTSTool
 
 
-def _expected_cache_key(text, voice, speed):
-    """匹配 ToolCache.make_key 的 sha256 格式。"""
+def _expected_cache_key(text, voice="zh-CN-YunxiNeural", speed=1.0):
     canonical = json.dumps({"speed": speed, "text": text, "voice": voice}, sort_keys=True)
     return hashlib.sha256(f"tts:{canonical}".encode()).hexdigest()
 
 
-def _drain_asyncio_run(mock_asyncio_run):
-    """asyncio.run 的替身必须关掉收到的 coroutine。
+@pytest.fixture
+def network(monkeypatch):
+    calls = []
 
-    mock 直接丢掉 coroutine 会留下 "coroutine 'Communicate.save' was never
-    awaited" RuntimeWarning，且 GC 时机让警告漂移到毫不相干的测试名下。
-    """
-    mock_asyncio_run.side_effect = lambda coro: coro.close()
+    class FakeCommunicate:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        async def save(self, path):
+            Path(path).write_bytes(b"ID3test-mp3")
+
+    monkeypatch.setattr("md2video.tools.tts.edge_tts.Communicate", FakeCommunicate)
+    return calls
 
 
-class TestEdgeTTSToolInit:
-    def test_creates_cache_dir(self, tmp_path):
-        cache_dir = tmp_path / "tts_cache"
-        EdgeTTSTool(cache_dir=cache_dir)
-        assert cache_dir.exists()
+@pytest.fixture
+def fake_wav(monkeypatch, audio_file):
+    calls = []
+
+    def convert(self, source, target):
+        calls.append((source, target))
+        target.write_bytes(audio_file.read_bytes())
+
+    monkeypatch.setattr(EdgeTTSTool, "_write_wav", convert)
+    return calls
 
 
-class TestSynthesize:
-    @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    @patch("md2video.tools.tts.edge_tts.asyncio.run")
-    def test_cache_hit(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
-        # 预创建缓存文件
-        voice, speed = "zh-CN-YunxiNeural", 1.0
-        cache_key = _expected_cache_key("hello", voice, speed)
-        cached_file = tmp_path / f"{cache_key}.wav"
-        cached_file.write_bytes(b"\x00" * 100)
+@pytest.fixture
+def fake_duration(monkeypatch):
+    monkeypatch.setattr(EdgeTTSTool, "_get_duration", lambda self, path: 2.5)
 
-        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="2.5\n")
 
-        tool = EdgeTTSTool(cache_dir=tmp_path, voice=voice)
-        result = tool.synthesize("hello", speed=speed)
+def test_creates_cache_dir(tmp_path):
+    cache = tmp_path / "cache"
+    EdgeTTSTool(cache_dir=cache)
+    assert cache.is_dir()
 
-        assert result["path"] == str(cached_file)
-        assert result["duration"] == 2.5
-        assert result["provider"] == "edge-tts"
-        assert result["cache_key"] == cache_key
-        # 缓存命中不应调用 asyncio.run
-        mock_asyncio_run.assert_not_called()
 
-    @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    @patch("md2video.tools.tts.edge_tts.asyncio.run")
-    def test_cache_miss(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
-        voice, speed = "zh-CN-YunxiNeural", 1.0
-        _drain_asyncio_run(mock_asyncio_run)
-        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="3.0\n")
+def test_cache_hit(tmp_path, audio_file, network, fake_wav, fake_duration):
+    cached = tmp_path / f"{_expected_cache_key('hello')}.wav"
+    cached.write_bytes(audio_file.read_bytes())
+    result = EdgeTTSTool(tmp_path).synthesize("hello")
+    assert result == {
+        "path": str(cached), "duration": 2.5,
+        "provider": "edge-tts", "cache_key": _expected_cache_key("hello"),
+    }
+    assert network == []
+    assert fake_wav == []
 
-        tool = EdgeTTSTool(cache_dir=tmp_path, voice=voice)
-        result = tool.synthesize("new text", speed=speed)
 
-        cache_key = _expected_cache_key("new text", voice, speed)
-        assert result["cache_key"] == cache_key
-        assert result["duration"] == 3.0
-        # 缓存未命中应调用 asyncio.run
-        mock_asyncio_run.assert_called_once()
+def test_cache_miss(tmp_path, network, fake_wav, fake_duration):
+    tool = EdgeTTSTool(tmp_path)
+    first = tool.synthesize("hello")
+    second = tool.synthesize("hello")
+    assert first == second
+    assert len(network) == len(fake_wav) == 1
+    assert Path(first["path"]).read_bytes().startswith(b"RIFF")
+    assert not list(tmp_path.glob(".tts-*"))
 
-    @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    @patch("md2video.tools.tts.edge_tts.asyncio.run")
-    def test_custom_voice(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
-        _drain_asyncio_run(mock_asyncio_run)
-        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="1.0\n")
-        tool = EdgeTTSTool(cache_dir=tmp_path, voice="zh-CN-YunxiNeural")
-        result = tool.synthesize("hello", voice="en-US-JennyNeural")
-        cache_key = _expected_cache_key("hello", "en-US-JennyNeural", 1.0)
-        assert result["cache_key"] == cache_key
 
-    @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    @patch("md2video.tools.tts.edge_tts.asyncio.run")
-    @patch("md2video.tools.tts.edge_tts.Communicate")
-    def test_custom_speed_rate_string(
-        self, mock_communicate, mock_asyncio_run, mock_subprocess_run, tmp_path,
-    ):
-        """speed 换算成 edge-tts 的 rate 百分比字符串。"""
-        _drain_asyncio_run(mock_asyncio_run)
-        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="1.0\n")
-        tool = EdgeTTSTool(cache_dir=tmp_path)
+def test_custom_voice(tmp_path, network, fake_wav, fake_duration):
+    result = EdgeTTSTool(tmp_path).synthesize("hello", voice="en-US-JennyNeural")
+    assert result["cache_key"] == _expected_cache_key("hello", "en-US-JennyNeural")
+    assert network[0]["voice"] == "en-US-JennyNeural"
 
-        tool.synthesize("hello", speed=1.5)
 
-        # Communicate 收到 +50% 速率；patch 掉类后没有真实 coroutine 被创建
-        _, kwargs = mock_communicate.call_args
-        assert kwargs["rate"] == "+50%"
+@pytest.mark.parametrize("speed, rate", [(0.5, "-50%"), (0.9, "-10%"), (1.0, "+0%"), (1.1, "+10%"), (1.5, "+50%")])
+def test_speed_rate(tmp_path, network, fake_wav, fake_duration, speed, rate):
+    EdgeTTSTool(tmp_path).synthesize("hello", speed=speed)
+    assert network[0]["rate"] == rate
 
-    @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    @patch("md2video.tools.tts.edge_tts.asyncio.run")
-    def test_cache_key_deterministic(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
-        _drain_asyncio_run(mock_asyncio_run)
-        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="1.0\n")
-        tool = EdgeTTSTool(cache_dir=tmp_path)
-        r1 = tool.synthesize("same text", speed=1.0)
-        # 清除 mock 调用记录
-        mock_asyncio_run.reset_mock()
-        mock_subprocess_run.reset_mock()
-        r2 = tool.synthesize("same text", speed=1.0)
-        assert r1["cache_key"] == r2["cache_key"]
+
+@pytest.mark.parametrize("speed", [0, -1, float("nan"), float("inf")])
+def test_invalid_speed_rejected(tmp_path, network, speed):
+    with pytest.raises(ValueError, match="speed"):
+        EdgeTTSTool(tmp_path).synthesize("hello", speed=speed)
+    assert network == []
+
+
+def test_mp3_request_keeps_mp3_bytes(tmp_path, network, fake_duration):
+    result = EdgeTTSTool(tmp_path).execute({"text": "hello", "format": "mp3"})
+    assert Path(result["path"]).suffix == ".mp3"
+    assert Path(result["path"]).read_bytes() == b"ID3test-mp3"
+
+
+def test_unknown_format_rejected(tmp_path, network):
+    with pytest.raises(ValueError, match="format"):
+        EdgeTTSTool(tmp_path).synthesize("hello", fmt="not-a-format")
+    assert network == []
+
+
+def test_legacy_mislabeled_wav_is_repaired_without_network(tmp_path, network, fake_wav, fake_duration):
+    cached = tmp_path / f"{_expected_cache_key('hello')}.wav"
+    cached.write_bytes(b"ID3old-mp3")
+    EdgeTTSTool(tmp_path).synthesize("hello")
+    assert cached.read_bytes().startswith(b"RIFF")
+    assert len(fake_wav) == 1
+    assert network == []
+
+
+def test_failed_download_does_not_poison_cache(tmp_path, monkeypatch):
+    class BrokenCommunicate:
+        def __init__(self, **kwargs):
+            pass
+
+        async def save(self, path):
+            Path(path).write_bytes(b"partial")
+            raise RuntimeError("download failed")
+
+    monkeypatch.setattr("md2video.tools.tts.edge_tts.Communicate", BrokenCommunicate)
+    with pytest.raises(RuntimeError, match="download failed"):
+        EdgeTTSTool(tmp_path).synthesize("hello")
+    assert list(tmp_path.iterdir()) == []
 
 
 class TestGetDuration:
     @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    def test_success(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="4.2\n")
-        tool = EdgeTTSTool(cache_dir="/tmp/dummy")
-        assert tool._get_duration(Path("audio.wav")) == 4.2
+    def test_success(self, run, tmp_path):
+        run.return_value = MagicMock(returncode=0, stdout="4.2\n")
+        assert EdgeTTSTool(tmp_path)._get_duration(Path("audio.wav")) == 4.2
 
     @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    def test_ffprobe_failure(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr="error")
-        tool = EdgeTTSTool(cache_dir="/tmp/dummy")
-        assert tool._get_duration(Path("audio.wav")) == 1.0
+    def test_failure_is_not_a_fake_duration(self, run, tmp_path):
+        run.return_value = MagicMock(returncode=1, stderr="cannot decode audio")
+        with pytest.raises(RuntimeError, match="ffprobe"):
+            EdgeTTSTool(tmp_path)._get_duration(Path("audio.wav"))
 
+    @pytest.mark.parametrize("output", ["not_a_number", "", "nan", "inf", "0", "-1"])
     @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    def test_invalid_output(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="not_a_number\n")
-        tool = EdgeTTSTool(cache_dir="/tmp/dummy")
-        assert tool._get_duration(Path("audio.wav")) == 1.0
+    def test_invalid_duration_rejected(self, run, output, tmp_path):
+        run.return_value = MagicMock(returncode=0, stdout=output)
+        with pytest.raises(RuntimeError, match="duration"):
+            EdgeTTSTool(tmp_path)._get_duration(Path("audio.wav"))
 
 
-class TestToolProtocol:
-    def test_tool_type(self, tmp_path):
-        tool = EdgeTTSTool(cache_dir=tmp_path)
-        assert tool.tool_type == "tts"
+def test_tool_protocol(tmp_path, network, fake_wav, fake_duration):
+    tool = EdgeTTSTool(tmp_path)
+    assert tool.tool_type == "tts" and tool.provider_name == "edge-tts"
+    result = tool.execute({"text": "hello", "speed": 1.0, "format": "wav"})
+    assert result["duration"] == 2.5
+    assert len(network) == 1
 
-    def test_provider_name(self, tmp_path):
-        tool = EdgeTTSTool(cache_dir=tmp_path)
-        assert tool.provider_name == "edge-tts"
 
-    @patch("md2video.tools.tts.edge_tts.subprocess.run")
-    @patch("md2video.tools.tts.edge_tts.asyncio.run")
-    def test_execute_delegates_to_synthesize(self, mock_asyncio_run, mock_subprocess_run, tmp_path):
-        _drain_asyncio_run(mock_asyncio_run)
-        mock_subprocess_run.return_value = MagicMock(returncode=0, stdout="2.0\n")
-        tool = EdgeTTSTool(cache_dir=tmp_path)
-        result = tool.execute({"text": "hello", "speed": 1.0, "format": "wav"})
-        assert result["provider"] == "edge-tts"
-        assert result["duration"] == 2.0
-        mock_asyncio_run.assert_called_once()
+@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="needs FFmpeg")
+def test_real_legacy_cache_conversion(tmp_path, network):
+    cached = tmp_path / f"{_expected_cache_key('hello')}.wav"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5",
+        "-f", "mp3", str(cached),
+    ], check=True, capture_output=True)
+    result = EdgeTTSTool(tmp_path).synthesize("hello")
+    assert cached.read_bytes()[:4] == b"RIFF"
+    assert cached.read_bytes()[8:12] == b"WAVE"
+    assert result["duration"] == pytest.approx(0.5, abs=0.1)
+    assert network == []
+
+
+@patch("md2video.tools.tts.edge_tts.subprocess.run")
+def test_failed_conversion_preserves_original_cache(run, tmp_path, network):
+    cached = tmp_path / f"{_expected_cache_key('hello')}.wav"
+    cached.write_bytes(b"ID3original")
+    run.return_value = MagicMock(returncode=1, stderr="conversion failed")
+    with pytest.raises(RuntimeError, match="FFmpeg"):
+        EdgeTTSTool(tmp_path).synthesize("hello")
+    assert cached.read_bytes() == b"ID3original"
+    assert not list(tmp_path.glob(".tts-*"))

@@ -164,13 +164,10 @@ class ManifestDrivenScene(VoiceoverScene):
             "_md2video_speech_service",
             getattr(self, "speech_service", None),
         )
-        if speech_service is not None and hasattr(speech_service, "use_segment"):
-            with speech_service.use_segment(seg.id):
-                with self.voiceover(text=text) as tracker:
-                    yield tracker
-        else:
-            with self.voiceover(text=text) as tracker:
-                yield tracker
+        if speech_service is None:
+            raise RuntimeError(f"No cached speech service for segment {seg.id}")
+        with speech_service.voiceover(self, seg.id, text) as tracker:
+            yield tracker
 
     def _find_title_unit(self):
         for unit in self._all_render_units:
@@ -305,9 +302,8 @@ class ManifestDrivenScene(VoiceoverScene):
             timeline_index = self._append_timeline_entry(seg, start_t, text=line, shot_unit=shot_unit)
             motion = self._realizer.tokens.motion
             if segment_uses_voiceover(seg):
-                with self._voiceover_segment(seg, line) as tracker:
+                with self._voiceover_segment(seg, line):
                     self._apply_reveal(motion.body_reveal, sentence)
-                    self._wait_for_voiceover(tracker, seg)
             else:
                 self._apply_reveal(motion.body_reveal, sentence)
                 self.wait(self._segment_duration(
@@ -353,22 +349,6 @@ class ManifestDrivenScene(VoiceoverScene):
         result = getattr(self, "_segment_result_by_id", {}).get(seg.id)
         return segment_render_duration(seg, result, default=default)
 
-    def _voiceover_duration(self, tracker, seg) -> float:
-        tracker_duration = getattr(tracker, "duration", None)
-        if tracker_duration is not None:
-            try:
-                duration = float(tracker_duration)
-            except (TypeError, ValueError):
-                duration = 0.0
-            if duration > 0:
-                return duration
-        return self._segment_duration(seg, default=0.0)
-
-    def _wait_for_voiceover(self, tracker, seg) -> None:
-        duration = self._voiceover_duration(tracker, seg)
-        if duration > 0:
-            self.wait(duration)
-
     def _render_section_header(self, seg, shot_unit=None, layout_ctx=None):
         """渲染 section header（左侧字幕堆叠，装进模板的堆叠子 region）。"""
         timeline = self.timeline
@@ -400,9 +380,8 @@ class ManifestDrivenScene(VoiceoverScene):
             subtitle.scale(max_subtitle_width / subtitle.width)
         subtitle.move_to(region.center if region is not None else DEFAULT_TEXT_POSITION)
         if segment_uses_voiceover(seg):
-            with self._voiceover_segment(seg, subtitle_text) as tracker:
+            with self._voiceover_segment(seg, subtitle_text):
                 self._apply_reveal(motion.section_reveal, subtitle)
-                self._wait_for_voiceover(tracker, seg)
         else:
             self._apply_reveal(motion.section_reveal, subtitle)
             self.wait(self._segment_duration(

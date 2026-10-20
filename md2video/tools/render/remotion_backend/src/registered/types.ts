@@ -1,6 +1,6 @@
 import type {SegmentSlot} from '../Md2Video';
 
-// A8 表现组件契约（见 md2video/components/registry.py 与 TODO.md「A8」）：
+// A8 表现组件契约（见 md2video/components/registry.py 与 docs/architecture.md）：
 // 输入 = 文字 + 每段可见窗口 + 画布尺寸；输出 = 自由画面——配色/字体/
 // 排版/动效由组件自带，不消费 pack token。
 // 两条底线：不改时间事实（窗口是调度器按音频事实裁决的，音频绑定留在

@@ -322,6 +322,12 @@ def test_load_tool_config_reads_render_backend_env(monkeypatch):
     assert load_tool_config().render_backend == "remotion"
 
 
+def test_zero_speed_override_is_not_silently_replaced_with_default(tmp_path):
+    pipeline = _make_pipeline(tmp_path, speed=0.0)
+    assert pipeline.speed == 0.0  # TTS 校验应收到原值并拒绝，而不是偷换成 1.0。
+    assert pipeline._speed_override
+
+
 def test_tts_assets_use_cli_voice_speed_overrides_and_absolute_paths(tmp_path):
     class FakeTTSTool:
         provider_name = "edge-tts"

@@ -392,18 +392,27 @@ def build_and_run_ffmpeg(video_path: Path, music_segments, image_segments,
         audio_parts.append(f"[{input_idx}:a]adelay={start_ms}:all=1,volume={vol}{label}")
         music_labels.append(label)
 
+    # 短片的 loudnorm 分析窗口不足，部分 FFmpeg 会产生 NaN；
+    # 纯补静音也不需要归一化。显式 gain（包括 0）始终优先。
+    if gain is not None:
+        audio_effect = f"volume={gain}"
+    elif video_duration < 3.0 or (not base_has_audio and not music_segments):
+        audio_effect = "anull"
+    else:
+        audio_effect = "loudnorm"
+
     # 构建音频 filter
     audio_filter_parts = []
     audio_map_label = "0:a" if base_has_audio else None
     if music_segments or not base_has_audio:
         all_inputs = [base_label] + music_labels
         amix_part = "".join(all_inputs) + f"amix=inputs={len(all_inputs)}:duration=longest:dropout_transition=0[aout]"
-        audio_chain = f"[aout]volume={gain}[aout]" if gain else "[aout]loudnorm[aout]"
+        audio_chain = f"[aout]{audio_effect}[aout]"
         audio_filter_parts = audio_parts + [amix_part, audio_chain]
         audio_map_label = "[aout]"
     else:
-        # 已有音频，无音乐，只需 loudnorm
-        audio_filter_parts = [f"[0:a]loudnorm[aout]"]
+        # 已有音频，无音乐，直接应用同一音量/归一化策略。
+        audio_filter_parts = [f"[0:a]{audio_effect}[aout]"]
         audio_map_label = "[aout]"
 
     video_label = "[0:v]"

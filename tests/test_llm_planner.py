@@ -55,6 +55,7 @@ def test_blueprint_prompt_does_not_offer_manim_as_visual_type():
     )
 
     assert "manim" not in visual_type_line
+    assert "stock_video" not in BLUEPRINT_SYSTEM_PROMPT
 
 
 class TestPlan:
@@ -156,7 +157,7 @@ class TestReconcile:
         assert scenes[1].layout_params == {"split": "image_focus"}
 
     def test_reconcile_sequential_ids(self):
-        """多 chunk 合并后 scene/shot ID 全局递增，相同 scene_id 合并。"""
+        """多 chunk 的 A/B/A 切换保序；回到 A 时复用场景身份。"""
         segments = [_seg(f"s{i}", f"第{i}段") for i in range(1, 7)]
         mappings = [
             [ShotMapping(scene_id="SCENE_TEXT", segment_ids=["s1", "s2"])],
@@ -167,18 +168,19 @@ class TestReconcile:
         planner = self._make_planner()
         scenes = planner._reconcile(mappings, segments, registry)
 
-        # SCENE_TEXT 有两个 mapping，合并为 1 个 scene 含 2 个 shot
-        # SCENE_IMAGE 有 1 个 mapping，1 个 scene 含 1 个 shot
-        # → 2 个 scene，3 个 shot（全局递增）
-        assert len(scenes) == 2
-        # scene_001 = SCENE_TEXT (先出现的是 explicit 没有时 scene_groups 按插入顺序)
-        assert scenes[0].visual_type == "text_only"
-        assert len(scenes[0].shots) == 2
-        assert scenes[0].shots[0].id == "shot_001"
-        assert scenes[0].shots[1].id == "shot_002"
-        # scene_002 = SCENE_IMAGE
-        assert scenes[1].visual_type == "stock_image"
-        assert scenes[1].shots[0].id == "shot_003"
+        assert len(scenes) == 3
+        assert [scene.visual_type for scene in scenes] == [
+            "text_only", "stock_image", "text_only",
+        ]
+        assert [scene.id for scene in scenes] == [
+            "scene_001", "scene_002", "scene_001",
+        ]
+        assert [shot.id for scene in scenes for shot in scene.shots] == [
+            "shot_001", "shot_002", "shot_003",
+        ]
+        assert [sid for scene in scenes for sid in scene.all_segment_ids] == [
+            segment.id for segment in segments
+        ]
 
     def test_reconcile_explicit_preserved(self):
         """explicit segment 被拆为 singleton scene；v2 起 segment 不携带
@@ -203,6 +205,8 @@ class TestReconcile:
         assert explicit[0].visual_type == "text_only"
         assert explicit[0].visual_params == {}
         assert explicit[0].layout_type == "center_title_body"
+        assert [scene.all_segment_ids for scene in scenes] == [["s1"], ["s2"], ["s3"]]
+        assert scenes[0].id == scenes[2].id != scenes[1].id
 
     def test_reconcile_unknown_scene_raises(self):
         """scene_id 不在 registry 中时报错。"""
@@ -266,6 +270,44 @@ class TestReconcile:
         planner = self._make_planner()
         with pytest.raises(ValueError, match="Non-consecutive"):
             planner._reconcile(mappings, segments, self._make_registry())
+
+    def test_reconcile_rejects_reordered_shots(self):
+        segments = [_seg("s1", "one"), _seg("s2", "two")]
+        mappings = [[
+            ShotMapping(scene_id="SCENE_TEXT", segment_ids=["s2"]),
+            ShotMapping(scene_id="SCENE_TEXT", segment_ids=["s1"]),
+        ]]
+        with pytest.raises(ValueError, match="order"):
+            self._make_planner()._reconcile(mappings, segments, self._make_registry())
+
+    def test_reconcile_rejects_empty_shot(self):
+        mappings = [[
+            ShotMapping(scene_id="SCENE_TEXT", segment_ids=[]),
+            ShotMapping(scene_id="SCENE_TEXT", segment_ids=["s1"]),
+        ]]
+        with pytest.raises(ValueError, match="Empty shot"):
+            self._make_planner()._reconcile(mappings, [_seg("s1", "one")], self._make_registry())
+
+    def test_reconcile_explicit_between_segments_does_not_join_nonconsecutive_text(self):
+        segments = [_seg(f"s{i}", str(i), explicit=i in (2, 4)) for i in range(1, 6)]
+        mappings = [[ShotMapping(scene_id="SCENE_IMAGE", segment_ids=[s.id for s in segments])]]
+        scenes = self._make_planner()._reconcile(mappings, segments, self._make_registry())
+        assert [scene.all_segment_ids for scene in scenes] == [[f"s{i}"] for i in range(1, 6)]
+        assert [scene.visual_type for scene in scenes] == [
+            "stock_image", "text_only", "stock_image", "text_only", "stock_image",
+        ]
+        assert scenes[0].id == scenes[2].id == scenes[4].id
+
+    def test_plan_falls_back_when_model_reorders_text(self, monkeypatch):
+        planner = self._make_planner()
+        segments = [_seg("s1", "one"), _seg("s2", "two")]
+        monkeypatch.setattr(planner, "_global_blueprint", lambda _: self._make_registry())
+        monkeypatch.setattr(planner, "_chunk_mapping", lambda *_: [
+            ShotMapping(scene_id="SCENE_TEXT", segment_ids=["s2"]),
+            ShotMapping(scene_id="SCENE_TEXT", segment_ids=["s1"]),
+        ])
+        scenes = planner.plan(segments)
+        assert [sid for scene in scenes for sid in scene.all_segment_ids] == ["s1", "s2"]
 
     def test_reconcile_same_scene_merged(self):
         """相同 scene_id 的多个 mapping 合并为一个 scene，含多个 shot。"""

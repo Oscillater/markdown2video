@@ -28,7 +28,7 @@ class SceneTemplate(BaseModel):
     id: str                          # e.g. "SCENE_CONCEPT"
     name: str                        # e.g. "科技概念讲解"
     description: str                 # LLM 对该风格的描述
-    visual_type: str                 # text_only / stock_image / stock_video
+    visual_type: str                 # text_only / stock_image
     visual_params: Dict = Field(default_factory=dict)
     layout_type: str = DEFAULT_LAYOUT_TYPE
     layout_params: Dict = Field(default_factory=dict)
@@ -60,8 +60,8 @@ For each template, decide:
 - id: short uppercase identifier (e.g. SCENE_CONCEPT, SCENE_NARRATIVE)
 - name: short Chinese name (e.g. "概念讲解", "叙事抒情")
 - description: what kind of content this style is for
-- visual_type: one of [text_only, stock_image, stock_video]
-- visual_params: if stock_image/stock_video, include "query" with English keywords; \
+- visual_type: one of [text_only, stock_image]
+- visual_params: if stock_image, include "query" with English keywords; \
 optionally include "preferred_provider" as a suggested provider name (e.g. "pexels")
 - layout_type: one of [center_title_body, full_bleed_image_caption_bottom, \
 image_top_text_bottom]. Use center_title_body unless image placement is essential.
@@ -70,7 +70,7 @@ image_top_text_bottom]. Use center_title_body unless image placement is essentia
 Rules:
 1. text_only is for abstract/analytical content with no clear visual
 2. stock_image is for content that benefits from a related photo/illustration
-3. stock_video is for dynamic/action content that needs motion
+3. Do not request video footage or generate animation code; this planner only selects text and images
 4. Chinese classical text (古文) often works well with text_only or subtle stock_image
 5. You MUST call the submit_blueprint tool to submit your result."""
 
@@ -356,6 +356,8 @@ class LlmPlanner:
         # 校验 1: 每个 segment 恰好出现一次
         seen: set[str] = set()
         for mapping in flat_mappings:
+            if not mapping.segment_ids:
+                raise ValueError("Empty shot in LLM mapping")
             if mapping.scene_id not in registry_map:
                 raise ValueError(f"Unknown scene_id: {mapping.scene_id}")
             for sid in mapping.segment_ids:
@@ -377,59 +379,58 @@ class LlmPlanner:
                         f"Non-consecutive segments in shot: {mapping.segment_ids}"
                     )
 
-        # 校验 3: 文本完整性 — segment 拼接文本必须覆盖原始文本
+        # 仅检查集合覆盖无法发现 s2 → s1 之类的整镜倒序。
+        mapped_order = [sid for mapping in flat_mappings for sid in mapping.segment_ids]
+        if mapped_order != seg_order:
+            raise ValueError("LLM shot order does not match source segment order")
         self._validate_text_integrity(flat_mappings, segments)
 
-        # 构建 ScenePlan：按 scene_id 分组合并，同时拆分 explicit
+        # 按时间顺序输出，只合并相邻同模板镜头。A/B/A 表达为三次场景访问，
+        # 后一次 A 复用身份但不挪到前面；explicit 同样在原位置切成单镜。
         scenes: List[ScenePlan] = []
+        scene_ids: Dict[str, str] = {}
         scene_counter = 0
         shot_counter = 0
 
-        # 1. 收集 explicit singleton scenes
-        explicit_entries: List[tuple] = []  # (seg_id, seg_plan)
-        # 2. 收集 non-explicit 的 mapping，按 scene_id 分组
-        from collections import defaultdict
-        scene_groups: Dict[str, List[List[str]]] = defaultdict(list)
+        def append_shot(template_id: str | None, segment_ids: List[str]) -> None:
+            nonlocal scene_counter, shot_counter
+            if not segment_ids:
+                return
+            shot_counter += 1
+            shot = ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=list(segment_ids))
+            if template_id is not None and template_id in scene_ids:
+                scene_id = scene_ids[template_id]
+            else:
+                scene_counter += 1
+                scene_id = f"scene_{scene_counter:03d}"
+                if template_id is not None:
+                    scene_ids[template_id] = scene_id
+            if template_id is not None and scenes and scenes[-1].id == scene_id:
+                scenes[-1].shots.append(shot)
+                return
+            scene = ScenePlan(
+                id=scene_id,
+                section_context=seg_map[segment_ids[0]].section_context,
+                shots=[shot],
+            )
+            if template_id is not None:
+                template = registry_map[template_id]
+                scene.visual_type = template.visual_type
+                scene.visual_params = dict(template.visual_params)
+                scene.layout_type = template.layout_type
+                scene.layout_params = dict(template.layout_params)
+            scenes.append(scene)
 
         for mapping in flat_mappings:
-            exp_ids = [sid for sid in mapping.segment_ids if seg_map[sid].explicit]
-            non_exp_ids = [sid for sid in mapping.segment_ids if not seg_map[sid].explicit]
-
-            for eid in exp_ids:
-                explicit_entries.append((eid, seg_map[eid]))
-            if non_exp_ids:
-                scene_groups[mapping.scene_id].append(non_exp_ids)
-
-        # 3. 先输出 explicit singleton scenes（按原始顺序）；
-        #    v2 起 segment 不携带 visual/layout 字段，singleton scene 用默认值
-        explicit_order = {sid: i for i, (sid, _) in enumerate(explicit_entries)}
-        for eid, eseg in sorted(explicit_entries, key=lambda x: explicit_order[x[0]]):
-            scene_counter += 1
-            shot_counter += 1
-            scenes.append(ScenePlan(
-                id=f"scene_{scene_counter:03d}",
-                section_context=eseg.section_context,
-                shots=[ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=[eid])],
-            ))
-
-        # 4. 按 scene_id 分组输出：每个 scene_id → 一个 ScenePlan（含多个 shot）
-        for scene_id, shot_id_groups in scene_groups.items():
-            template = registry_map[scene_id]
-            shots = []
-            for seg_ids in shot_id_groups:
-                shot_counter += 1
-                shots.append(ShotPlan(id=f"shot_{shot_counter:03d}", segment_ids=seg_ids))
-            scene_counter += 1
-            first_seg = seg_map[shot_id_groups[0][0]]
-            scenes.append(ScenePlan(
-                id=f"scene_{scene_counter:03d}",
-                visual_type=template.visual_type,
-                visual_params=template.visual_params,
-                layout_type=template.layout_type,
-                layout_params=template.layout_params,
-                section_context=first_seg.section_context,
-                shots=shots,
-            ))
+            pending: List[str] = []
+            for sid in mapping.segment_ids:
+                if seg_map[sid].explicit:
+                    append_shot(mapping.scene_id, pending)
+                    pending = []
+                    append_shot(None, [sid])
+                else:
+                    pending.append(sid)
+            append_shot(mapping.scene_id, pending)
 
         return scenes
 

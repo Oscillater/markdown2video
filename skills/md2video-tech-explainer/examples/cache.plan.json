@@ -1,0 +1,39 @@
+{
+  "version": "2",
+  "segments": [
+    {"id": "title", "text": "缓存为什么快", "segment_type": "title_main"},
+    {"id": "subtitle", "text": "看懂一次结果的复用", "segment_type": "title_sub"},
+    {"id": "hook", "text": "同一份数据，为什么第二次读取更快？", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "header", "text": "一次读取的两条路", "segment_type": "section_header", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "step_fetch", "text": "首次读取，获取源数据。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "step_store", "text": "保存结果，等待复用。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "step_reuse", "text": "再次命中，直接复用。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "ending", "text": "缓存快在复用，也要处理数据过期。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}}
+  ],
+  "scenes": [
+    {
+      "id": "intro", "visual_type": "text_only", "render_backend": "remotion",
+      "shots": [{"id": "shot_title", "segment_ids": ["title", "subtitle"]}]
+    },
+    {
+      "id": "hook_image", "visual_type": "gen_image", "render_backend": "remotion",
+      "layout_type": "full_bleed_image_caption_bottom",
+      "visual_params": {"prompt": "层次与复用的概念插画", "style": "layers", "palette": "ink"},
+      "shots": [{"id": "shot_hook", "segment_ids": ["hook"]}]
+    },
+    {
+      "id": "explanation", "visual_type": "text_only", "render_backend": "remotion",
+      "component": "step_list@1.0.2", "section_context": "一次读取的两条路",
+      "shots": [
+        {"id": "shot_header", "segment_ids": ["header"]},
+        {"id": "shot_steps", "segment_ids": ["step_fetch", "step_store", "step_reuse"]}
+      ]
+    },
+    {
+      "id": "conclusion", "visual_type": "gen_image", "render_backend": "remotion",
+      "layout_type": "full_bleed_image_caption_bottom",
+      "visual_params": {"prompt": "复用与更新的抽象结构", "style": "blocks", "palette": "moss"},
+      "shots": [{"id": "shot_ending", "segment_ids": ["ending"]}]
+    }
+  ]
+}

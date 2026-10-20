@@ -1,0 +1,67 @@
+{
+  "version": "2",
+  "segments": [
+    {"id": "title", "text": "一个点，两种波", "segment_type": "title_main"},
+    {"id": "subtitle", "text": "从单位圆看正弦与余弦", "segment_type": "title_sub"},
+    {"id": "hook", "text": "圆上一个点的运动，怎样变成波？", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "circle_header", "text": "先看圆上的点", "segment_type": "section_header", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "circle_body", "text": "让这个点沿着单位圆逆时针运动。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "sine_header", "text": "观察它的高度", "segment_type": "section_header", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "sine_body", "text": "把点的高度随运动记录下来，得到正弦。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "cutaway", "text": "换个观察方向，还会看到什么？", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "cosine_header", "text": "再看水平位置", "segment_type": "section_header", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "cosine_body", "text": "现在记录水平位置的变化，得到余弦。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}},
+    {"id": "ending", "text": "两种波，来自同一个点的两个坐标。", "segment_type": "content", "audio_request": {"voice": "zh-CN-YunxiNeural"}}
+  ],
+  "scenes": [
+    {
+      "id": "intro", "visual_type": "text_only", "render_backend": "remotion",
+      "shots": [{"id": "shot_title", "segment_ids": ["title", "subtitle"]}]
+    },
+    {
+      "id": "hook_image", "visual_type": "gen_image", "render_backend": "remotion",
+      "layout_type": "full_bleed_image_caption_bottom",
+      "visual_params": {"prompt": "圆与轨道的抽象数学氛围", "style": "orbit", "palette": "ink"},
+      "shots": [{"id": "shot_hook", "segment_ids": ["hook"]}]
+    },
+    {
+      "id": "circle_canvas", "visual_type": "text_only", "render_backend": "remotion",
+      "component": "math_canvas@1.5.1", "section_context": "先看圆上的点",
+      "visual_params": {"layers": [{"shot": "shot_sine_header", "kind": "sine"}, {"shot": "shot_cosine_header", "kind": "cosine"}]},
+      "shots": [
+        {"id": "shot_circle_header", "segment_ids": ["circle_header"]},
+        {"id": "shot_circle_body", "segment_ids": ["circle_body"]}
+      ]
+    },
+    {
+      "id": "circle_canvas", "visual_type": "text_only", "render_backend": "remotion",
+      "component": "math_canvas@1.5.1", "section_context": "观察它的高度",
+      "visual_params": {"layers": [{"shot": "shot_sine_header", "kind": "sine"}, {"shot": "shot_cosine_header", "kind": "cosine"}]},
+      "shots": [
+        {"id": "shot_sine_header", "segment_ids": ["sine_header"]},
+        {"id": "shot_sine_body", "segment_ids": ["sine_body"]}
+      ]
+    },
+    {
+      "id": "cutaway_image", "visual_type": "gen_image", "render_backend": "remotion",
+      "layout_type": "full_bleed_image_caption_bottom",
+      "visual_params": {"prompt": "变化与观察的抽象波形", "style": "waves", "palette": "dusk"},
+      "shots": [{"id": "shot_cutaway", "segment_ids": ["cutaway"]}]
+    },
+    {
+      "id": "circle_canvas", "visual_type": "text_only", "render_backend": "remotion",
+      "component": "math_canvas@1.5.1", "section_context": "再看水平位置",
+      "visual_params": {"layers": [{"shot": "shot_sine_header", "kind": "sine"}, {"shot": "shot_cosine_header", "kind": "cosine"}]},
+      "shots": [
+        {"id": "shot_cosine_header", "segment_ids": ["cosine_header"]},
+        {"id": "shot_cosine_body", "segment_ids": ["cosine_body"]}
+      ]
+    },
+    {
+      "id": "conclusion", "visual_type": "gen_image", "render_backend": "remotion",
+      "layout_type": "full_bleed_image_caption_bottom",
+      "visual_params": {"prompt": "回到整体的抽象圆与波", "style": "orbit", "palette": "ink"},
+      "shots": [{"id": "shot_ending", "segment_ids": ["ending"]}]
+    }
+  ]
+}

@@ -69,6 +69,12 @@ class TestToolConfig:
         assert cfg.get_priority("text_only") == ["_text_only"]
         assert cfg.get_priority("tts") == ["edge-tts"]
 
+    def test_instances_do_not_share_priority_lists(self):
+        first, second = ToolConfig(), ToolConfig()
+        first.get_priority("stock_image").insert(0, "custom")
+        assert "custom" not in second.get_priority("stock_image")
+        assert "custom" not in DEFAULT_TOOL_PRIORITY["stock_image"]
+
     def test_unknown_type_fallback(self):
         cfg = ToolConfig()
         assert cfg.get_priority("unknown") == ["_text_only"]
